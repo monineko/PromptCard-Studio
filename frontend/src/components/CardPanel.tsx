@@ -65,7 +65,7 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
     >
       {/* 上半部分：演示图片（占卡面大部分面积） */}
       <div
-        className="absolute inset-x-0 top-0 h-[67%]"
+        className="absolute inset-x-0 top-0 h-[90%]"
         style={{ background: `linear-gradient(145deg, hsl(${hue} 45% 38%), hsl(${hue} 60% 24%))` }}
       >
         {card.image ? (
@@ -86,13 +86,15 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
         )}
       </div>
 
-      {/* 下半部分：分类颜色带 + 卡片名称（单行） */}
+      {/* 下半部分：分类渐变颜色带 + 单行卡片名称 */}
       <div
-        className="absolute inset-x-0 bottom-0 flex h-[33%] flex-col justify-center px-2.5"
-        style={{ background: `linear-gradient(160deg, hsl(${hue} 52% 40%), hsl(${hue} 64% 22%))` }}
+        className="absolute inset-x-0 bottom-0 flex h-[10%] items-center justify-center px-2"
+        style={{
+          background: `linear-gradient(120deg, hsl(${hue} 58% 46%), hsl(${hue} 70% 26%))`,
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
+        }}
       >
-        <div className="truncate text-sm font-bold leading-tight drop-shadow">{card.name}</div>
-        <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider opacity-70">{category}</div>
+        <div className="truncate text-xs font-bold leading-none drop-shadow">{card.name}</div>
       </div>
 
       <IconBtn

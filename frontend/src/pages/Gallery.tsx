@@ -159,7 +159,7 @@ export function Gallery() {
     refresh();
   }, [refresh]);
 
-  // 分类入口：为每个分类抓取少量图片作为堆叠封面，并生成背景轮播展示队列
+  // 分类入口：为每个分类抓取图片作为堆叠封面（主封面 + 两张随机背景照片）
   useEffect(() => {
     if (category || !summary) return;
     let cancelled = false;
@@ -172,7 +172,7 @@ export function Gallery() {
               const r = await api.libraryImages(key);
               return [
                 key,
-                r.items.slice(0, 4).map((i) => ({ url: api.libraryImageUrl(i.path), name: i.name, date: i.date })),
+                r.items.slice(0, 12).map((i) => ({ url: api.libraryImageUrl(i.path), name: i.name, date: i.date })),
               ] as const;
             } catch {
               return [key, []] as const;
@@ -188,16 +188,11 @@ export function Gallery() {
       for (const key of CATEGORY_ORDER) {
         const list = map[key] ?? [];
         if (!list.length) continue;
-        if (explicitCovers[key]) effective[key] = explicitCovers[key];
+        if (explicitCovers[key]) effective[key] = api.libraryImageUrl(explicitCovers[key]);
         else if (key === "all") effective[key] = list[Math.floor(Math.random() * list.length)].url;
         else effective[key] = list[0].url;
       }
       setCoverMap(effective);
-      const showcase = CATEGORY_ORDER.flatMap((k) =>
-        effective[k] ? [{ key: `${k}:${effective[k]}`, url: effective[k] }] : []
-      );
-      if (showcase.length) useGalleryVisual.getState().setBackdrops(showcase);
-      else useGalleryVisual.getState().resetBackdrops();
     })();
     return () => {
       cancelled = true;
@@ -242,6 +237,7 @@ export function Gallery() {
 
   const backToCategories = useCallback(() => {
     cancelPick();
+    useGalleryVisual.getState().resetBackdrops();
     setCategory(null);
     setItems([]);
     setReviewing(false);
@@ -265,6 +261,18 @@ export function Gallery() {
       setQuickPickBusy(false);
     }
   }, [addToast, category, quickPickBusy, refresh, selectedPaths]);
+
+  // 每个分类随机挑两张非封面图片作为堆叠卡片的背景照片（covers/coverMap 更新时重算）
+  const backTwoMap = useMemo(() => {
+    const m: Partial<Record<LibraryCategoryKey, string[]>> = {};
+    for (const key of CATEGORY_ORDER) {
+      const list = covers[key] ?? [];
+      const cover = coverMap[key];
+      const pool = cover ? list.filter((c) => c.url !== cover) : list;
+      m[key] = [...pool].sort(() => Math.random() - 0.5).slice(0, 2).map((c) => c.url);
+    }
+    return m;
+  }, [covers, coverMap]);
 
   const groups = useMemo(() => (category ? buildGroups(items, category) : []), [category, items]);
   const slides = useMemo(
@@ -606,7 +614,9 @@ export function Gallery() {
             const info = summary?.categories.find((c) => c.key === key);
             const list = covers[key] ?? [];
             const cover = coverMap[key];
-            const others = cover ? list.filter((c) => c.url !== cover) : list;
+            const urls = [cover ?? list[0]?.url, ...(backTwoMap[key] ?? [])]
+              .filter((u): u is string => !!u)
+              .slice(0, 3);
             return (
               <AlbumStackCard
                 key={key}
@@ -614,9 +624,7 @@ export function Gallery() {
                 subtitle={meta.desc}
                 count={info?.count ?? 0}
                 date={latestDate(list)}
-                coverUrls={
-                  cover ? [cover, ...others.slice(0, 3).map((c) => c.url)] : list.map((c) => c.url)
-                }
+                coverUrls={urls}
                 color={meta.color}
                 icon={meta.icon}
                 index={i}
@@ -844,6 +852,7 @@ export function Gallery() {
           count={selectedPaths.size}
           showDelete={category === "reject"}
           category={category}
+          coverEnabled={selectedPaths.size === 1}
           busy={quickPickBusy}
           onMove={handleQuickMove}
           onDelete={handleQuickDelete}

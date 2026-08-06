@@ -35,6 +35,7 @@ export function QuickPickPopup({
   count,
   showDelete,
   category,
+  coverEnabled,
   busy,
   onMove,
   onDelete,
@@ -44,6 +45,7 @@ export function QuickPickPopup({
   count: number;
   showDelete: boolean;
   category: string;
+  coverEnabled: boolean;
   busy: boolean;
   onMove: (target: string) => void;
   onDelete: () => void;
@@ -138,10 +140,16 @@ export function QuickPickPopup({
               <FolderInput size={15} /> 移动到…
             </button>
             <button
-              disabled={!count || busy}
+              disabled={!coverEnabled || busy}
               onClick={onSetCover}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)]/40 px-3 py-2.5 text-sm font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10 disabled:opacity-40"
-              title={`将第一张选中的图片设为「${category}」分类的封面`}
+              title={
+                count === 1
+                  ? `将这张图片设为「${category}」分类的封面`
+                  : count > 1
+                    ? "一次只能选择一张图片作为封面，请取消多余选择"
+                    : "请先选择一张图片作为封面"
+              }
             >
               <Images size={15} /> 设为封面
             </button>

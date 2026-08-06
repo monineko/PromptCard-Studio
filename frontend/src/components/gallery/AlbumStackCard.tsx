@@ -44,12 +44,12 @@ export function AlbumStackCard({
       style={{ animationDelay: `${90 + index * 70}ms` }}
     >
       {/* 堆叠照片区域 */}
-      <div className="relative aspect-[4/3] w-[84%]">
-        {/* 最底层：右倾散落照片 */}
+      <div className="relative aspect-[3/4] w-[70%]">
+        {/* 底层第一张随机照片：右倾散落 */}
         <div className="absolute inset-0 translate-x-3 translate-y-2 rotate-[6deg] overflow-hidden rounded-xl border-4 border-white shadow-lg transition-all duration-500 ease-out group-hover:translate-x-5 group-hover:rotate-[9deg] group-hover:brightness-110">
           <StackPhoto url={coverUrls[2]} />
         </div>
-        {/* 中间层：左倾散落照片 */}
+        {/* 底层第二张随机照片：左倾散落，被封面覆盖 */}
         <div className="absolute inset-0 -translate-x-2.5 -translate-y-1 rotate-[-5deg] overflow-hidden rounded-xl border-4 border-white shadow-lg transition-all duration-500 ease-out group-hover:-translate-x-5 group-hover:rotate-[-8deg] group-hover:brightness-110">
           <StackPhoto url={coverUrls[1]} />
         </div>
