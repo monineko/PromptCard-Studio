@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import cards as cards_service
 from . import backgrounds as backgrounds_service
+from . import novelai as novelai_service
 from . import library as library_service
 from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
@@ -23,11 +24,13 @@ from .schemas import (
     CategoryRename,
     ExpandRequest,
     DeleteImagesIn,
+    GenerateTokenIn,
     ImportPathIn,
     MoveImagesIn,
     ReviewApplyIn,
     ReviewUndoIn,
     SetCoverIn,
+    Text2ImageIn,
     WorkspaceIn,
 )
 
@@ -224,12 +227,59 @@ def put_workspace(body: WorkspaceIn):
 
 @app.get("/api/settings")
 def get_settings():
-    return load_settings()
+    settings = load_settings()
+    settings.pop("novelai_token", None)  # 敏感凭据绝不返回前端
+    return settings
 
 
 @app.put("/api/settings")
 def put_settings(body: dict):
+    body.pop("novelai_token", None)  # 仅允许通过专用接口修改 token
     return save_settings(body)
+
+
+# ---------- NovelAI 生成 ----------
+
+
+@app.get("/api/generate/meta")
+def generate_meta():
+    return novelai_service.meta()
+
+
+@app.get("/api/generate/status")
+def generate_status():
+    configured = novelai_service.is_configured()
+    anlas = None
+    error = None
+    if configured:
+        anlas, error = novelai_service.inquire_anlas()
+    return {"configured": configured, "anlas": anlas, "anlas_error": error}
+
+
+@app.get("/api/generate/anlas")
+def generate_anlas():
+    anlas, error = novelai_service.inquire_anlas()
+    return {"anlas": anlas, "error": error}
+
+
+@app.post("/api/generate/token")
+def generate_token(body: GenerateTokenIn):
+    novelai_service.set_token(body.token)
+    return {"ok": True, "configured": novelai_service.is_configured()}
+
+
+@app.post("/api/generate/text2image")
+def generate_text2image(body: Text2ImageIn):
+    try:
+        prompt = cards_service.expand(body.prompt)
+        negative_prompt = cards_service.expand(body.negative_prompt)
+        return novelai_service.generate_text2image(
+            prompt, negative_prompt, body.params or {}
+        )
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except RuntimeError as e:
+        raise _as_http(e, 502)
 
 
 # ---------- 背景图 ----------

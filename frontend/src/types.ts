@@ -108,3 +108,71 @@ export type MoveImagesResult = {
   undo_token: string | null;
   message: string;
 };
+
+export type GenerateResolution = {
+  label: string;
+  width: number;
+  height: number;
+  free: boolean;
+};
+
+export type GenerateModelRules = {
+  samplers: string[];
+  noise_schedules: string[];
+  uc_presets: string[];
+  features: {
+    sm: boolean;
+    decrisp: boolean;
+    legacy_uc: boolean;
+    furry: boolean;
+    characters: boolean;
+  };
+};
+
+export type GenerateMeta = {
+  models: string[];
+  samplers: string[];
+  noise_schedules: string[];
+  uc_presets: string[];
+  resolutions: GenerateResolution[];
+  model_rules: Record<string, GenerateModelRules>;
+  free: { max_steps: number; resolutions: string[]; n_samples: number };
+  quality_tags: Record<string, string>;
+};
+
+export type GenerateStatus = {
+  configured: boolean;
+  anlas: number | null;
+  anlas_error: string | null;
+};
+
+export type GenerateParamsPayload = {
+  model: string;
+  width: number;
+  height: number;
+  steps: number;
+  scale: number;
+  cfg_rescale: number;
+  sampler: string;
+  noise_schedule: string;
+  seed: number;
+  uc_preset: string;
+  quality_toggle: boolean;
+  variety: boolean;
+  sm: boolean;
+  sm_dyn: boolean;
+  decrisp: boolean;
+  legacy_uc: boolean;
+  furry_mode: boolean;
+};
+
+export type Text2ImageResult = {
+  ok: boolean;
+  path: string;
+  name: string;
+  seed: number;
+  width: number;
+  height: number;
+  anlas: number | null;
+  elapsed_ms: number;
+};

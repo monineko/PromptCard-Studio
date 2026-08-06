@@ -1,5 +1,5 @@
-import { SlidersHorizontal, Wand2 } from "lucide-react";
 import { CardPanel } from "../components/CardPanel";
+import { GenerationPanel } from "../components/GenerationPanel";
 import { Workspace } from "../components/Workspace";
 
 export function Home() {
@@ -21,27 +21,7 @@ export function Home() {
       </section>
 
       <section className="glass rounded-2xl p-4">
-        <h2 className="mb-3 text-base font-semibold">生成与参数（预留模块）</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="flex items-center gap-3 rounded-2xl border border-dashed border-[var(--border)] p-4 text-[var(--muted)]">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--hover)]">
-              <Wand2 size={18} />
-            </span>
-            <div>
-              <div className="text-sm font-medium text-[var(--text)]">图片生成</div>
-              <div className="text-xs">对接 NovelAI 后在此批量生成（M4 规划中）</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-2xl border border-dashed border-[var(--border)] p-4 text-[var(--muted)]">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--hover)]">
-              <SlidersHorizontal size={18} />
-            </span>
-            <div>
-              <div className="text-sm font-medium text-[var(--text)]">参数调节</div>
-              <div className="text-xs">生成参数预设：分辨率、采样器、种子等（M4 规划中）</div>
-            </div>
-          </div>
-        </div>
+        <GenerationPanel />
       </section>
     </div>
   );

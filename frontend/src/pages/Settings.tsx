@@ -1,4 +1,4 @@
-import { FolderOpen, Images, RefreshCw, Save, Undo2 } from "lucide-react";
+import { FolderOpen, Images, KeyRound, RefreshCw, Save, Undo2, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
@@ -21,6 +21,12 @@ export function Settings() {
   const [bgImages, setBgImages] = useState<{ name: string; url: string }[]>([]);
   const [bgFolder, setBgFolder] = useState("");
   const [bgLoading, setBgLoading] = useState(false);
+  const [naiToken, setNaiToken] = useState("");
+  const [naiConfigured, setNaiConfigured] = useState(false);
+  const [naiAnlas, setNaiAnlas] = useState<number | null>(null);
+  const [naiError, setNaiError] = useState("");
+  const [naiSaving, setNaiSaving] = useState(false);
+  const [naiChecking, setNaiChecking] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
@@ -51,11 +57,129 @@ export function Settings() {
     void loadBackgrounds();
   }, [loadBackgrounds]);
 
+  const loadGenerateStatus = useCallback(async () => {
+    setNaiChecking(true);
+    try {
+      const r = await api.generateStatus();
+      setNaiConfigured(r.configured);
+      setNaiAnlas(r.anlas);
+      setNaiError(r.anlas_error || "");
+    } catch (e) {
+      setNaiError((e as Error).message);
+    } finally {
+      setNaiChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadGenerateStatus();
+  }, [loadGenerateStatus]);
+
   if (!settings) return <div className="p-8 text-sm text-[var(--muted)]">加载中…</div>;
 
   return (
     <div className="animate-fade-in-up mx-auto w-full max-w-2xl space-y-5 px-4 py-6">
       <h1 className="text-lg font-semibold">设置</h1>
+
+      {/* ---------- NovelAI 连接 ---------- */}
+      <div className="glass space-y-4 rounded-2xl p-5">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2">
+          <span
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-white"
+            style={{ background: "var(--accent)" }}
+          >
+            <Zap size={14} />
+          </span>
+          <h2 className="text-sm font-semibold">NovelAI 连接</h2>
+          <span className="ml-auto flex items-center gap-1.5 text-xs">
+            <span
+              className={
+                "inline-block h-2 w-2 rounded-full " +
+                (naiChecking ? "animate-pulse bg-amber-400" : naiConfigured ? "bg-green-400" : "bg-red-400")
+              }
+            />
+            {naiChecking ? "检查中…" : naiConfigured ? "已配置" : "未配置"}
+          </span>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm">Token</label>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <KeyRound
+                size={14}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"
+              />
+              <input
+                type="password"
+                value={naiToken}
+                onChange={(e) => setNaiToken(e.target.value)}
+                placeholder={naiConfigured ? "已保存，输入新 token 可覆盖" : "粘贴 NovelAI token（仅存本地，不回显）"}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] py-2 pl-9 pr-3 text-sm outline-none focus:border-[var(--accent)]"
+              />
+            </div>
+            <Button
+              size="sm"
+              disabled={naiSaving || !naiToken.trim()}
+              onClick={async () => {
+                setNaiSaving(true);
+                try {
+                  await api.saveGenerateToken(naiToken.trim());
+                  setNaiToken("");
+                  setNaiConfigured(true);
+                  addToast("Token 已保存到本地 config.json");
+                  void loadGenerateStatus();
+                } catch (e) {
+                  addToast(`保存失败: ${(e as Error).message}`, "err");
+                } finally {
+                  setNaiSaving(false);
+                }
+              }}
+            >
+              保存
+            </Button>
+            {naiConfigured && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={naiSaving}
+                onClick={async () => {
+                  setNaiSaving(true);
+                  try {
+                    await api.saveGenerateToken("");
+                    setNaiToken("");
+                    setNaiConfigured(false);
+                    setNaiAnlas(null);
+                    setNaiError("");
+                    addToast("已清除 Token");
+                  } catch (e) {
+                    addToast(`清除失败: ${(e as Error).message}`, "err");
+                  } finally {
+                    setNaiSaving(false);
+                  }
+                }}
+              >
+                清除
+              </Button>
+            )}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--muted)]">
+            Token 只写入项目本地 config.json（已加入 .gitignore），不会出现在任何接口响应或提交记录中。
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 px-3 py-2.5">
+          <span className="text-sm">
+            剩余点数：<b className={naiAnlas !== null && naiAnlas > 0 ? "text-green-400" : "text-[var(--text)]"}>
+              {naiAnlas !== null ? naiAnlas : naiError ? "—" : "…"}
+            </b>
+          </span>
+          {naiError && <span className="max-w-[320px] truncate text-xs text-red-400">{naiError}</span>}
+          <Button size="sm" variant="ghost" onClick={() => void loadGenerateStatus()} disabled={naiChecking}>
+            <RefreshCw size={12} /> {naiChecking ? "查询中…" : "刷新点数"}
+          </Button>
+        </div>
+      </div>
 
       {/* ---------- 界面个性化 ---------- */}
       <div className="glass space-y-5 rounded-2xl p-5">

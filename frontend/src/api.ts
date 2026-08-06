@@ -1,5 +1,7 @@
 import type {
   ImportResult,
+  GenerateMeta,
+  GenerateStatus,
   LibraryImages,
   LibrarySummary,
   MoveImagesResult,
@@ -7,6 +9,7 @@ import type {
   ReviewApplyResult,
   Section,
   Settings,
+  Text2ImageResult,
 } from "./types";
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
@@ -126,6 +129,19 @@ export const api = {
     request<{ images: { name: string; url: string }[]; folder: string }>("/api/backgrounds"),
   openBackgroundsFolder: () =>
     request<{ ok: boolean; path: string }>("/api/backgrounds/open-folder", { method: "POST" }),
+  generateMeta: () => request<GenerateMeta>("/api/generate/meta"),
+  generateStatus: () => request<GenerateStatus>("/api/generate/status"),
+  generateAnlas: () => request<{ anlas: number | null; error: string | null }>("/api/generate/anlas"),
+  saveGenerateToken: (token: string) =>
+    request<{ ok: boolean; configured: boolean }>("/api/generate/token", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  text2image: (prompt: string, negative_prompt: string, params: Record<string, unknown>) =>
+    request<Text2ImageResult>("/api/generate/text2image", {
+      method: "POST",
+      body: JSON.stringify({ prompt, negative_prompt, params }),
+    }),
 };
 
 export function uid(): string {

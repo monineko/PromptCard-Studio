@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, uid } from "./api";
-import { copyText } from "./lib";
+import { copyText, serializeSections } from "./lib";
 import type { Block, Category, Section, Settings, Zone } from "./types";
 
 type Snapshot = { positive: Section[]; negative: Section[] };
@@ -399,22 +399,7 @@ export const useStore = create<AppState>((set, get) => {
     async copyZone() {
       const s = get();
       const sections = zoneSections(s);
-      const parts: string[] = [];
-      for (const section of sections) {
-        if (!section.blocks.length) continue;
-        const text =
-          section.blocks
-            .map((b) =>
-              b.type === "card"
-                ? `<${b.category}:${b.name}>`
-                : b.weight && b.weight !== 1
-                  ? `${b.weight}::${b.text}::`
-                  : b.text
-            )
-            .join(" ") + ",";
-        if (text.trim()) parts.push(text);
-      }
-      const raw = parts.join("\n");
+      const raw = serializeSections(sections);
       if (!raw.trim()) {
         s.addToast("当前区域没有内容可复制", "err");
         return;
