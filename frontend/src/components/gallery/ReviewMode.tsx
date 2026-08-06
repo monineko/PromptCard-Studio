@@ -38,14 +38,17 @@ const EXIT_ANIM: Record<ReviewTag, TargetAndTransition> = {
   },
 };
 
+// 全屏大范围心形粒子：从卡片中心向四周大幅扩散上飘，约 2 秒
 const HEART_PARTICLES = [
-  { dx: -70, dy: -180, size: 18, rot: -20, delay: 0 },
-  { dx: -35, dy: -250, size: 24, rot: 12, delay: 0.08 },
-  { dx: 0, dy: -290, size: 28, rot: 0, delay: 0.14 },
-  { dx: 40, dy: -240, size: 22, rot: -12, delay: 0.06 },
-  { dx: 75, dy: -180, size: 16, rot: 18, delay: 0.12 },
-  { dx: -60, dy: -120, size: 14, rot: 26, delay: 0.18 },
-  { dx: 55, dy: -110, size: 15, rot: -20, delay: 0.22 },
+  { dx: -260, dy: -520, size: 30, rot: -24, delay: 0 },
+  { dx: -150, dy: -700, size: 38, rot: 14, delay: 0.08 },
+  { dx: -40, dy: -820, size: 44, rot: -6, delay: 0.16 },
+  { dx: 60, dy: -760, size: 36, rot: 22, delay: 0.1 },
+  { dx: 170, dy: -620, size: 32, rot: -18, delay: 0.2 },
+  { dx: 260, dy: -480, size: 26, rot: 30, delay: 0.26 },
+  { dx: -220, dy: -380, size: 24, rot: 12, delay: 0.3 },
+  { dx: 210, dy: -350, size: 22, rot: -28, delay: 0.34 },
+  { dx: 0, dy: -300, size: 20, rot: 8, delay: 0.24 },
 ];
 
 /**
@@ -72,10 +75,13 @@ export function ReviewMode({
   const [history, setHistory] = useState<number[]>([]);
   const [applying, setApplying] = useState(false);
   const [leaving, setLeaving] = useState<{ id: number; tag: ReviewTag; path: string } | null>(null);
+  const [heartsBurst, setHeartsBurst] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [rejectFlash, setRejectFlash] = useState<{ id: number } | null>(null);
   const leavingSeq = useRef(0);
   const leavingRef = useRef(leaving);
   leavingRef.current = leaving;
   const centerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const current = items[index];
   const currentTag = current ? tags[current.path] : undefined;
@@ -91,6 +97,24 @@ export function ReviewMode({
         if (rect) {
           useGalleryVisual.getState().fire(rect.left + rect.width / 2, rect.top + rect.height / 2);
         }
+      }
+      if (t === "favorites") {
+        // 心形粒子独立于卡片切换：全屏播放约 2 秒，从卡片中心向外扩散
+        const rootRect = rootRef.current?.getBoundingClientRect();
+        const cardRect = centerRef.current?.getBoundingClientRect();
+        let sx = (rootRect?.width ?? window.innerWidth) / 2;
+        let sy = (rootRect?.height ?? window.innerHeight) / 2;
+        if (rootRect && cardRect) {
+          sx = cardRect.left + cardRect.width / 2 - rootRect.left;
+          sy = cardRect.top + cardRect.height / 2 - rootRect.top;
+        }
+        setHeartsBurst({ id: leavingSeq.current, x: sx, y: sy });
+        window.setTimeout(() => setHeartsBurst(null), 2500);
+      }
+      if (t === "reject") {
+        // 全屏溶解模糊：1 秒，不阻塞图片切换节奏
+        setRejectFlash({ id: leavingSeq.current });
+        window.setTimeout(() => setRejectFlash(null), 1300);
       }
       leavingSeq.current += 1;
       setLeaving({ id: leavingSeq.current, tag: t, path: current.path });
@@ -181,7 +205,7 @@ export function ReviewMode({
   }
 
   return (
-    <div className="relative flex h-full animate-fade-in-up flex-col">
+    <div ref={rootRef} className="relative flex h-full animate-fade-in-up flex-col">
       {/* 深色空间场景蒙层 */}
       <div
         aria-hidden
@@ -191,6 +215,55 @@ export function ReviewMode({
             "radial-gradient(120% 120% at 50% 18%, rgba(34,36,50,0.42), rgba(6,7,10,0.86))",
         }}
       />
+
+      {/* 全屏心形粒子（Like/收藏，独立于卡片切换，约 2 秒） */}
+      <AnimatePresence>
+        {heartsBurst && (
+          <motion.div
+            key={`hearts-${heartsBurst.id}`}
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="pointer-events-none absolute inset-0 z-40 overflow-hidden"
+          >
+            {HEART_PARTICLES.map((h, i) => (
+              <motion.span
+                key={`${heartsBurst.id}-h${i}`}
+                initial={{ opacity: 0, x: 0, y: 0, scale: 0.3, rotate: 0 }}
+                animate={{ opacity: [0, 1, 1, 0.85, 0], x: h.dx, y: h.dy, scale: 1.25, rotate: h.rot }}
+                transition={{ duration: 2, delay: h.delay, ease: "easeOut" }}
+                className="absolute text-rose-400"
+                style={{
+                  fontSize: h.size,
+                  left: heartsBurst.x,
+                  top: heartsBurst.y,
+                  marginLeft: -h.size / 2,
+                  marginTop: -h.size / 2,
+                  textShadow: "0 0 18px rgba(255,105,180,0.95)",
+                }}
+              >
+                ♥
+              </motion.span>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 全屏溶解模糊（Reject，约 1 秒，不阻塞图片切换） */}
+      <AnimatePresence>
+        {rejectFlash && (
+          <motion.div
+            key={`reject-${rejectFlash.id}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.7, 0] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1, ease: "easeInOut" }}
+            className="pointer-events-none absolute inset-0 z-40"
+            style={{ backdropFilter: "blur(12px) grayscale(1)", background: "rgba(8,9,12,0.35)" }}
+          />
+        )}
+      </AnimatePresence>
 
       <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <span className="text-sm font-medium">筛选模式 · {categoryLabel}</span>
@@ -294,27 +367,6 @@ export function ReviewMode({
                           "radial-gradient(circle at 50% 45%, rgba(255,105,180,0.28), transparent 68%)",
                       }}
                     />
-                    <div className="absolute inset-0 z-20 flex items-center justify-center">
-                      {HEART_PARTICLES.map((h, i) => (
-                        <motion.span
-                          key={`${leaving.id}-h${i}`}
-                          initial={{ opacity: 0, x: 0, y: 0, scale: 0.4, rotate: 0 }}
-                          animate={{ opacity: [0, 1, 1, 0], x: h.dx, y: h.dy, scale: 1.1, rotate: h.rot }}
-                          transition={{ duration: 0.9, delay: h.delay, ease: "easeOut" }}
-                          className="absolute text-rose-400"
-                          style={{
-                            fontSize: h.size,
-                            left: "50%",
-                            top: "50%",
-                            marginLeft: -h.size / 2,
-                            marginTop: -h.size / 2,
-                            textShadow: "0 0 14px rgba(255,105,180,0.9)",
-                          }}
-                        >
-                          ♥
-                        </motion.span>
-                      ))}
-                    </div>
                   </>
                 )}
               </motion.div>

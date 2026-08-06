@@ -114,6 +114,14 @@ export const api = {
       "/api/library/delete",
       { method: "POST", body: JSON.stringify({ paths }) }
     ),
+  libraryCovers: () => request<Record<string, string>>("/api/library/covers"),
+  setLibraryCover: (category: string, path: string) =>
+    request("/api/library/covers", {
+      method: "PUT",
+      body: JSON.stringify({ category, path }),
+    }),
+  removeLibraryCover: (category: string) =>
+    request(`/api/library/covers?category=${encodeURIComponent(category)}`, { method: "DELETE" }),
   backgrounds: () =>
     request<{ images: { name: string; url: string }[]; folder: string }>("/api/backgrounds"),
   openBackgroundsFolder: () =>

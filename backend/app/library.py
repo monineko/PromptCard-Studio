@@ -35,6 +35,7 @@ CATEGORY_LABELS = {
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
+COVERS_FILE_NAME = ".covers.json"
 
 # 撤销记录（内存，仅本次运行期间有效；键为 token）
 _UNDO_STORE: dict[str, list[dict]] = {}
@@ -52,6 +53,47 @@ def _library_root() -> Path:
         root = LIBRARY_DIR / root
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def list_covers() -> dict:
+    """分类封面映射：{"<category_key>": 图库相对路径}，未设置则返回空。"""
+    f = _library_root() / COVERS_FILE_NAME
+    if not f.exists():
+        return {}
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_covers(covers: dict) -> None:
+    f = _library_root() / COVERS_FILE_NAME
+    f.write_text(json.dumps(covers, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def set_cover(category: str, path: str) -> dict:
+    """把图库内一张图片设为指定分类的封面。"""
+    if category not in CATEGORY_ORDER:
+        raise ValueError(f"未知分类: {category}")
+    file = resolve_image(path)
+    if not file.exists() or not file.is_file():
+        raise FileNotFoundError("图片不存在")
+    covers = list_covers()
+    covers[category] = path
+    _save_covers(covers)
+    return {"ok": True, "category": category, "path": path}
+
+
+def remove_cover(category: str) -> dict:
+    """清除指定分类的封面（恢复默认逻辑）。"""
+    if category not in CATEGORY_ORDER:
+        raise ValueError(f"未知分类: {category}")
+    covers = list_covers()
+    if category in covers:
+        covers.pop(category)
+        _save_covers(covers)
+    return {"ok": True}
 
 
 def resolve_image(rel_path: str) -> Path:

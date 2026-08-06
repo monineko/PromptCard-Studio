@@ -1,4 +1,4 @@
-import { ArrowLeft, CheckSquare, FolderInput, Loader2, Trash2, X } from "lucide-react";
+import { ArrowLeft, CheckSquare, FolderInput, Images, Loader2, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -34,16 +34,20 @@ function loadPos(): { x: number; y: number } {
 export function QuickPickPopup({
   count,
   showDelete,
+  category,
   busy,
   onMove,
   onDelete,
+  onSetCover,
   onClose,
 }: {
   count: number;
   showDelete: boolean;
+  category: string;
   busy: boolean;
   onMove: (target: string) => void;
   onDelete: () => void;
+  onSetCover: () => void;
   onClose: () => void;
 }) {
   const [pos, setPos] = useState(loadPos);
@@ -132,6 +136,14 @@ export function QuickPickPopup({
               style={{ background: "var(--accent)" }}
             >
               <FolderInput size={15} /> 移动到…
+            </button>
+            <button
+              disabled={!count || busy}
+              onClick={onSetCover}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)]/40 px-3 py-2.5 text-sm font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10 disabled:opacity-40"
+              title={`将第一张选中的图片设为「${category}」分类的封面`}
+            >
+              <Images size={15} /> 设为封面
             </button>
             {showDelete && (
               <button

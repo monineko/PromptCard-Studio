@@ -79,3 +79,8 @@ class MoveImagesIn(BaseModel):
 
 class DeleteImagesIn(BaseModel):
     paths: list[str] = []
+
+
+class SetCoverIn(BaseModel):
+    category: str
+    path: str

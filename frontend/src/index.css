@@ -172,3 +172,18 @@ textarea {
   );
   animation: shine-sweep 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* 慢速闪烁（浅粉色）：用于"选择演示图片"提示与取消按钮 */
+@keyframes pulse-pink {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.pulse-pink {
+  animation: pulse-pink 1.8s ease-in-out infinite;
+}

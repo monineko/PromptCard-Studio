@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
@@ -116,6 +117,7 @@ export function Gallery() {
 
   const [summary, setSummary] = useState<LibrarySummary | null>(null);
   const [covers, setCovers] = useState<Partial<Record<LibraryCategoryKey, CoverEntry[]>>>({});
+  const [coverMap, setCoverMap] = useState<Partial<Record<LibraryCategoryKey, string>>>({});
   const [category, setCategory] = useState<LibraryCategoryKey | null>(null);
   const [items, setItems] = useState<LibraryImageItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -162,24 +164,37 @@ export function Gallery() {
     if (category || !summary) return;
     let cancelled = false;
     void (async () => {
-      const entries = await Promise.all(
-        CATEGORY_ORDER.map(async (key) => {
-          try {
-            const r = await api.libraryImages(key);
-            return [
-              key,
-              r.items.slice(0, 4).map((i) => ({ url: api.libraryImageUrl(i.path), name: i.name, date: i.date })),
-            ] as const;
-          } catch {
-            return [key, []] as const;
-          }
-        })
-      );
+      const [explicitCovers, entries] = await Promise.all([
+        api.libraryCovers().catch(() => ({}) as Record<string, string>),
+        Promise.all(
+          CATEGORY_ORDER.map(async (key) => {
+            try {
+              const r = await api.libraryImages(key);
+              return [
+                key,
+                r.items.slice(0, 4).map((i) => ({ url: api.libraryImageUrl(i.path), name: i.name, date: i.date })),
+              ] as const;
+            } catch {
+              return [key, []] as const;
+            }
+          })
+        ),
+      ]);
       if (cancelled) return;
       const map = Object.fromEntries(entries) as Partial<Record<LibraryCategoryKey, CoverEntry[]>>;
       setCovers(map);
+      // 封面：优先用户设置的封面；未设置时取该分类第一张（"全部"随机一张，避免与其它封面重复）
+      const effective: Partial<Record<LibraryCategoryKey, string>> = {};
+      for (const key of CATEGORY_ORDER) {
+        const list = map[key] ?? [];
+        if (!list.length) continue;
+        if (explicitCovers[key]) effective[key] = explicitCovers[key];
+        else if (key === "all") effective[key] = list[Math.floor(Math.random() * list.length)].url;
+        else effective[key] = list[0].url;
+      }
+      setCoverMap(effective);
       const showcase = CATEGORY_ORDER.flatMap((k) =>
-        map[k]?.[0] ? [{ key: `${k}:${map[k]![0].url}`, url: map[k]![0].url }] : []
+        effective[k] ? [{ key: `${k}:${effective[k]}`, url: effective[k] }] : []
       );
       if (showcase.length) useGalleryVisual.getState().setBackdrops(showcase);
       else useGalleryVisual.getState().resetBackdrops();
@@ -193,6 +208,11 @@ export function Gallery() {
   useEffect(() => {
     return () => useGalleryVisual.getState().resetBackdrops();
   }, []);
+
+  // 切换页面离开图库时，自动取消"选择演示图片"状态
+  useEffect(() => {
+    return () => cancelPick();
+  }, [cancelPick]);
 
   const openCategory = useCallback(async (key: LibraryCategoryKey) => {
     setCategory(key);
@@ -230,6 +250,21 @@ export function Gallery() {
     setPngOpen(false);
     setPngInfo(null);
   }, [cancelPick]);
+
+  const handleSetCover = useCallback(async () => {
+    const paths = [...selectedPaths];
+    if (!paths.length || quickPickBusy || !category) return;
+    setQuickPickBusy(true);
+    try {
+      await api.setLibraryCover(category, paths[0]);
+      addToast(`已设为「${CATEGORY_LABEL[category]}」分类封面`);
+      await refresh();
+    } catch (e) {
+      addToast(`设置封面失败: ${(e as Error).message}`, "err");
+    } finally {
+      setQuickPickBusy(false);
+    }
+  }, [addToast, category, quickPickBusy, refresh, selectedPaths]);
 
   const groups = useMemo(() => (category ? buildGroups(items, category) : []), [category, items]);
   const slides = useMemo(
@@ -570,6 +605,8 @@ export function Gallery() {
             const meta = CATEGORY_META[key];
             const info = summary?.categories.find((c) => c.key === key);
             const list = covers[key] ?? [];
+            const cover = coverMap[key];
+            const others = cover ? list.filter((c) => c.url !== cover) : list;
             return (
               <AlbumStackCard
                 key={key}
@@ -577,7 +614,9 @@ export function Gallery() {
                 subtitle={meta.desc}
                 count={info?.count ?? 0}
                 date={latestDate(list)}
-                coverUrls={list.map((c) => c.url)}
+                coverUrls={
+                  cover ? [cover, ...others.slice(0, 3).map((c) => c.url)] : list.map((c) => c.url)
+                }
                 color={meta.color}
                 icon={meta.icon}
                 index={i}
@@ -656,17 +695,24 @@ export function Gallery() {
   return (
     <div className="min-h-full animate-fade-in-up pb-10">
       {pendingCard && (
-        <div className="flex items-center gap-2 border-b border-[var(--accent)]/30 bg-[var(--accent)]/10 px-4 py-2 text-xs">
-          <ImagePlus size={14} className="shrink-0 text-[var(--accent)]" />
+        <div
+          className="pulse-pink flex items-center gap-2 border-b border-[#ffb6c1]/30 bg-[#ffb6c1]/10 px-4 py-2 text-xs"
+          style={{ color: "#ffb6c1" }}
+        >
+          <ImagePlus size={14} className="shrink-0" />
           <span className="min-w-0 truncate">
-            正在为 <b className="text-[var(--accent)]">{pendingCard.category}：{pendingCard.name}</b>{" "}
+            正在为 <b>{pendingCard.category}：{pendingCard.name}</b>{" "}
             选择演示图片 —— 点击图片即可选择
           </span>
           <button
-            onClick={cancelPick}
-            className="ml-auto shrink-0 rounded-md bg-[var(--hover)] px-2 py-1 text-[var(--muted)] transition-colors hover:text-[var(--text)]"
+            onClick={() => {
+              cancelPick();
+              navigate("/");
+            }}
+            className="ml-auto shrink-0 rounded-md border border-[#ffb6c1]/60 bg-[#ffb6c1]/10 px-2.5 py-1 font-medium"
+            style={{ color: "#ffb6c1" }}
           >
-            取消选择
+            取消添加
           </button>
         </div>
       )}
@@ -797,14 +843,16 @@ export function Gallery() {
         <QuickPickPopup
           count={selectedPaths.size}
           showDelete={category === "reject"}
+          category={category}
           busy={quickPickBusy}
           onMove={handleQuickMove}
           onDelete={handleQuickDelete}
+          onSetCover={handleSetCover}
           onClose={closeQuickPick}
         />
       )}
 
-      {pickCandidate && pendingCard && (
+      {pickCandidate && pendingCard && createPortal(
         <div
           className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4"
           onClick={() => setPickCandidate(null)}
@@ -846,7 +894,7 @@ export function Gallery() {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 }

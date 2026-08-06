@@ -27,6 +27,7 @@ from .schemas import (
     MoveImagesIn,
     ReviewApplyIn,
     ReviewUndoIn,
+    SetCoverIn,
     WorkspaceIn,
 )
 
@@ -358,6 +359,29 @@ def library_delete(body: DeleteImagesIn):
         return library_service.delete_images(body.paths)
     except Exception as e:
         raise _as_http(e)
+
+
+@app.get("/api/library/covers")
+def library_covers():
+    return library_service.list_covers()
+
+
+@app.put("/api/library/covers")
+def library_set_cover(body: SetCoverIn):
+    try:
+        return library_service.set_cover(body.category, body.path)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.delete("/api/library/covers")
+def library_remove_cover(category: str):
+    try:
+        return library_service.remove_cover(category)
+    except ValueError as e:
+        raise _as_http(e, 400)
 
 
 # ---------- 静态前端 ----------
