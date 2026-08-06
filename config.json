@@ -6,5 +6,12 @@
   },
   "library_path": "E:\\Agent\\Codex\\workspace\\Project\\novelai-prompt-manager\\library",
   "format_input": true,
-  "port": 11451
+  "port": 11451,
+  "category_order": [
+    "质量",
+    "角色",
+    "动作",
+    "综合sfw",
+    "综合nsfw"
+  ]
 }

@@ -1,10 +1,11 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
 import {
   ChevronDown,
   ChevronRight,
   Download,
   FileUp,
   FolderPlus,
+  GripVertical,
   ImagePlus,
   Pencil,
   Plus,
@@ -190,6 +191,26 @@ function CategoryPack({ category }: { category: Category }) {
   );
 }
 
+function CategoryPackItem({ category }: { category: Category }) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item value={category.name} dragListener={false} dragControls={controls} layout>
+      <div className="flex">
+        <div
+          className="mr-0 flex cursor-grab touch-none items-center rounded-l-2xl border border-r-0 border-[var(--border)] bg-[var(--input)]/40 px-1.5 text-[var(--muted)] transition-colors hover:text-[var(--text)] active:cursor-grabbing"
+          title="拖动排序分类"
+          onPointerDown={(e) => controls.start(e)}
+        >
+          <GripVertical size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <CategoryPack category={category} />
+        </div>
+      </div>
+    </Reorder.Item>
+  );
+}
+
 export function CardPanel() {
   const categories = useStore((s) => s.categories);
   const search = useStore((s) => s.search);
@@ -198,6 +219,7 @@ export function CardPanel() {
   const setNewCardCategory = useStore((s) => s.setNewCardCategory);
   const setShowNewCategory = useStore((s) => s.setShowNewCategory);
   const setShowImport = useStore((s) => s.setShowImport);
+  const reorderCategories = useStore((s) => s.reorderCategories);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -248,11 +270,16 @@ export function CardPanel() {
           <span className="text-xs">点击"新建卡片"开始，或通过导入添加</span>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <Reorder.Group
+          axis="y"
+          values={filtered.map((c) => c.name)}
+          onReorder={reorderCategories}
+          className="flex flex-col gap-3"
+        >
           {filtered.map((c) => (
-            <CategoryPack key={c.name} category={c} />
+            <CategoryPackItem key={c.name} category={c} />
           ))}
-        </div>
+        </Reorder.Group>
       )}
 
       <CardDetailModal />

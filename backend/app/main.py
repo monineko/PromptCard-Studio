@@ -14,6 +14,7 @@ from .schemas import (
     AnrImportIn,
     CardIn,
     CardUpdate,
+    CategoryOrder,
     CategoryIn,
     CategoryRename,
     ExpandRequest,
@@ -72,6 +73,11 @@ def remove_category(name: str):
         return {"ok": True}
     except Exception as e:
         raise _as_http(e, 404)
+
+
+@app.put("/api/categories/order")
+def set_category_order(body: CategoryOrder):
+    return save_settings({"category_order": body.names})
 
 
 # ---------- 卡片 ----------

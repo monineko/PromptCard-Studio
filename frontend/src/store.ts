@@ -33,6 +33,12 @@ function defaultZone(): Section[] {
   return DEFAULT_SECTION_NAMES.map((name) => makeSection(name, true));
 }
 
+function cloneZones(positive: Section[], negative: Section[]): { positive: Section[]; negative: Section[] } {
+  const clone = (sections: Section[]) =>
+    sections.map((sec) => ({ ...sec, blocks: [...sec.blocks] }));
+  return { positive: clone(positive), negative: clone(negative) };
+}
+
 interface AppState {
   ready: boolean;
   settings: Settings | null;
@@ -55,6 +61,7 @@ interface AppState {
 
   init: () => Promise<void>;
   refreshCategories: () => Promise<void>;
+  reorderCategories: (names: string[]) => void;
   setSearch: (s: string) => void;
   toggleExpanded: (name: string) => void;
   setZone: (z: Zone) => void;
@@ -112,12 +119,13 @@ function applyTheme(settings: Settings | null) {
 }
 
 export const useStore = create<AppState>((set, get) => {
-  const snapshot = (): Snapshot => ({ positive: get().positive, negative: get().negative });
+  const snapshot = (): Snapshot => cloneZones(get().positive, get().negative);
 
   const commit = (mutate: (s: AppState) => void) => {
     set((s) => {
       const past = [...s.past.slice(-59), snapshot()];
-      const next = { ...s, past, future: [] };
+      const cloned = cloneZones(s.positive, s.negative);
+      const next = { ...s, ...cloned, past, future: [] };
       mutate(next);
       scheduleSave(get);
       return next;
@@ -178,6 +186,16 @@ export const useStore = create<AppState>((set, get) => {
       } catch (e) {
         get().addToast(`刷新失败: ${(e as Error).message}`, "err");
       }
+    },
+
+    reorderCategories(names) {
+      set((s) => {
+        const byName = new Map(s.categories.map((c) => [c.name, c]));
+        const ordered = names.map((n) => byName.get(n)).filter((c): c is Category => !!c);
+        const rest = s.categories.filter((c) => !names.includes(c.name));
+        return { categories: [...ordered, ...rest] };
+      });
+      api.saveCategoryOrder(names).catch(() => {});
     },
 
     setSearch: (s) => set({ search: s }),

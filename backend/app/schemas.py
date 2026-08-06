@@ -37,3 +37,7 @@ class WorkspaceIn(BaseModel):
 
 class AnrImportIn(BaseModel):
     path: str
+
+
+class CategoryOrder(BaseModel):
+    names: list[str]

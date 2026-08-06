@@ -19,6 +19,8 @@ async function request<T = any>(path: string, options: RequestInit = {}): Promis
 
 export const api = {
   categories: () => request<any[]>("/api/categories"),
+  saveCategoryOrder: (names: string[]) =>
+    request("/api/categories/order", { method: "PUT", body: JSON.stringify({ names }) }),
   createCategory: (name: string) =>
     request("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),
   renameCategory: (old_name: string, new_name: string) =>

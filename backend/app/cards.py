@@ -8,7 +8,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from .config import WILDCARDS_DIR
+from .config import WILDCARDS_DIR, load_settings
 
 INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
@@ -57,7 +57,11 @@ def list_categories() -> list[dict]:
                 }
             )
         result.append({"name": folder.name, "count": len(cards), "cards": cards})
-    return result
+    order = load_settings().get("category_order") or []
+    by_name = {c["name"]: c for c in result}
+    ordered = [by_name[n] for n in order if n in by_name]
+    rest = [c for c in result if c["name"] not in order]
+    return ordered + rest
 
 
 def get_card(category: str, name: str) -> dict | None:
