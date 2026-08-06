@@ -45,9 +45,9 @@ function Shell() {
     init();
   }, [init]);
 
-  // 图库页面自动打开侧边栏，其他页面保持用户手动状态
+  // 图片库页面不自动展开（进入图片流时才展开）；其他页面侧边栏自动向左侧隐藏
   useEffect(() => {
-    if (location.pathname === "/library") setSidebarOpen(true);
+    if (location.pathname !== "/library") setSidebarOpen(false);
   }, [location.pathname, setSidebarOpen]);
 
   return (

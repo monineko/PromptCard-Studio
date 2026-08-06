@@ -1,17 +1,14 @@
 import { motion } from "framer-motion";
-import { Moon, Palette, PanelLeftClose, PanelLeftOpen, Rocket, Sparkles, Sun } from "lucide-react";
+import { Moon, Palette, Rocket, Sparkles, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "../lib";
-import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
 import { IconBtn } from "./UI";
 
 export function TopBar() {
   const settings = useStore((s) => s.settings);
   const setTheme = useStore((s) => s.setTheme);
-  const sidebarOpen = useSidebarStore((s) => s.open);
-  const setSidebarOpen = useSidebarStore((s) => s.setOpen);
   const mode = settings?.theme.mode ?? "dark";
   const accent = settings?.theme.accent ?? "#8b5cf6";
   const [hidden, setHidden] = useState(false);
@@ -42,13 +39,6 @@ export function TopBar() {
       transition={{ duration: 0.18, ease: "easeOut" }}
       className="glass sticky top-0 z-30 flex items-center gap-3 border-x-0 border-t-0 px-3 py-2.5"
     >
-      <IconBtn
-        title={sidebarOpen ? "收起侧边栏" : "打开侧边栏"}
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="h-8 w-8"
-      >
-        {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-      </IconBtn>
       <div className="flex items-center gap-2">
         <span
           className="flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-lg"

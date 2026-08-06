@@ -112,6 +112,7 @@ export function Gallery() {
   const setSidebarGroups = useSidebarStore((s) => s.setGroups);
   const setSidebarActive = useSidebarStore((s) => s.setActiveGroup);
   const setReviewAvailable = useSidebarStore((s) => s.setReviewAvailable);
+  const setSidebarOpen = useSidebarStore((s) => s.setOpen);
   const registerGallery = useSidebarStore((s) => s.registerGallery);
   const unregisterGallery = useSidebarStore((s) => s.unregisterGallery);
 
@@ -174,6 +175,11 @@ export function Gallery() {
     }
   }, [lightboxIndex]);
 
+  // 分类入口页（没有时间索引）时侧边栏保持收起
+  useEffect(() => {
+    if (!category) setSidebarOpen(false);
+  }, [category, setSidebarOpen]);
+
   const scrollToGroup = useCallback((key: string) => {
     const el = document.getElementById(`group-${key}`);
     if (!el) return;
@@ -204,6 +210,7 @@ export function Gallery() {
   // 向全局侧边栏注册时间索引与筛选模式
   useEffect(() => {
     if (!category || !groups.length) return;
+    setSidebarOpen(true); // 进入图片流（出现时间索引）时才主动展开侧边栏
     setSidebarGroups(groups.map((g) => ({ key: g.key, label: g.label, count: g.items.length })));
     setReviewAvailable(items.length > 0 && !reviewing);
     registerGallery({
@@ -226,6 +233,7 @@ export function Gallery() {
     registerGallery,
     scrollToGroup,
     setReviewAvailable,
+    setSidebarOpen,
     setSidebarGroups,
     unregisterGallery,
   ]);

@@ -1,5 +1,14 @@
 import { motion } from "framer-motion";
-import { Home, Images, ListOrdered, Play, Rocket, Settings as SettingsIcon } from "lucide-react";
+import {
+  Home,
+  Images,
+  ListOrdered,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Play,
+  Rocket,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "../lib";
 import { useSidebarStore } from "../sidebarStore";
@@ -23,16 +32,30 @@ export function AppSidebar() {
   const reviewAvailable = useSidebarStore((s) => s.reviewAvailable);
   const scrollTo = useSidebarStore((s) => s.scrollTo);
   const startReview = useSidebarStore((s) => s.startReview);
+  const setOpen = useSidebarStore((s) => s.setOpen);
 
   return (
-    <aside className="fixed bottom-0 left-0 top-14 z-20">
-      <motion.div
+    <>
+      {/* 左侧居中半透明开关把手，随侧边栏边缘移动 */}
+      <motion.button
         initial={false}
-        animate={{ width: open ? 224 : 0 }}
+        animate={{ left: open ? 224 : 0, y: "-50%" }}
         transition={{ duration: 0.22, ease: "easeInOut" }}
-        className="h-full overflow-hidden"
+        onClick={() => setOpen(!open)}
+        className="fixed top-1/2 z-40 flex h-11 w-6 items-center justify-center rounded-r-xl bg-black/30 text-white/90 backdrop-blur-sm transition-colors hover:bg-black/50"
+        title={open ? "收起侧边栏" : "打开侧边栏"}
       >
-        <div className="glass flex h-full w-56 flex-col rounded-r-2xl border-y-0 border-l-0 p-3">
+        {open ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+      </motion.button>
+
+      <aside className="fixed bottom-0 left-0 top-14 z-20">
+        <motion.div
+          initial={false}
+          animate={{ width: open ? 224 : 0 }}
+          transition={{ duration: 0.22, ease: "easeInOut" }}
+          className="h-full overflow-hidden"
+        >
+          <div className="glass flex h-full w-56 flex-col rounded-r-2xl border-y-0 border-l-0 p-3">
           <nav className="space-y-1">
             {NAV_ITEMS.map((item) => (
               <NavLink
@@ -96,8 +119,9 @@ export function AppSidebar() {
               </button>
             </div>
           )}
-        </div>
-      </motion.div>
-    </aside>
+          </div>
+        </motion.div>
+      </aside>
+    </>
   );
 }
