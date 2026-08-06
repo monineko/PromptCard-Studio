@@ -101,6 +101,8 @@ export function Gallery() {
   const [loadingItems, setLoadingItems] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [reviewPicker, setReviewPicker] = useState(false);
+  const [reviewStartIndex, setReviewStartIndex] = useState(0);
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [pngInfo, setPngInfo] = useState<PngInfoResult | null>(null);
@@ -180,6 +182,11 @@ export function Gallery() {
     if (!category) setSidebarOpen(false);
   }, [category, setSidebarOpen]);
 
+  // 进入筛选模式时收起侧边栏
+  useEffect(() => {
+    if (reviewing) setSidebarOpen(false);
+  }, [reviewing, setSidebarOpen]);
+
   const scrollToGroup = useCallback((key: string) => {
     const el = document.getElementById(`group-${key}`);
     if (!el) return;
@@ -210,14 +217,15 @@ export function Gallery() {
   // 向全局侧边栏注册时间索引与筛选模式
   useEffect(() => {
     if (!category || !groups.length) return;
-    setSidebarOpen(true); // 进入图片流（出现时间索引）时才主动展开侧边栏
+    if (!reviewing) setSidebarOpen(true); // 进入图片流（出现时间索引）时才主动展开侧边栏
     setSidebarGroups(groups.map((g) => ({ key: g.key, label: g.label, count: g.items.length })));
     setReviewAvailable(items.length > 0 && !reviewing);
     registerGallery({
       scrollTo: (key) => scrollToGroup(key),
       startReview: () => {
         setLightboxIndex(null);
-        setReviewing(true);
+        setSidebarOpen(false);
+        setReviewPicker(true);
       },
     });
     return () => {
@@ -237,6 +245,16 @@ export function Gallery() {
     setSidebarGroups,
     unregisterGallery,
   ]);
+
+  const startReviewFrom = useCallback(
+    (dateKey: string) => {
+      const idx = items.findIndex((i) => i.date === dateKey);
+      setReviewStartIndex(idx >= 0 ? idx : 0);
+      setReviewPicker(false);
+      setReviewing(true);
+    },
+    [items]
+  );
 
   const handleReadPngInfo = useCallback(
     async (path: string) => {
@@ -431,10 +449,48 @@ export function Gallery() {
       <ReviewMode
         items={items}
         categoryLabel={summary?.categories.find((c) => c.key === category)?.label ?? category}
+        startIndex={reviewStartIndex}
         recycleReject={recycleReject}
         onFinished={handleReviewFinished}
         onCancel={() => setReviewing(false)}
       />
+    );
+  }
+
+  // ---------- 选择筛选起始时间 ----------
+  if (reviewPicker) {
+    return (
+      <div
+        className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4"
+        onClick={() => setReviewPicker(false)}
+      >
+        <div
+          className="glass w-full max-w-sm rounded-2xl p-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-3 text-sm font-semibold">选择从哪个时间开始筛选</div>
+          <div className="max-h-72 space-y-1.5 overflow-auto">
+            {groups.map((g) => (
+              <button
+                key={g.key}
+                onClick={() => startReviewFrom(g.key)}
+                className="flex w-full items-center justify-between rounded-lg bg-[var(--hover)] px-3 py-2.5 text-sm transition-colors hover:bg-[var(--accent)] hover:text-white"
+              >
+                <span>{g.label}</span>
+                <span className="text-xs opacity-70">{g.items.length} 张</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => setReviewPicker(false)}
+              className="rounded-lg bg-[var(--hover)] px-3 py-1.5 text-xs text-[var(--muted)]"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 

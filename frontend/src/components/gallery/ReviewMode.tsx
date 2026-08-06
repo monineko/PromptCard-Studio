@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, CornerDownLeft, Crown, Heart, ThumbsUp, Undo2, XCircle } from "lucide-react";
+import { Check, Crown, Heart, ThumbsUp, Undo2, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { api } from "../../api";
@@ -18,17 +18,19 @@ const TAGS: { tag: ReviewTag; label: string; key: string; icon: typeof Crown; co
 export function ReviewMode({
   items,
   categoryLabel,
+  startIndex = 0,
   recycleReject,
   onFinished,
   onCancel,
 }: {
   items: LibraryImageItem[];
   categoryLabel: string;
+  startIndex?: number;
   recycleReject: boolean;
   onFinished: (result: Awaited<ReturnType<typeof api.applyReview>>) => void;
   onCancel: () => void;
 }) {
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(startIndex);
   const [tags, setTags] = useState<Record<string, ReviewTag>>({});
   const [history, setHistory] = useState<number[]>([]);
   const [applying, setApplying] = useState(false);
@@ -125,21 +127,10 @@ export function ReviewMode({
     return () => window.removeEventListener("keydown", onKey);
   }, [applying, tag, undoLast, finish, onCancel]);
 
-  const keyboardHints = useMemo(() => {
-    const hint = (t: typeof TAGS[number]) => (
-      <span key={t.tag} className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-        <span
-          className="flex h-5 w-5 items-center justify-center rounded border border-[var(--border)]"
-          title={t.key}
-        >
-          {t.key === "ArrowLeft" ? "←" : t.key === "ArrowDown" ? "↓" : t.key === "ArrowRight" ? "→" : "↑"}
-        </span>
-        <t.icon size={13} style={{ color: t.color }} />
-        {t.label}
-      </span>
-    );
-    return TAGS.map(hint);
-  }, []);
+  const prev = index > 0 ? items[index - 1] : null;
+  const next = index < items.length - 1 ? items[index + 1] : null;
+  const keyHint = (key: string) =>
+    key === "ArrowLeft" ? "←" : key === "ArrowDown" ? "↓" : key === "ArrowRight" ? "→" : "↑";
 
   if (!current) {
     return (
@@ -155,39 +146,29 @@ export function ReviewMode({
   return (
     <div className="flex h-full flex-col">
       <div className="glass sticky top-0 z-20 flex items-center gap-3 px-4 py-2">
-        <button
-          onClick={onCancel}
-          className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--text)]"
-        >
-          <ArrowLeft size={14} /> 退出
-        </button>
         <span className="text-sm font-medium">筛选模式 · {categoryLabel}</span>
         <span className="text-xs text-[var(--muted)]">
           {index + 1} / {items.length} · 已标记 {taggedCount}
         </span>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={undoLast}
-            disabled={!history.length}
-            className="flex items-center gap-1 rounded-lg bg-[var(--hover)] px-2.5 py-1.5 text-xs disabled:opacity-40"
-          >
-            <Undo2 size={13} /> 撤销
-          </button>
-          <button
-            onClick={finish}
-            disabled={applying}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white disabled:opacity-50"
-            style={{ background: "var(--accent)" }}
-          >
-            <Check size={14} /> 结束筛选
-          </button>
-        </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center gap-6 p-6">
-        <div className="hidden w-56 shrink-0 flex-col gap-2 rounded-2xl border border-[var(--border)] bg-black/20 p-3 lg:flex">
-          <span className="text-xs text-[var(--muted)]">上一张</span>
-          <div className="aspect-square w-full rounded-lg bg-[var(--hover)]" />
+      <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+        {/* 上一张：被中间遮盖的抽象卡片（无图时为占位块） */}
+        <div className="z-0 -mr-10 w-56 shrink-0">
+          <div className="aspect-square w-full -rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-xl brightness-[0.62]">
+            {prev ? (
+              <img
+                src={api.libraryImageUrl(prev.path)}
+                alt={prev.name}
+                draggable={false}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs text-[var(--muted)]">
+                没有上一张
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="relative flex h-full max-h-[68vh] max-w-[46vw] min-w-0 items-center justify-center">
@@ -233,20 +214,71 @@ export function ReviewMode({
           )}
         </div>
 
-        <div className="hidden w-56 shrink-0 flex-col gap-2 rounded-2xl border border-[var(--border)] bg-black/20 p-3 lg:flex">
-          <span className="text-xs text-[var(--muted)]">下一张</span>
-          <div className="aspect-square w-full rounded-lg bg-[var(--hover)]" />
+        {/* 下一张：被中间遮盖的抽象卡片 */}
+        <div className="z-0 -ml-10 w-56 shrink-0">
+          <div className="aspect-square w-full rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-xl brightness-[0.62]">
+            {next ? (
+              <img
+                src={api.libraryImageUrl(next.path)}
+                alt={next.name}
+                draggable={false}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs text-[var(--muted)]">
+                没有下一张
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="glass flex flex-wrap items-center justify-center gap-4 border-x-0 border-b-0 px-4 py-3">
-        {keyboardHints}
-        <span className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-          <CornerDownLeft size={13} /> 结束
-        </span>
-        <span className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-          <Undo2 size={13} /> Backspace 撤销
-        </span>
+      <div className="glass border-x-0 border-b-0 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {TAGS.map((t) => (
+            <button
+              key={t.tag}
+              onClick={() => tag(t.tag)}
+              className="flex min-w-[118px] flex-col items-center gap-0.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.04] active:scale-95"
+              style={{ background: t.color }}
+              title={`快捷键 ${keyHint(t.key)}`}
+            >
+              <t.icon size={17} />
+              {t.label}
+              <span className="text-[10px] font-normal opacity-80">按键 {keyHint(t.key)}</span>
+            </button>
+          ))}
+
+          <div className="mx-1 h-12 w-px bg-[var(--border)]" />
+
+          <button
+            onClick={undoLast}
+            disabled={!history.length}
+            className="flex items-center gap-1.5 rounded-xl bg-[var(--hover)] px-4 py-3 text-sm disabled:opacity-40"
+            title="Backspace 撤销上一步"
+          >
+            <Undo2 size={15} /> 撤销
+          </button>
+          <button
+            onClick={finish}
+            disabled={applying}
+            className="flex items-center gap-1.5 rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: "var(--accent)" }}
+            title="开始移动文件到对应文件夹"
+          >
+            <Check size={16} /> 结束筛选
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex items-center gap-1.5 rounded-xl bg-[var(--hover)] px-4 py-3 text-sm text-[var(--muted)] hover:text-[var(--text)]"
+            title="放弃本次筛选，不移动图片"
+          >
+            <X size={15} /> 退出
+          </button>
+        </div>
+        <p className="mt-2 text-center text-[11px] text-[var(--muted)]">
+          结束筛选：开始移动文件到对应文件夹 · 退出：放弃本次筛选（不移动图片）
+        </p>
       </div>
     </div>
   );
