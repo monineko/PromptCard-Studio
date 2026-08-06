@@ -15,6 +15,7 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "../lib";
 import { useSidebarStore } from "../sidebarStore";
+import { useNavStore } from "../store/navStore";
 
 const NAV_ITEMS = [
   { to: "/", label: "提示词工作区", icon: Home },
@@ -52,28 +53,32 @@ export function AppSidebar() {
       {/* 左侧居中半透明开关把手，随侧边栏边缘移动 */}
       <motion.button
         initial={false}
-        animate={{ left: open ? 224 : 0, y: "-50%" }}
+        animate={{ left: open ? 216 : 8, y: "-50%" }}
         transition={{ duration: 0.22, ease: "easeInOut" }}
         onClick={() => setOpen(!open)}
-        className="fixed top-1/2 z-40 flex h-11 w-6 items-center justify-center rounded-r-xl bg-black/30 text-white/90 backdrop-blur-sm transition-colors hover:bg-black/50"
+        className="fixed top-1/2 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/60"
         title={open ? "收起侧边栏" : "打开侧边栏"}
       >
-        {open ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+        {open ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
       </motion.button>
 
-      <aside className="fixed bottom-0 left-0 top-14 z-20">
+      {/* 悬浮卡片式侧边栏：与左边界留出空隙，独立圆角矩形 */}
+      <aside className="fixed bottom-3 left-3 top-16 z-20">
         <motion.div
           initial={false}
           animate={{ width: open ? 224 : 0 }}
           transition={{ duration: 0.22, ease: "easeInOut" }}
           className="h-full overflow-hidden"
         >
-          <div className="glass flex h-full w-56 flex-col rounded-r-2xl border-y-0 border-l-0 p-3">
+          <div className="glass flex h-full w-56 flex-col rounded-2xl p-3 shadow-2xl">
           <nav className="space-y-1">
             {NAV_ITEMS.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
+                onClick={() => {
+                  if (item.to === "/library") useNavStore.getState().goLibraryHome();
+                }}
                 className={({ isActive }) =>
                   cn(
                     "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",

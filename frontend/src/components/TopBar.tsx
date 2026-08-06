@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
-import { Moon, Palette, Rocket, Sparkles, Sun } from "lucide-react";
+import { Moon, Palette, Sparkles, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "../lib";
 import { useStore } from "../store";
+import { useNavStore } from "../store/navStore";
 import { IconBtn } from "./UI";
 
 export function TopBar() {
@@ -12,34 +13,46 @@ export function TopBar() {
   const mode = settings?.theme.mode ?? "dark";
   const accent = settings?.theme.accent ?? "#8b5cf6";
   const [hidden, setHidden] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  // 向下滚动时顶部导航自动隐藏（保留），向上滚动恢复
+  // 向下滚动时顶部导航自动隐藏（图片库页面除外：需要随时返回分类页）
   useEffect(() => {
     let lastY = window.scrollY;
     const onScroll = () => {
       const y = window.scrollY;
+      if (location.pathname === "/library") {
+        setHidden(false);
+        lastY = y;
+        return;
+      }
       setHidden(y > lastY && y > 80);
       lastY = y;
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [location.pathname]);
 
   const links = [
     { to: "/", label: "提示词工作区" },
-    { to: "/settings", label: "设置" },
     { to: "/library", label: "图片库" },
     { to: "/publish", label: "发布处理", soon: true },
+    { to: "/settings", label: "设置" },
   ];
 
   return (
     <motion.header
       initial={false}
-      animate={{ y: hidden ? -64 : 0 }}
+      animate={{ y: hidden ? -72 : 0 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
-      className="glass sticky top-0 z-30 flex items-center gap-3 border-x-0 border-t-0 px-3 py-2.5"
+      className="glass sticky top-0 z-30 grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-x-0 border-t-0 px-3 py-2.5"
     >
-      <div className="flex items-center gap-2">
+      {/* 最左边：项目名与图标（点击回到提示词工作区） */}
+      <button
+        onClick={() => navigate("/")}
+        className="flex w-fit cursor-pointer items-center gap-2 rounded-lg justify-self-start transition-opacity hover:opacity-80"
+        title="回到提示词工作区"
+      >
         <span
           className="flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-lg"
           style={{ background: "var(--accent)" }}
@@ -47,29 +60,52 @@ export function TopBar() {
           <Sparkles size={16} />
         </span>
         <span className="text-sm font-semibold tracking-wide">Novelai Prompt Manager</span>
-      </div>
+      </button>
 
-      <nav className="ml-4 flex items-center gap-1">
+      {/* 居中的导航标签：当前选中项带浅色滑块，切换时滑动 */}
+      <nav className="flex items-center gap-1">
         {links.map((l) => (
           <NavLink
             key={l.to}
             to={l.to}
+            onClick={() => {
+              if (l.to === "/library") useNavStore.getState().goLibraryHome();
+            }}
             className={({ isActive }) =>
               cn(
-                "relative flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors",
+                "relative rounded-full px-4 py-1.5 text-sm font-bold transition-colors",
                 isActive ? "text-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--text)]"
               )
             }
           >
-            {l.label}
-            {l.soon && (
-              <span className="rounded bg-[var(--hover)] px-1 text-[10px] text-[var(--muted)]">M2/M3</span>
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <motion.span
+                    layoutId="topnav-pill"
+                    className="absolute inset-0 rounded-full"
+                    style={{
+                      background: "color-mix(in srgb, var(--accent) 20%, transparent)",
+                      boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent)",
+                    }}
+                    transition={{ type: "spring", stiffness: 360, damping: 30 }}
+                  />
+                )}
+                <span className="relative z-10 flex items-center gap-1">
+                  {l.label}
+                  {l.soon && (
+                    <span className="rounded bg-[var(--hover)] px-1 text-[10px] text-[var(--muted)]">
+                      M3
+                    </span>
+                  )}
+                </span>
+              </>
             )}
           </NavLink>
         ))}
       </nav>
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 justify-self-end">
         <label
           className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-[var(--muted)]"
           title="主色"
@@ -82,7 +118,10 @@ export function TopBar() {
             className="h-5 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
           />
         </label>
-        <IconBtn title={mode === "dark" ? "切换为亮色" : "切换为暗色"} onClick={() => setTheme({ mode: mode === "dark" ? "light" : "dark" })}>
+        <IconBtn
+          title={mode === "dark" ? "切换为亮色" : "切换为暗色"}
+          onClick={() => setTheme({ mode: mode === "dark" ? "light" : "dark" })}
+        >
           {mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </IconBtn>
       </div>

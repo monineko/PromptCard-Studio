@@ -31,6 +31,7 @@ import { useStore } from "../store";
 import { Button } from "../components/UI";
 import { useCardImagePicker } from "../store/cardImagePicker";
 import { useGalleryVisual } from "../store/galleryVisual";
+import { useNavStore } from "../store/navStore";
 import type {
   LibraryCategoryKey,
   LibraryImageItem,
@@ -144,6 +145,7 @@ export function Gallery() {
   const unregisterGallery = useSidebarStore((s) => s.unregisterGallery);
   const pendingCard = useCardImagePicker((s) => s.pendingCard);
   const cancelPick = useCardImagePicker((s) => s.cancelPick);
+  const libraryHomeTick = useNavStore((s) => s.libraryHomeTick);
   const [pickCandidate, setPickCandidate] = useState<LibraryImageItem | null>(null);
 
   const refresh = useCallback(async () => {
@@ -246,6 +248,11 @@ export function Gallery() {
     setPngOpen(false);
     setPngInfo(null);
   }, [cancelPick]);
+
+  // 点击顶部/侧边栏"图片库"标签：无论当前在哪个分类/筛选，都回到分类首页
+  useEffect(() => {
+    if (libraryHomeTick > 0 && category) backToCategories();
+  }, [libraryHomeTick, category, backToCategories]);
 
   const handleSetCover = useCallback(async () => {
     const paths = [...selectedPaths];

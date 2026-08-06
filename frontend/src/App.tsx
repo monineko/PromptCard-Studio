@@ -82,7 +82,7 @@ function Shell() {
       <div className="flex h-full flex-col">
         <TopBar />
         <AppSidebar />
-        <main className={cn("relative z-10 min-h-0 flex-1 transition-[padding]", sidebarOpen && "pl-56")}>
+        <main className={cn("relative z-10 min-h-0 flex-1 transition-[padding]", sidebarOpen && "pl-60")}>
           {ready ? (
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
