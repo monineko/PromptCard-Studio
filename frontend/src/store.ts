@@ -92,6 +92,7 @@ interface AppState {
   undo: () => void;
   redo: () => void;
   copyZone: () => Promise<void>;
+  overwriteZonesFromPng: (prompt: string, uc: string) => void;
 
   createCategory: (name: string) => Promise<boolean>;
   renameCategory: (oldName: string, newName: string) => Promise<boolean>;
@@ -300,8 +301,8 @@ export const useStore = create<AppState>((set, get) => {
       commit((s) => {
         const sections = zoneSections(s);
         const from = sections.find((x) => x.id === fromSectionId);
-        const to = sections.find((x) => x.id === toSectionId) ?? from;
         if (!from) return;
+        const to = sections.find((x) => x.id === toSectionId) ?? from;
         const idx = from.blocks.findIndex((b) => b.id === blockId);
         if (idx < 0) return;
         const [block] = from.blocks.splice(idx, 1);
@@ -413,6 +414,23 @@ export const useStore = create<AppState>((set, get) => {
       } catch (e) {
         s.addToast(`复制失败: ${(e as Error).message}`, "err");
       }
+    },
+
+    overwriteZonesFromPng(prompt, uc) {
+      commit((s) => {
+        const clear = (sections: Section[]) => sections.forEach((sec) => (sec.blocks = []));
+        const put = (sections: Section[], text: string) => {
+          const t = (text ?? "").trim();
+          if (!t) return;
+          const section = sections.find((x) => x.name === "其他") ?? sections[0];
+          if (section) section.blocks.push({ id: uid(), type: "prompt", text: t });
+        };
+        clear(s.positive);
+        clear(s.negative);
+        put(s.positive, prompt);
+        put(s.negative, uc);
+      });
+      get().addToast("已用图片提示词覆盖工作区（可用 Ctrl+Z 撤销）");
     },
 
     async createCategory(name) {

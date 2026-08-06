@@ -13,7 +13,7 @@ export function TopBar() {
   const links = [
     { to: "/", label: "提示词工作区" },
     { to: "/settings", label: "设置" },
-    { to: "/library", label: "图片库", soon: true },
+    { to: "/library", label: "图片库" },
     { to: "/publish", label: "发布处理", soon: true },
   ];
 

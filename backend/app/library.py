@@ -36,6 +36,8 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 
 # 撤销记录（内存，仅本次运行期间有效；键为 token）
 _UNDO_STORE: dict[str, list[dict]] = {}
+# 图片尺寸缓存（path -> (width, height, mtime_ns)）
+_SIZE_CACHE: dict[str, tuple[int, int, int]] = {}
 
 
 def _library_root() -> Path:
@@ -63,6 +65,28 @@ def resolve_image(rel_path: str) -> Path:
 
 def _is_image(file: Path) -> bool:
     return file.is_file() and file.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _image_size(file: Path) -> tuple[int, int]:
+    """读取图片宽高（仅解析头部，速度快），失败时退回 1x1。"""
+    try:
+        mtime_ns = file.stat().st_mtime_ns
+    except OSError:
+        return (1, 1)
+    cached = _SIZE_CACHE.get(str(file))
+    if cached and cached[2] == mtime_ns:
+        return cached[0], cached[1]
+    size = (1, 1)
+    if Image is not None:
+        try:
+            with Image.open(file) as im:
+                size = im.size
+        except Exception:
+            size = (1, 1)
+    if len(_SIZE_CACHE) > 800:
+        _SIZE_CACHE.clear()
+    _SIZE_CACHE[str(file)] = (size[0], size[1], mtime_ns)
+    return size
 
 
 def _category_of(parts: tuple[str, ...]) -> tuple[str, str]:
@@ -95,6 +119,7 @@ def _scan_items() -> list[dict]:
             stat = file.stat()
         except OSError:
             continue
+        width, height = _image_size(file)
         items.append(
             {
                 "path": rel.as_posix(),
@@ -103,6 +128,8 @@ def _scan_items() -> list[dict]:
                 "date": date_group,
                 "size": stat.st_size,
                 "mtime": int(stat.st_mtime * 1000),
+                "width": width,
+                "height": height,
             }
         )
     return items

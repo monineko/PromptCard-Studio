@@ -60,6 +60,8 @@ class LibraryServiceTest(unittest.TestCase):
         treasure = lib.list_images("treasure")
         self.assertEqual(treasure["total"], 1)
         self.assertEqual(treasure["items"][0]["date"], "2026-08-01")
+        self.assertGreater(treasure["items"][0]["width"], 0)
+        self.assertGreater(treasure["items"][0]["height"], 0)
         unrated = lib.list_images("unrated")
         dates = sorted(i["date"] for i in unrated["items"])
         expected = ["", "", "misc"] if ANR_SAMPLE.exists() else ["", "misc"]

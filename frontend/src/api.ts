@@ -1,3 +1,5 @@
+import type { LibraryImages, LibrarySummary, PngInfoResult, ReviewApplyResult, Section, Settings } from "./types";
+
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
   if (options.body && !(options.body instanceof FormData)) {
@@ -51,12 +53,28 @@ export const api = {
   },
   importAnr: (path: string) => request("/api/cards/import-anr", { method: "POST", body: JSON.stringify({ path }) }),
   exportUrl: () => "/api/cards/export",
-  workspace: () => request<{ positive: Block[]; negative: Block[] }>("/api/workspace"),
-  saveWorkspace: (positive: Block[], negative: Block[]) =>
+  workspace: () => request<{ positive: Section[]; negative: Section[] }>("/api/workspace"),
+  saveWorkspace: (positive: Section[], negative: Section[]) =>
     request("/api/workspace", { method: "PUT", body: JSON.stringify({ positive, negative }) }),
   settings: () => request<Settings>("/api/settings"),
   saveSettings: (settings: Partial<Settings>) =>
     request("/api/settings", { method: "PUT", body: JSON.stringify(settings) }),
+  librarySummary: () => request<LibrarySummary>("/api/library/summary"),
+  libraryImages: (category: string) =>
+    request<LibraryImages>(`/api/library/images?category=${encodeURIComponent(category)}`),
+  libraryImageUrl: (path: string) => `/api/library/image?path=${encodeURIComponent(path)}`,
+  libraryPngInfo: (path: string) =>
+    request<PngInfoResult>(`/api/library/png-info?path=${encodeURIComponent(path)}`),
+  applyReview: (moves: { path: string; tag: string }[], recycleReject: boolean) =>
+    request<ReviewApplyResult>("/api/library/review/apply", {
+      method: "POST",
+      body: JSON.stringify({ moves, recycle_reject: recycleReject }),
+    }),
+  undoReview: (token: string) =>
+    request<{ ok: boolean; restored: { path: string }[]; failed: { path: string; reason: string }[] }>(
+      "/api/library/review/undo",
+      { method: "POST", body: JSON.stringify({ token }) }
+    ),
 };
 
 export function uid(): string {

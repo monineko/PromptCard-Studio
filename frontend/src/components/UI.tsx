@@ -7,6 +7,7 @@ import { useStore } from "../store";
 export function Button({
   children,
   onClick,
+  onPointerDown,
   variant = "primary",
   size = "md",
   disabled,
@@ -15,6 +16,7 @@ export function Button({
 }: {
   children: ReactNode;
   onClick?: () => void;
+  onPointerDown?: (e: React.PointerEvent) => void;
   variant?: "primary" | "ghost" | "danger";
   size?: "sm" | "md";
   disabled?: boolean;
@@ -26,6 +28,7 @@ export function Button({
       title={title}
       disabled={disabled}
       onClick={onClick}
+      onPointerDown={onPointerDown}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-lg font-medium transition-all active:scale-[.97] disabled:opacity-40 disabled:pointer-events-none",
         size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm",
@@ -45,12 +48,14 @@ export function Button({
 export function IconBtn({
   children,
   onClick,
+  onPointerDown,
   title,
   danger,
   className,
 }: {
   children: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
+  onPointerDown?: (e: React.PointerEvent) => void;
   title?: string;
   danger?: boolean;
   className?: string;
@@ -59,6 +64,7 @@ export function IconBtn({
     <button
       title={title}
       onClick={onClick}
+      onPointerDown={onPointerDown}
       className={cn(
         "inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text)]",
         danger && "hover:bg-red-500/15 hover:text-red-400",

@@ -12,6 +12,7 @@ export function Settings() {
     glass: 0.6,
     format_input: true,
     library_path: "",
+    recycle_reject: true,
   });
 
   useEffect(() => {
@@ -22,6 +23,7 @@ export function Settings() {
       glass: settings.theme.glass,
       format_input: settings.format_input,
       library_path: settings.library_path,
+      recycle_reject: settings.recycle_reject,
     });
   }, [settings]);
 
@@ -93,6 +95,16 @@ export function Settings() {
           复制时进行格式规范化（清理连续逗号/多余空格）
         </label>
 
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.recycle_reject}
+            onChange={(e) => setForm({ ...form, recycle_reject: e.target.checked })}
+            className="accent-[var(--accent)]"
+          />
+          筛选结束后 Reject 图片移入系统回收站（关闭则永久删除）
+        </label>
+
         <div>
           <label className="mb-1 block text-sm">图片库路径（M2 使用）</label>
           <input
@@ -110,6 +122,7 @@ export function Settings() {
                 theme: { mode: form.mode as "light" | "dark", accent: form.accent, glass: form.glass },
                 format_input: form.format_input,
                 library_path: form.library_path,
+                recycle_reject: form.recycle_reject,
               })
             }
           >

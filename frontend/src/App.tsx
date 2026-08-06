@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { HashRouter, Route, Routes } from "react-router-dom";
 import { ToastHost } from "./components/UI";
 import { TopBar } from "./components/TopBar";
+import { Gallery } from "./pages/Gallery";
 import { Home } from "./pages/Home";
 import { Placeholder } from "./pages/Placeholder";
 import { Settings } from "./pages/Settings";
@@ -48,16 +49,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/settings" element={<Settings />} />
-              <Route
-                path="/library"
-                element={
-                  <Placeholder
-                    module="library"
-                    title="图片库"
-                    desc="M2 模块：瀑布流预览生成图片、放大查看、按需读取 PNG 信息、发送到工作区，以及 Treasure / Fine / Reject / 收藏的筛选模式。"
-                  />
-                }
-              />
+              <Route path="/library" element={<Gallery />} />
               <Route
                 path="/publish"
                 element={

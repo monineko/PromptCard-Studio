@@ -5,6 +5,7 @@
     "glass": 0.6
   },
   "library_path": "E:\\Agent\\Codex\\workspace\\Project\\novelai-prompt-manager\\library",
+  "recycle_reject": true,
   "format_input": true,
   "port": 11451,
   "category_order": [
