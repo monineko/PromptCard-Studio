@@ -1,5 +1,6 @@
 import { ChevronDown, FileJson, Loader2, Send, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { LibraryImageItem, PngInfoResult } from "../../types";
 
 const POS_KEY = "npm_png_panel_pos";
@@ -69,9 +70,9 @@ export function PngInfoPopup({
     dragRef.current = null;
   };
 
-  return (
+  return createPortal(
     <div
-      className="glass fixed z-[2000] flex w-[430px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
+      className="glass fixed z-[10000] flex w-[430px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
       style={{ left: pos.x, top: pos.y }}
     >
       <div
@@ -166,6 +167,7 @@ export function PngInfoPopup({
           </button>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }

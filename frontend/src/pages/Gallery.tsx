@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
 import { api } from "../api";
+import { cn } from "../lib";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
@@ -107,6 +108,7 @@ export function Gallery() {
   const [pngLoading, setPngLoading] = useState(false);
   const [pngError, setPngError] = useState("");
   const [pngOpen, setPngOpen] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -162,10 +164,32 @@ export function Gallery() {
 
   // 切换图片时重置 PNG 信息状态
   useEffect(() => {
-    setPngInfo(null);
-    setPngError("");
-    setPngOpen(false);
+    if (lightboxIndex !== null) {
+      setPngInfo(null);
+      setPngError("");
+      setPngOpen(false);
+    }
   }, [lightboxIndex]);
+
+  // 滚动时检测当前查看位置，高亮对应时间索引
+  useEffect(() => {
+    if (!groups.length) {
+      setActiveGroup(null);
+      return;
+    }
+    const onScroll = () => {
+      const refY = window.scrollY + 110;
+      let current: string | null = null;
+      for (const g of groups) {
+        const el = document.getElementById(`group-${g.key}`);
+        if (el && el.getBoundingClientRect().top + window.scrollY <= refY) current = g.key;
+      }
+      setActiveGroup(current);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [groups]);
 
   const handleReadPngInfo = useCallback(
     async (path: string) => {
@@ -401,17 +425,6 @@ export function Gallery() {
               <Undo2 size={13} /> 撤销本次筛选
             </button>
           )}
-          <button
-            onClick={() => {
-              setLightboxIndex(null);
-              setReviewing(true);
-            }}
-            disabled={!items.length}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white transition-opacity hover:opacity-85 disabled:opacity-40"
-            style={{ background: "var(--accent)" }}
-          >
-            <Play size={13} /> 筛选模式
-          </button>
         </div>
       </div>
 
@@ -430,21 +443,39 @@ export function Gallery() {
 
       {!loadingItems && items.length > 0 && (
         <div className="mx-auto flex w-full max-w-7xl items-start gap-4 px-4 pt-2">
-          <aside className="sticky top-14 z-10 hidden w-44 shrink-0 lg:block">
-            <div className="glass max-h-[calc(100vh-4.5rem)] overflow-auto rounded-2xl p-3">
+          <aside className="sticky top-14 z-10 w-52 shrink-0">
+            <div className="glass flex max-h-[calc(100vh-5rem)] flex-col rounded-2xl p-3">
               <div className="mb-2 px-1 text-xs font-semibold text-[var(--muted)]">时间索引</div>
-              <div className="space-y-0.5">
+              <div className="min-h-0 flex-1 space-y-0.5 overflow-auto">
                 {groups.map((group) => (
                   <button
                     key={group.key}
                     onClick={() => scrollToGroup(group.key)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[var(--muted)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+                      activeGroup === group.key
+                        ? "bg-[var(--accent)] font-semibold text-white"
+                        : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                    )}
                     title={`跳转到 ${group.label}`}
                   >
                     <span className="truncate">{group.label}</span>
                     <span className="shrink-0 tabular-nums opacity-70">{group.items.length}</span>
                   </button>
                 ))}
+              </div>
+              <div className="mt-3 border-t border-[var(--border)] pt-3">
+                <button
+                  onClick={() => {
+                    setLightboxIndex(null);
+                    setReviewing(true);
+                  }}
+                  disabled={!items.length}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-85 disabled:opacity-40"
+                  style={{ background: "var(--accent)" }}
+                >
+                  <Play size={16} /> 筛选模式
+                </button>
               </div>
             </div>
           </aside>
@@ -495,14 +526,14 @@ export function Gallery() {
                   void handleReadPngInfo(slide.path ?? "");
                 }}
                 disabled={pngLoading && sameItem}
-                className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white shadow-lg transition-opacity hover:opacity-85 disabled:opacity-50"
+                className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition-opacity hover:opacity-85 disabled:opacity-50"
                 style={{ background: "var(--accent)" }}
                 title="按需读取 PNG 元数据"
               >
                 {pngLoading && sameItem ? (
-                  <Loader2 size={13} className="animate-spin" />
+                  <Loader2 size={15} className="animate-spin" />
                 ) : (
-                  <FileJson size={13} />
+                  <FileJson size={15} />
                 )}
                 {pngLoading && sameItem ? "读取中…" : hasInfo ? "PNG 信息" : "读取 PNG 信息"}
               </button>
