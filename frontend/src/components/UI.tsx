@@ -70,12 +70,20 @@ export function IconBtn({
   );
 }
 
-export function CategoryBadge({ name, className }: { name: string; className?: string }) {
-  const hue = categoryHue(name);
+export function CategoryBadge({
+  name,
+  className,
+  hue,
+}: {
+  name: string;
+  className?: string;
+  hue?: number;
+}) {
+  const h = hue ?? categoryHue(name);
   return (
     <span
       className={cn("inline-block h-2 w-2 shrink-0 rounded-[2px]", className)}
-      style={{ background: `hsl(${hue} 68% 55%)`, boxShadow: `0 0 6px hsl(${hue} 68% 55% / .6)` }}
+      style={{ background: `hsl(${h} 68% 55%)`, boxShadow: `0 0 6px hsl(${h} 68% 55% / .6)` }}
       title={name}
     />
   );

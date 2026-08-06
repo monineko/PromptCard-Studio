@@ -41,3 +41,8 @@ class AnrImportIn(BaseModel):
 
 class CategoryOrder(BaseModel):
     names: list[str]
+
+
+class CategoryColor(BaseModel):
+    name: str
+    hue: int

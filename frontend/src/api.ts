@@ -21,6 +21,8 @@ export const api = {
   categories: () => request<any[]>("/api/categories"),
   saveCategoryOrder: (names: string[]) =>
     request("/api/categories/order", { method: "PUT", body: JSON.stringify({ names }) }),
+  saveCategoryColor: (name: string, hue: number) =>
+    request("/api/categories/color", { method: "PUT", body: JSON.stringify({ name, hue }) }),
   createCategory: (name: string) =>
     request("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),
   renameCategory: (old_name: string, new_name: string) =>

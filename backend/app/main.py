@@ -14,6 +14,7 @@ from .schemas import (
     AnrImportIn,
     CardIn,
     CardUpdate,
+    CategoryColor,
     CategoryOrder,
     CategoryIn,
     CategoryRename,
@@ -78,6 +79,14 @@ def remove_category(name: str):
 @app.put("/api/categories/order")
 def set_category_order(body: CategoryOrder):
     return save_settings({"category_order": body.names})
+
+
+@app.put("/api/categories/color")
+def set_category_color(body: CategoryColor):
+    settings = load_settings()
+    colors = settings.get("category_colors") or {}
+    colors[body.name] = body.hue
+    return save_settings({"category_colors": colors})
 
 
 # ---------- 卡片 ----------

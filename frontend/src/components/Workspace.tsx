@@ -68,6 +68,9 @@ function PromptChip({
   onDragStart: (e: React.PointerEvent, block: Block) => void;
 }) {
   const removeBlock = useStore((s) => s.removeBlock);
+  const adjustWeight = useStore((s) => s.adjustWeight);
+  const weight = block.weight && block.weight !== 1 ? block.weight : null;
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
     <motion.div
       layout
@@ -76,20 +79,45 @@ function PromptChip({
       exit={{ opacity: 0, scale: 0.9 }}
       data-block-id={block.id}
       onPointerDown={(e) => onDragStart(e, block)}
-      className="group flex cursor-grab touch-none select-none items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs transition-colors hover:border-[var(--accent)] hover:bg-[var(--hover)] active:cursor-grabbing"
-      title="拖动排序或移动到其它分区"
+      className="group flex cursor-grab touch-none select-none items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--input)] px-1 py-1 text-xs transition-colors hover:border-[var(--accent)] hover:bg-[var(--hover)] active:cursor-grabbing"
+      title="拖动排序；+/- 调节提示词系数"
     >
-      <span>{block.text}</span>
-      <span
-        className="hidden h-1 w-1 rounded-full bg-[var(--muted)] group-hover:block"
-        title="翻译 / 注释（预留）"
-      />
+      <button
+        title="降低系数 0.1"
+        disabled={weight !== null && weight <= 0.1}
+        onPointerDown={stop}
+        onClick={(e) => {
+          stop(e);
+          adjustWeight(sectionId, block.id, -0.1);
+        }}
+        className="hidden h-4 w-4 items-center justify-center rounded text-[var(--muted)] hover:text-red-400 disabled:opacity-30 group-hover:flex"
+      >
+        −
+      </button>
+      <span className="px-0.5">{block.text}</span>
+      {weight !== null && (
+        <span className="rounded bg-[var(--hover)] px-1 font-mono text-[10px] text-[var(--accent)]">
+          | {weight.toFixed(1)}
+        </span>
+      )}
+      <button
+        title="提高系数 0.1"
+        disabled={weight !== null && weight >= 3}
+        onPointerDown={stop}
+        onClick={(e) => {
+          stop(e);
+          adjustWeight(sectionId, block.id, 0.1);
+        }}
+        className="hidden h-4 w-4 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-30 group-hover:flex"
+      >
+        +
+      </button>
       <IconBtn
         danger
         title="删除该提示词"
         className="hidden h-4 w-4 group-hover:inline-flex"
         onClick={(e) => {
-          e.stopPropagation();
+          stop(e);
           removeBlock(sectionId, block.id);
         }}
       >
@@ -110,6 +138,7 @@ function CardChip({
 }) {
   const removeBlock = useStore((s) => s.removeBlock);
   const openDetail = useStore((s) => s.openDetail);
+  const colorMap = useStore((s) => s.categoryColor);
   return (
     <motion.div
       layout
@@ -125,13 +154,14 @@ function CardChip({
       className="group flex cursor-grab touch-none select-none items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs transition-colors hover:border-[var(--accent)] hover:bg-[var(--hover)] active:cursor-grabbing"
       title={`<${block.category}:${block.name}> · 点击打开卡片详情`}
     >
-      <CategoryBadge name={block.category} />
+      <CategoryBadge name={block.category} hue={colorMap[block.category]} />
       <span className="text-[var(--muted)]">{block.category}：</span>
       <span className="font-medium">{block.name}</span>
       <IconBtn
         danger
         title="移除该块"
         className="hidden h-4 w-4 group-hover:inline-flex"
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           removeBlock(sectionId, block.id);
@@ -164,7 +194,8 @@ function SectionView({
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(section.name);
   const [confirmDel, setConfirmDel] = useState(false);
-  const hue = categoryHue(section.name);
+  const colorMap = useStore((s) => s.categoryColor);
+  const hue = colorMap[section.name] ?? categoryHue(section.name);
   const isTarget = drag !== null && hoverSectionId === section.id;
 
   const submit = () => {
@@ -414,7 +445,14 @@ export function Workspace() {
                 <span className="font-medium">{drag.block.name}</span>
               </>
             ) : (
-              <span>{drag.block.text}</span>
+              <>
+                <span>{drag.block.text}</span>
+                {drag.block.weight && drag.block.weight !== 1 && (
+                  <span className="font-mono text-[10px] text-[var(--accent)]">
+                    | {drag.block.weight.toFixed(1)}
+                  </span>
+                )}
+              </>
             )}
           </motion.div>
         )}

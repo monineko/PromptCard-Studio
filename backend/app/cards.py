@@ -8,7 +8,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from .config import WILDCARDS_DIR, load_settings
+from .config import WILDCARDS_DIR, load_settings, save_settings
 
 INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
@@ -57,7 +57,11 @@ def list_categories() -> list[dict]:
                 }
             )
         result.append({"name": folder.name, "count": len(cards), "cards": cards})
-    order = load_settings().get("category_order") or []
+    settings = load_settings()
+    order = settings.get("category_order") or []
+    colors = settings.get("category_colors") or {}
+    for c in result:
+        c["color"] = colors.get(c["name"])
     by_name = {c["name"]: c for c in result}
     ordered = [by_name[n] for n in order if n in by_name]
     rest = [c for c in result if c["name"] not in order]
@@ -134,6 +138,11 @@ def rename_category(old_name: str, new_name: str) -> dict:
         raise FileExistsError(f"目标分类已存在: {new_name}")
     if dst != src:
         src.rename(dst)
+    settings = load_settings()
+    colors = settings.get("category_colors") or {}
+    if old_name in colors:
+        colors[new_name] = colors.pop(old_name)
+        save_settings({"category_colors": colors})
     return {"name": dst.name}
 
 
@@ -142,6 +151,11 @@ def delete_category(name: str) -> None:
     if not folder.exists() or not folder.is_dir():
         raise FileNotFoundError(f"分类不存在: {name}")
     _trash(folder)
+    settings = load_settings()
+    colors = settings.get("category_colors") or {}
+    if name in colors:
+        colors.pop(name)
+        save_settings({"category_colors": colors})
 
 
 def _trash(path: Path) -> None:

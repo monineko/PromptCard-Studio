@@ -37,7 +37,8 @@ function downloadCsvTemplate() {
 function PokerCard({ category, card }: { category: string; card: CardMeta }) {
   const addCardBlock = useStore((s) => s.addCardBlock);
   const openDetail = useStore((s) => s.openDetail);
-  const hue = categoryHue(category);
+  const colorMap = useStore((s) => s.categoryColor);
+  const hue = colorMap[category] ?? categoryHue(category);
   return (
     <motion.div
       layout
@@ -82,10 +83,14 @@ function CategoryPack({ category }: { category: Category }) {
   const setShowNewCard = useStore((s) => s.setShowNewCard);
   const renameCategory = useStore((s) => s.renameCategory);
   const deleteCategory = useStore((s) => s.deleteCategory);
+  const saveCategoryColor = useStore((s) => s.saveCategoryColor);
+  const colorMap = useStore((s) => s.categoryColor);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(category.name);
+  const [newHue, setNewHue] = useState(colorMap[category.name] ?? categoryHue(category.name));
   const [confirmDel, setConfirmDel] = useState(false);
-  const hue = categoryHue(category.name);
+  const hue = colorMap[category.name] ?? categoryHue(category.name);
+  const PALETTE = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
 
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--input)]/40">
@@ -120,10 +125,11 @@ function CategoryPack({ category }: { category: Category }) {
           <Plus size={15} />
         </IconBtn>
         <IconBtn
-          title="重命名分类"
+          title="编辑类别"
           onClick={(e) => {
             e.stopPropagation();
             setNewName(category.name);
+            setNewHue(colorMap[category.name] ?? categoryHue(category.name));
             setRenaming(true);
           }}
         >
@@ -162,17 +168,55 @@ function CategoryPack({ category }: { category: Category }) {
         )}
       </AnimatePresence>
 
-      <Modal open={renaming} onClose={() => setRenaming(false)} title="重命名分类">
+      <Modal open={renaming} onClose={() => setRenaming(false)} title={`编辑类别「${category.name}」`}>
+        <label className="mb-1 block text-xs text-[var(--muted)]">名称</label>
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          className="mb-4 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+          className="mb-3 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
         />
+        <label className="mb-1 block text-xs text-[var(--muted)]">颜色</label>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {PALETTE.map((h) => (
+            <button
+              key={h}
+              onClick={() => setNewHue(h)}
+              className="h-7 w-7 rounded-lg transition-transform hover:scale-110"
+              style={{
+                background: `hsl(${h} 65% 48%)`,
+                outline: newHue === h ? `2px solid var(--text)` : "none",
+                outlineOffset: 2,
+              }}
+            />
+          ))}
+          <input
+            type="range"
+            min={0}
+            max={359}
+            value={newHue}
+            onChange={(e) => setNewHue(Number(e.target.value))}
+            className="ml-1 w-28 accent-[var(--accent)]"
+            title="微调色相"
+          />
+          <span
+            className="ml-1 h-6 w-6 rounded-lg"
+            style={{ background: `hsl(${newHue} 65% 48%)`, boxShadow: "0 0 8px hsl(0 0% 0% / .3)" }}
+          />
+        </div>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setRenaming(false)}>取消</Button>
           <Button
             onClick={async () => {
-              if (await renameCategory(category.name, newName.trim())) setRenaming(false);
+              const target = newName.trim() || category.name;
+              const nameChanged = target !== category.name;
+              if (nameChanged) {
+                const ok = await renameCategory(category.name, target);
+                if (!ok) return;
+              }
+              if (newHue !== (colorMap[category.name] ?? categoryHue(category.name))) {
+                await saveCategoryColor(target, newHue);
+              }
+              setRenaming(false);
             }}
           >
             保存

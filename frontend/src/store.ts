@@ -43,6 +43,7 @@ interface AppState {
   ready: boolean;
   settings: Settings | null;
   categories: Category[];
+  categoryColor: Record<string, number>;
   search: string;
   expanded: Record<string, boolean>;
   zone: Zone;
@@ -81,6 +82,7 @@ interface AppState {
   addCardBlock: (category: string, name: string) => void;
   addPrompt: (sectionId: string, text: string) => void;
   addPrompts: (sectionId: string, texts: string[]) => void;
+  adjustWeight: (sectionId: string, blockId: string, delta: number) => void;
   removeBlock: (sectionId: string, blockId: string) => void;
   moveBlock: (fromSectionId: string, blockId: string, toSectionId: string, index?: number) => void;
   renameSection: (sectionId: string, name: string) => void;
@@ -94,6 +96,7 @@ interface AppState {
   createCategory: (name: string) => Promise<boolean>;
   renameCategory: (oldName: string, newName: string) => Promise<boolean>;
   deleteCategory: (name: string) => Promise<boolean>;
+  saveCategoryColor: (name: string, hue: number) => Promise<void>;
   createCard: (category: string, name: string, content: string) => Promise<boolean>;
   saveCardDetail: (content: string, newCategory?: string, newName?: string) => Promise<boolean>;
   deleteCard: (category: string, name: string) => Promise<boolean>;
@@ -119,6 +122,14 @@ function applyTheme(settings: Settings | null) {
 }
 
 export const useStore = create<AppState>((set, get) => {
+  const buildColorMap = (categories: Category[]) => {
+    const map: Record<string, number> = {};
+    for (const c of categories) {
+      if (c.color != null) map[c.name] = c.color;
+    }
+    return map;
+  };
+
   const snapshot = (): Snapshot => cloneZones(get().positive, get().negative);
 
   const commit = (mutate: (s: AppState) => void) => {
@@ -138,6 +149,7 @@ export const useStore = create<AppState>((set, get) => {
     ready: false,
     settings: null,
     categories: [],
+    categoryColor: {},
     search: "",
     expanded: {},
     zone: "positive",
@@ -166,6 +178,7 @@ export const useStore = create<AppState>((set, get) => {
           return {
             settings,
             categories,
+            categoryColor: buildColorMap(categories),
             positive,
             negative,
             past: s.past,
@@ -182,7 +195,7 @@ export const useStore = create<AppState>((set, get) => {
     async refreshCategories() {
       try {
         const categories = await api.categories();
-        set((s) => ({ categories, cardRefresher: s.cardRefresher + 1 }));
+        set((s) => ({ categories, categoryColor: buildColorMap(categories), cardRefresher: s.cardRefresher + 1 }));
       } catch (e) {
         get().addToast(`刷新失败: ${(e as Error).message}`, "err");
       }
@@ -268,6 +281,18 @@ export const useStore = create<AppState>((set, get) => {
         const sections = zoneSections(s);
         const section = sections.find((x) => x.id === sectionId);
         if (section) section.blocks = section.blocks.filter((b) => b.id !== blockId);
+      });
+    },
+
+    adjustWeight(sectionId, blockId, delta) {
+      commit((s) => {
+        const sections = zoneSections(s);
+        const section = sections.find((x) => x.id === sectionId);
+        const block = section?.blocks.find((b) => b.id === blockId && b.type === "prompt");
+        if (!block || block.type !== "prompt") return;
+        const current = block.weight ?? 1;
+        const next = Math.min(3, Math.max(0.1, Math.round((current + delta) * 10) / 10));
+        block.weight = next;
       });
     },
 
@@ -363,10 +388,17 @@ export const useStore = create<AppState>((set, get) => {
       const sections = zoneSections(s);
       const parts: string[] = [];
       for (const section of sections) {
-        const text = section.blocks
-          .map((b) => (b.type === "card" ? `<${b.category}:${b.name}>` : b.text))
-          .filter((t) => t.trim())
-          .join(", ");
+        if (!section.blocks.length) continue;
+        const text =
+          section.blocks
+            .map((b) =>
+              b.type === "card"
+                ? `<${b.category}:${b.name}>`
+                : b.weight && b.weight !== 1
+                  ? `${b.weight}::${b.text}::`
+                  : b.text
+            )
+            .join(" ") + ",";
         if (text.trim()) parts.push(text);
       }
       const raw = parts.join("\n");
@@ -456,6 +488,19 @@ export const useStore = create<AppState>((set, get) => {
       } catch (e) {
         get().addToast(`删除失败: ${(e as Error).message}`, "err");
         return false;
+      }
+    },
+
+    async saveCategoryColor(name, hue) {
+      try {
+        await api.saveCategoryColor(name, hue);
+        set((s) => ({
+          categories: s.categories.map((c) => (c.name === name ? { ...c, color: hue } : c)),
+          categoryColor: { ...s.categoryColor, [name]: hue },
+        }));
+        get().addToast(`已更新分类「${name}」颜色`);
+      } catch (e) {
+        get().addToast(`保存颜色失败: ${(e as Error).message}`, "err");
       }
     },
   };

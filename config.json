@@ -8,10 +8,15 @@
   "format_input": true,
   "port": 11451,
   "category_order": [
-    "质量",
     "角色",
     "动作",
+    "画师串",
+    "质量",
     "综合sfw",
     "综合nsfw"
-  ]
+  ],
+  "category_colors": {
+    "角色": 210,
+    "角色-新": 210
+  }
 }

@@ -17,6 +17,7 @@ DEFAULT_SETTINGS = {
     "format_input": True,        # 复制时是否做格式规范化
     "port": 11451,
     "category_order": [],        # 分类的拖拽排序（名称列表）
+    "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
 }
 
 
