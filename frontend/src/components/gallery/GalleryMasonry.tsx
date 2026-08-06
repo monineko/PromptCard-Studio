@@ -42,8 +42,15 @@ export function GalleryMasonry({
       gap={gap}
       renderItem={(item) => (
         <div
-          className="group cursor-pointer overflow-hidden rounded-xl bg-[var(--hover)] transition-transform duration-150 hover:z-10 hover:scale-[1.03]"
-          style={{ position: "absolute", left: item.x, top: item.y, width: item.width, height: item.height }}
+          className="card-shine group animate-fade-in-up cursor-pointer overflow-hidden rounded-xl bg-[var(--hover)] shadow-[0_2px_10px_rgba(0,0,0,0.16)] transition-shadow duration-300 hover:z-10 hover:shadow-[0_18px_42px_-12px_rgba(0,0,0,0.55)]"
+          style={{
+            position: "absolute",
+            left: item.x,
+            top: item.y,
+            width: item.width,
+            height: item.height,
+            animationDelay: `${Math.min((item._idx % 18) * 30, 480)}ms`,
+          }}
           onClick={() =>
             selectionMode ? onToggleSelect?.(item, item._idx) : onItemClick(item, item._idx)
           }
@@ -52,9 +59,14 @@ export function GalleryMasonry({
             src={api.libraryImageUrl(item.path)}
             alt={item.name}
             loading="lazy"
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-110"
             draggable={false}
           />
+          {/* 底部信息渐变：Hover 时淡出显现照片名与日期 */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-2.5 pb-2 pt-10 opacity-0 transition-all duration-300 ease-out group-hover:translate-y-0 group-hover:opacity-100">
+            <p className="truncate text-[11px] font-semibold text-white/95">{item.name}</p>
+            <p className="mt-0.5 text-[10px] text-white/55">{item.date || "未分组"}</p>
+          </div>
           {selectionMode && (
             <>
               {selectedPaths?.has(item.path) && <div className="absolute inset-0 bg-gray-400/50" />}

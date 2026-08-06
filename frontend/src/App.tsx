@@ -1,5 +1,8 @@
 import { useEffect } from "react";
 import { HashRouter, Route, Routes, useLocation } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import { AmbientBackground } from "./components/ambient/AmbientBackground";
+import { FireworksCanvas } from "./components/ambient/FireworksCanvas";
 import { AppSidebar } from "./components/AppSidebar";
 import { ToastHost } from "./components/UI";
 import { TopBar } from "./components/TopBar";
@@ -53,26 +56,39 @@ function Shell() {
   return (
     <>
       <Shortcuts />
+      <AmbientBackground />
+      <FireworksCanvas />
       <div className="flex h-full flex-col">
         <TopBar />
         <AppSidebar />
-        <main className={cn("min-h-0 flex-1 transition-[padding]", sidebarOpen && "pl-56")}>
+        <main className={cn("relative z-10 min-h-0 flex-1 transition-[padding]", sidebarOpen && "pl-56")}>
           {ready ? (
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/library" element={<Gallery />} />
-              <Route
-                path="/publish"
-                element={
-                  <Placeholder
-                    module="publish"
-                    title="发布处理"
-                    desc="M3 模块：从图库勾选图片进入发布暂存区，批量执行超分降噪、数据抹除、批量重命名。"
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
+                className="h-full"
+              >
+                <Routes location={location}>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/library" element={<Gallery />} />
+                  <Route
+                    path="/publish"
+                    element={
+                      <Placeholder
+                        module="publish"
+                        title="发布处理"
+                        desc="M3 模块：从图库勾选图片进入发布暂存区，批量执行超分降噪、数据抹除、批量重命名。"
+                      />
+                    }
                   />
-                }
-              />
-            </Routes>
+                </Routes>
+              </motion.div>
+            </AnimatePresence>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
               正在加载…

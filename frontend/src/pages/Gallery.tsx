@@ -18,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
 import { api } from "../api";
+import { AlbumStackCard } from "../components/gallery/AlbumStackCard";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
 import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
@@ -25,6 +26,7 @@ import { ReviewMode } from "../components/gallery/ReviewMode";
 import { ZoomableImage } from "../components/gallery/ZoomableImage";
 import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
+import { useGalleryVisual } from "../store/galleryVisual";
 import type {
   LibraryCategoryKey,
   LibraryImageItem,
@@ -57,6 +59,16 @@ const CATEGORY_LABEL: Record<LibraryCategoryKey, string> = {
 };
 
 type Group = { key: string; label: string; categoryLabel?: string; items: LibraryImageItem[] };
+type CoverEntry = { url: string; name: string; date: string };
+
+function latestDate(list: CoverEntry[] | undefined): string | undefined {
+  if (!list?.length) return undefined;
+  const d = list
+    .map((c) => c.date)
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a))[0];
+  return d || undefined;
+}
 
 function dateLabel(date: string, category: LibraryCategoryKey): string {
   if (date) return date;
@@ -100,6 +112,7 @@ export function Gallery() {
   const recycleReject = useStore((s) => s.settings?.recycle_reject ?? true);
 
   const [summary, setSummary] = useState<LibrarySummary | null>(null);
+  const [covers, setCovers] = useState<Partial<Record<LibraryCategoryKey, CoverEntry[]>>>({});
   const [category, setCategory] = useState<LibraryCategoryKey | null>(null);
   const [items, setItems] = useState<LibraryImageItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -138,6 +151,43 @@ export function Gallery() {
     refresh();
   }, [refresh]);
 
+  // 分类入口：为每个分类抓取少量图片作为堆叠封面，并生成背景轮播展示队列
+  useEffect(() => {
+    if (category || !summary) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        CATEGORY_ORDER.map(async (key) => {
+          try {
+            const r = await api.libraryImages(key);
+            return [
+              key,
+              r.items.slice(0, 4).map((i) => ({ url: api.libraryImageUrl(i.path), name: i.name, date: i.date })),
+            ] as const;
+          } catch {
+            return [key, []] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      const map = Object.fromEntries(entries) as Partial<Record<LibraryCategoryKey, CoverEntry[]>>;
+      setCovers(map);
+      const showcase = CATEGORY_ORDER.flatMap((k) =>
+        map[k]?.[0] ? [{ key: `${k}:${map[k]![0].url}`, url: map[k]![0].url }] : []
+      );
+      if (showcase.length) useGalleryVisual.getState().setBackdrops(showcase);
+      else useGalleryVisual.getState().resetBackdrops();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [category, summary]);
+
+  // 离开图片库页面时恢复默认背景素材
+  useEffect(() => {
+    return () => useGalleryVisual.getState().resetBackdrops();
+  }, []);
+
   const openCategory = useCallback(async (key: LibraryCategoryKey) => {
     setCategory(key);
     setReviewing(false);
@@ -146,6 +196,11 @@ export function Gallery() {
     try {
       const result = await api.libraryImages(key);
       setItems(result.items);
+      if (result.items.length) {
+        useGalleryVisual
+          .getState()
+          .setBackdrops(result.items.slice(0, 10).map((i) => ({ key: i.path, url: api.libraryImageUrl(i.path) })));
+      }
     } catch (e) {
       addToast(`图片列表加载失败: ${(e as Error).message}`, "err");
       setItems([]);
@@ -435,10 +490,10 @@ export function Gallery() {
   // ---------- 分类入口页 ----------
   if (!category) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-4 py-6">
-        <div className="mb-5 flex flex-wrap items-center gap-3">
+      <div className="animate-fade-in-up mx-auto w-full max-w-5xl px-4 py-6">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold">图片库</h1>
+            <h1 className="text-xl font-bold tracking-wide">图片库</h1>
             <p className="mt-0.5 truncate text-xs text-[var(--muted)]" title={summary?.library_path}>
               {summary?.library_path || "正在读取图库路径…"}
             </p>
@@ -498,27 +553,31 @@ export function Gallery() {
             正在导入图片…
           </div>
         )}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          {CATEGORY_ORDER.map((key) => {
+        <div className="mt-8 grid grid-cols-1 gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+          {CATEGORY_ORDER.map((key, i) => {
             const meta = CATEGORY_META[key];
             const info = summary?.categories.find((c) => c.key === key);
-            const Icon = meta.icon;
+            const list = covers[key] ?? [];
             return (
-              <button
+              <AlbumStackCard
                 key={key}
-                onClick={() => openCategory(key)}
-                className="glass group flex flex-col items-start gap-3 rounded-2xl p-5 text-left transition-transform hover:-translate-y-0.5 hover:shadow-xl"
-              >
-                <span
-                  className="flex h-11 w-11 items-center justify-center rounded-xl text-white shadow"
-                  style={{ background: meta.color }}
-                >
-                  <Icon size={20} />
-                </span>
-                <span className="text-base font-semibold">{info?.label ?? key}</span>
-                <span className="text-xs leading-relaxed text-[var(--muted)]">{meta.desc}</span>
-                <span className="mt-auto text-2xl font-bold tabular-nums">{info?.count ?? 0}</span>
-              </button>
+                title={info?.label ?? key}
+                subtitle={meta.desc}
+                count={info?.count ?? 0}
+                date={latestDate(list)}
+                coverUrls={list.map((c) => c.url)}
+                color={meta.color}
+                icon={meta.icon}
+                index={i}
+                onOpen={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  useGalleryVisual.getState().fire(
+                    e.clientX || rect.left + rect.width / 2,
+                    e.clientY || rect.top + rect.height / 2
+                  );
+                  void openCategory(key);
+                }}
+              />
             );
           })}
         </div>
@@ -582,7 +641,7 @@ export function Gallery() {
   const Icon = meta.icon;
   const currentItem = lightboxIndex !== null ? items[lightboxIndex] : null;
   return (
-    <div className="min-h-full pb-10">
+    <div className="min-h-full animate-fade-in-up pb-10">
       <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <button
           onClick={backToCategories}

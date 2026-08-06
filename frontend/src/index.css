@@ -62,3 +62,83 @@ body {
 textarea {
   resize: vertical;
 }
+
+/* ---------- 页面/视图入场：淡入 + 上浮 ---------- */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ---------- 背景光斑缓慢浮动 ---------- */
+@keyframes ambient-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(30px, -36px, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(-26px, 24px, 0) scale(0.94);
+  }
+}
+
+.ambient-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(38px);
+  animation: ambient-float 18s ease-in-out infinite;
+  will-change: transform;
+}
+
+.ambient-blob-2 {
+  animation-duration: 24s;
+  animation-delay: -6s;
+}
+
+.ambient-blob-3 {
+  animation-duration: 21s;
+  animation-delay: -11s;
+}
+
+/* ---------- 图片 Hover 扫光：45° 倾斜的白色半透明光泽从左滑到右 ---------- */
+.card-shine {
+  position: relative;
+}
+
+.card-shine::after {
+  content: "";
+  position: absolute;
+  top: -60%;
+  bottom: -60%;
+  left: 0;
+  width: 32%;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  transform: translateX(-360%) skewX(-20deg);
+  opacity: 0;
+  transition:
+    transform 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.15s ease;
+}
+
+.card-shine:hover::after {
+  transform: translateX(420%) skewX(-20deg);
+  opacity: 1;
+}

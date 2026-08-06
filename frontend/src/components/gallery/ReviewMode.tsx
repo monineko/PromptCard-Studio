@@ -144,18 +144,35 @@ export function ReviewMode({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="glass sticky top-0 z-20 flex items-center gap-3 px-4 py-2">
+    <div className="relative flex h-full animate-fade-in-up flex-col">
+      {/* 深色空间场景蒙层 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(120% 120% at 50% 18%, rgba(34,36,50,0.42), rgba(6,7,10,0.86))",
+        }}
+      />
+
+      <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <span className="text-sm font-medium">筛选模式 · {categoryLabel}</span>
         <span className="text-xs text-[var(--muted)]">
           {index + 1} / {items.length} · 已标记 {taggedCount}
         </span>
       </div>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+      <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6">
+        {/* 主色光晕，增强空间氛围 */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 h-[54vh] w-[54vh] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-25 blur-3xl"
+          style={{ background: "radial-gradient(circle, var(--accent), transparent 70%)" }}
+        />
+
         {/* 上一张：被中间遮盖的抽象卡片（无图时为占位块） */}
         <div className="z-0 -mr-10 w-56 shrink-0">
-          <div className="aspect-square w-full -rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-xl brightness-[0.62]">
+          <div className="aspect-square w-full -rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-[0_20px_50px_-18px_rgba(0,0,0,0.8)] brightness-[0.55]">
             {prev ? (
               <img
                 src={api.libraryImageUrl(prev.path)}
@@ -185,7 +202,7 @@ export function ReviewMode({
                   : { opacity: 0, x: -140, rotate: -8, scale: 0.94 }
               }
               transition={{ duration: 0.16, ease: "easeOut" }}
-              className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
+              className="max-h-full max-w-full rounded-2xl object-contain shadow-[0_32px_90px_-24px_rgba(0,0,0,0.85)]"
             />
           </AnimatePresence>
           <AnimatePresence>
@@ -216,7 +233,7 @@ export function ReviewMode({
 
         {/* 下一张：被中间遮盖的抽象卡片 */}
         <div className="z-0 -ml-10 w-56 shrink-0">
-          <div className="aspect-square w-full rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-xl brightness-[0.62]">
+          <div className="aspect-square w-full rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-[0_20px_50px_-18px_rgba(0,0,0,0.8)] brightness-[0.55]">
             {next ? (
               <img
                 src={api.libraryImageUrl(next.path)}
@@ -233,7 +250,7 @@ export function ReviewMode({
         </div>
       </div>
 
-      <div className="glass border-x-0 border-b-0 px-4 py-3">
+      <div className="glass relative z-10 border-x-0 border-b-0 px-4 py-3">
         <div className="flex flex-wrap items-center justify-center gap-3">
           {TAGS.map((t) => (
             <button
