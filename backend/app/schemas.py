@@ -26,6 +26,12 @@ class CardUpdate(BaseModel):
     new_name: Optional[str] = None
 
 
+class CardImageIn(BaseModel):
+    category: str
+    name: str
+    path: str
+
+
 class ExpandRequest(BaseModel):
     text: str
 

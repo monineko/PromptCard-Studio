@@ -1,7 +1,8 @@
 import { Check, Crown, Heart, ThumbsUp, Undo2, X, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, type TargetAndTransition } from "framer-motion";
 import { api } from "../../api";
+import { useGalleryVisual } from "../../store/galleryVisual";
 import type { LibraryImageItem, ReviewTag } from "../../types";
 
 const TAGS: { tag: ReviewTag; label: string; key: string; icon: typeof Crown; color: string }[] = [
@@ -9,6 +10,42 @@ const TAGS: { tag: ReviewTag; label: string; key: string; icon: typeof Crown; co
   { tag: "fine", label: "Fine", key: "ArrowDown", icon: ThumbsUp, color: "#34d399" },
   { tag: "reject", label: "Reject", key: "ArrowRight", icon: XCircle, color: "#f87171" },
   { tag: "favorites", label: "收藏 (Like)", key: "ArrowUp", icon: Heart, color: "#ec4899" },
+];
+
+/**
+ * 四方向离场动效：
+ * - 上（Like/收藏）：粉色光芒 + 扫光 + 心形粒子向上飘散，卡片上抛
+ * - 左（Treasure）：点击位置喷发烟花，卡片向左弧线抛出
+ * - 下（Fine）：3D 翻转坠落（perspective + rotateX）
+ * - 右（Reject）：瞬间灰化 + 向右下方旋转飞出并溶解
+ * 动画期间锁定输入，动画结束后才切换到下一张。
+ */
+const EXIT_ANIM: Record<ReviewTag, TargetAndTransition> = {
+  treasure: { opacity: 0, x: "-120vw", rotate: -20 },
+  fine: { opacity: 0, y: "120vh", rotateX: 60, scale: 0.8 },
+  reject: {
+    opacity: 0,
+    x: "120vw",
+    y: 200,
+    rotate: 45,
+    filter: "grayscale(100%) contrast(80%) blur(8px)",
+  },
+  favorites: {
+    opacity: 0,
+    y: "-120vh",
+    scale: 0.9,
+    filter: "drop-shadow(0 0 28px rgba(255,105,180,0.9))",
+  },
+};
+
+const HEART_PARTICLES = [
+  { dx: -70, dy: -180, size: 18, rot: -20, delay: 0 },
+  { dx: -35, dy: -250, size: 24, rot: 12, delay: 0.08 },
+  { dx: 0, dy: -290, size: 28, rot: 0, delay: 0.14 },
+  { dx: 40, dy: -240, size: 22, rot: -12, delay: 0.06 },
+  { dx: 75, dy: -180, size: 16, rot: 18, delay: 0.12 },
+  { dx: -60, dy: -120, size: 14, rot: 26, delay: 0.18 },
+  { dx: 55, dy: -110, size: 15, rot: -20, delay: 0.22 },
 ];
 
 /**
@@ -34,8 +71,11 @@ export function ReviewMode({
   const [tags, setTags] = useState<Record<string, ReviewTag>>({});
   const [history, setHistory] = useState<number[]>([]);
   const [applying, setApplying] = useState(false);
-  const [lastTag, setLastTag] = useState<ReviewTag | null>(null);
-  const [burst, setBurst] = useState<number>(0);
+  const [leaving, setLeaving] = useState<{ id: number; tag: ReviewTag; path: string } | null>(null);
+  const leavingSeq = useRef(0);
+  const leavingRef = useRef(leaving);
+  leavingRef.current = leaving;
+  const centerRef = useRef<HTMLDivElement>(null);
 
   const current = items[index];
   const currentTag = current ? tags[current.path] : undefined;
@@ -43,34 +83,30 @@ export function ReviewMode({
 
   const tag = useCallback(
     (t: ReviewTag) => {
-      if (!current) return;
-      setLastTag(t);
+      if (!current || leavingRef.current) return; // 离场动画期间锁定，防止连击
       setTags((prev) => ({ ...prev, [current.path]: t }));
       setHistory((prev) => [...prev, index]);
-      if (t === "treasure" || t === "favorites") setBurst((b) => b + 1);
-      setIndex((i) => Math.min(i + 1, items.length - 1));
+      if (t === "treasure") {
+        const rect = centerRef.current?.getBoundingClientRect();
+        if (rect) {
+          useGalleryVisual.getState().fire(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        }
+      }
+      leavingSeq.current += 1;
+      setLeaving({ id: leavingSeq.current, tag: t, path: current.path });
     },
-    [current, index, items.length]
+    [current, index]
   );
 
-  const burstParticles = useMemo(
-    () =>
-      Array.from({ length: 14 }, (_, i) => {
-        const angle = (i / 14) * Math.PI * 2;
-        const dist = 70 + (i % 3) * 26;
-        const color = ["#f59e0b", "#ec4899", "#a78bfa", "#fbbf24", "#34d399"][i % 5];
-        return {
-          id: `${burst}-${i}`,
-          dx: Math.cos(angle) * dist,
-          dy: Math.sin(angle) * dist,
-          color,
-          size: 5 + (i % 3) * 3,
-        };
-      }),
-    [burst]
-  );
+  const finishLeaving = useCallback(() => {
+    if (!leavingRef.current) return;
+    leavingRef.current = null;
+    setLeaving(null);
+    setIndex((i) => Math.min(i + 1, items.length - 1));
+  }, [items.length]);
 
   const undoLast = useCallback(() => {
+    if (leavingRef.current) return;
     setHistory((prev) => {
       if (!prev.length) return prev;
       const last = prev[prev.length - 1];
@@ -88,7 +124,7 @@ export function ReviewMode({
   }, [items]);
 
   const finish = useCallback(async () => {
-    if (applying) return;
+    if (applying || leavingRef.current) return;
     setApplying(true);
     const moves = items.filter((it) => tags[it.path]).map((it) => ({ path: it.path, tag: tags[it.path] }));
     try {
@@ -102,7 +138,7 @@ export function ReviewMode({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (applying) return;
+      if (applying || leavingRef.current) return;
       const map: Record<string, ReviewTag> = {
         ArrowLeft: "treasure",
         ArrowDown: "fine",
@@ -131,6 +167,7 @@ export function ReviewMode({
   const next = index < items.length - 1 ? items[index + 1] : null;
   const keyHint = (key: string) =>
     key === "ArrowLeft" ? "←" : key === "ArrowDown" ? "↓" : key === "ArrowRight" ? "→" : "↑";
+  const locked = applying || !!leaving;
 
   if (!current) {
     return (
@@ -160,6 +197,7 @@ export function ReviewMode({
         <span className="text-xs text-[var(--muted)]">
           {index + 1} / {items.length} · 已标记 {taggedCount}
         </span>
+        {locked && <span className="text-[10px] text-[var(--muted)]">动画中…</span>}
       </div>
 
       <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6">
@@ -188,42 +226,104 @@ export function ReviewMode({
           </div>
         </div>
 
-        <div className="relative flex h-full max-h-[68vh] max-w-[46vw] min-w-0 items-center justify-center">
+        {/* 当前卡片舞台（perspective 供 Fine 3D 翻转使用） */}
+        <div
+          ref={centerRef}
+          className="relative flex h-full max-h-[68vh] max-w-[46vw] min-w-0 items-center justify-center"
+          style={{ perspective: 1000 }}
+        >
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.img
               key={current.path}
               src={api.libraryImageUrl(current.path)}
               alt={current.name}
-              initial={{ opacity: 0, scale: 0.9, x: 80, rotate: 3 }}
-              animate={{ opacity: 1, scale: 1, x: 0, rotate: 0 }}
-              exit={
-                lastTag === "reject"
-                  ? { opacity: 0, x: 180, rotate: 12, scale: 0.94 }
-                  : { opacity: 0, x: -140, rotate: -8, scale: 0.94 }
-              }
-              transition={{ duration: 0.16, ease: "easeOut" }}
-              className="max-h-full max-w-full rounded-2xl object-contain shadow-[0_32px_90px_-24px_rgba(0,0,0,0.85)]"
+              initial={{ opacity: 0, scale: 0.92, x: 30 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              exit={{ opacity: 0, scale: 0.95, x: -20 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              className="max-h-full max-w-full rounded-2xl object-contain shadow-[0_32px_90px_-24px_rgba(0,0,0,0.85)] will-change-transform"
             />
           </AnimatePresence>
+
+          {/* 离场覆盖层：四方向各自轨迹与伴随特效 */}
           <AnimatePresence>
-            {burst > 0 && (
-              <div key={burst} className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                {burstParticles.map((p) => (
-                  <motion.span
-                    key={p.id}
-                    initial={{ opacity: 1, x: 0, y: 0, scale: 1 }}
-                    animate={{ opacity: 0, x: p.dx, y: p.dy, scale: 0.4 }}
-                    transition={{ duration: 0.55, ease: "easeOut" }}
-                    className="absolute rounded-full"
-                    style={{ width: p.size, height: p.size, background: p.color }}
-                  />
-                ))}
-              </div>
+            {leaving && (
+              <motion.div
+                key={`leaving-${leaving.id}`}
+                initial={
+                  leaving.tag === "reject"
+                    ? {
+                        opacity: 1,
+                        x: 0,
+                        y: 0,
+                        rotate: 0,
+                        rotateX: 0,
+                        scale: 1,
+                        filter: "grayscale(100%) contrast(80%) blur(0px)",
+                      }
+                    : leaving.tag === "favorites"
+                      ? {
+                          opacity: 1,
+                          x: 0,
+                          y: 0,
+                          rotate: 0,
+                          rotateX: 0,
+                          scale: 1,
+                          filter: "drop-shadow(0 0 0px rgba(255,105,180,0))",
+                        }
+                      : { opacity: 1, x: 0, y: 0, rotate: 0, rotateX: 0, scale: 1 }
+                }
+                animate={EXIT_ANIM[leaving.tag]}
+                transition={{ duration: 0.55, ease: [0.25, 0.8, 0.25, 1] }}
+                onAnimationComplete={() => finishLeaving()}
+                className="pointer-events-none absolute inset-0 z-30 will-change-transform will-change-opacity"
+              >
+                <img
+                  src={api.libraryImageUrl(leaving.path)}
+                  alt=""
+                  draggable={false}
+                  className="h-full w-full rounded-2xl object-contain"
+                />
+                {leaving.tag === "favorites" && (
+                  <>
+                    <div className="shine-sweep absolute inset-0 z-20 rounded-2xl" />
+                    <div
+                      className="absolute inset-0 z-10 rounded-2xl"
+                      style={{
+                        background:
+                          "radial-gradient(circle at 50% 45%, rgba(255,105,180,0.28), transparent 68%)",
+                      }}
+                    />
+                    <div className="absolute inset-0 z-20 flex items-center justify-center">
+                      {HEART_PARTICLES.map((h, i) => (
+                        <motion.span
+                          key={`${leaving.id}-h${i}`}
+                          initial={{ opacity: 0, x: 0, y: 0, scale: 0.4, rotate: 0 }}
+                          animate={{ opacity: [0, 1, 1, 0], x: h.dx, y: h.dy, scale: 1.1, rotate: h.rot }}
+                          transition={{ duration: 0.9, delay: h.delay, ease: "easeOut" }}
+                          className="absolute text-rose-400"
+                          style={{
+                            fontSize: h.size,
+                            left: "50%",
+                            top: "50%",
+                            marginLeft: -h.size / 2,
+                            marginTop: -h.size / 2,
+                            textShadow: "0 0 14px rgba(255,105,180,0.9)",
+                          }}
+                        >
+                          ♥
+                        </motion.span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </motion.div>
             )}
           </AnimatePresence>
+
           {currentTag && (
             <span
-              className="absolute left-3 top-3 rounded-full px-3 py-1 text-xs font-semibold text-white shadow"
+              className="absolute left-3 top-3 z-10 rounded-full px-3 py-1 text-xs font-semibold text-white shadow"
               style={{ background: TAGS.find((t) => t.tag === currentTag)?.color }}
             >
               {TAGS.find((t) => t.tag === currentTag)?.label}
@@ -256,7 +356,8 @@ export function ReviewMode({
             <button
               key={t.tag}
               onClick={() => tag(t.tag)}
-              className="flex min-w-[118px] flex-col items-center gap-0.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.04] active:scale-95"
+              disabled={locked}
+              className="flex min-w-[118px] flex-col items-center gap-0.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.04] active:scale-95 disabled:pointer-events-none disabled:opacity-45"
               style={{ background: t.color }}
               title={`快捷键 ${keyHint(t.key)}`}
             >
@@ -270,16 +371,16 @@ export function ReviewMode({
 
           <button
             onClick={undoLast}
-            disabled={!history.length}
-            className="flex items-center gap-1.5 rounded-xl bg-[var(--hover)] px-4 py-3 text-sm disabled:opacity-40"
+            disabled={locked || !history.length}
+            className="flex items-center gap-1.5 rounded-xl bg-[var(--hover)] px-4 py-3 text-sm disabled:pointer-events-none disabled:opacity-40"
             title="Backspace 撤销上一步"
           >
             <Undo2 size={15} /> 撤销
           </button>
           <button
             onClick={finish}
-            disabled={applying}
-            className="flex items-center gap-1.5 rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+            disabled={locked}
+            className="flex items-center gap-1.5 rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:pointer-events-none disabled:opacity-50"
             style={{ background: "var(--accent)" }}
             title="开始移动文件到对应文件夹"
           >

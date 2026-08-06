@@ -49,6 +49,17 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ category, name, content, new_category, new_name }),
     }),
+  cardImages: () => request<Record<string, string>>("/api/cards/images"),
+  setCardImage: (category: string, name: string, path: string) =>
+    request("/api/cards/image", {
+      method: "PUT",
+      body: JSON.stringify({ category, name, path }),
+    }),
+  removeCardImage: (category: string, name: string) =>
+    request(
+      `/api/cards/image?category=${encodeURIComponent(category)}&name=${encodeURIComponent(name)}`,
+      { method: "DELETE" }
+    ),
   deleteCard: (category: string, name: string) =>
     request(`/api/cards?category=${encodeURIComponent(category)}&name=${encodeURIComponent(name)}`, {
       method: "DELETE",
@@ -103,6 +114,10 @@ export const api = {
       "/api/library/delete",
       { method: "POST", body: JSON.stringify({ paths }) }
     ),
+  backgrounds: () =>
+    request<{ images: { name: string; url: string }[]; folder: string }>("/api/backgrounds"),
+  openBackgroundsFolder: () =>
+    request<{ ok: boolean; path: string }>("/api/backgrounds/open-folder", { method: "POST" }),
 };
 
 export function uid(): string {

@@ -1,11 +1,15 @@
-import { Save } from "lucide-react";
-import { useEffect, useState } from "react";
+import { FolderOpen, Images, RefreshCw, Save, Undo2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "../api";
+import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
 import { Button } from "../components/UI";
 import { useStore } from "../store";
+import { useGalleryVisual } from "../store/galleryVisual";
 
 export function Settings() {
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
+  const addToast = useStore((s) => s.addToast);
   const [form, setForm] = useState({
     mode: "dark",
     accent: "#8b5cf6",
@@ -14,6 +18,9 @@ export function Settings() {
     library_path: "",
     recycle_reject: true,
   });
+  const [bgImages, setBgImages] = useState<{ name: string; url: string }[]>([]);
+  const [bgFolder, setBgFolder] = useState("");
+  const [bgLoading, setBgLoading] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
@@ -27,12 +34,41 @@ export function Settings() {
     });
   }, [settings]);
 
+  const loadBackgrounds = useCallback(async () => {
+    setBgLoading(true);
+    try {
+      const r = await api.backgrounds();
+      setBgImages(r.images);
+      setBgFolder(r.folder);
+    } catch (e) {
+      addToast(`读取背景图失败: ${(e as Error).message}`, "err");
+    } finally {
+      setBgLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => {
+    void loadBackgrounds();
+  }, [loadBackgrounds]);
+
   if (!settings) return <div className="p-8 text-sm text-[var(--muted)]">加载中…</div>;
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-6">
-      <h1 className="mb-5 text-lg font-semibold">设置</h1>
+    <div className="animate-fade-in-up mx-auto w-full max-w-2xl space-y-5 px-4 py-6">
+      <h1 className="text-lg font-semibold">设置</h1>
+
+      {/* ---------- 界面个性化 ---------- */}
       <div className="glass space-y-5 rounded-2xl p-5">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2">
+          <span
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-white"
+            style={{ background: "var(--accent)" }}
+          >
+            <Images size={14} />
+          </span>
+          <h2 className="text-sm font-semibold">界面个性化</h2>
+        </div>
+
         <div>
           <label className="mb-2 block text-sm">主题模式</label>
           <div className="flex gap-2">
@@ -84,6 +120,78 @@ export function Settings() {
             className="w-full accent-[var(--accent)]"
           />
         </div>
+
+        <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-sm font-medium">背景图</span>
+            <span className="text-xs text-[var(--muted)]">
+              {bgLoading ? "扫描中…" : `文件夹内 ${bgImages.length} 张`}
+            </span>
+          </div>
+          <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
+            把图片放进背景图文件夹，点击"重新扫描"即可生效；图库页面浏览时仍优先展示当前分类图片。
+          </p>
+
+          {bgImages.length > 0 ? (
+            <div className="mb-3 grid grid-cols-4 gap-2">
+              {bgImages.slice(0, 8).map((im) => (
+                <div
+                  key={im.name}
+                  title={im.name}
+                  className="aspect-video overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--hover)]"
+                >
+                  <img src={im.url} alt={im.name} className="h-full w-full object-cover" loading="lazy" />
+                </div>
+              ))}
+              {bgImages.length > 8 && (
+                <div className="flex aspect-video items-center justify-center rounded-lg border border-[var(--border)] text-[10px] text-[var(--muted)]">
+                  +{bgImages.length - 8}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mb-3 flex aspect-video max-w-[220px] items-center justify-center rounded-xl border border-dashed border-[var(--border)] text-xs text-[var(--muted)]">
+              文件夹为空，放入图片后点"重新扫描"
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={async () => {
+                try {
+                  const r = await api.openBackgroundsFolder();
+                  addToast(`已打开背景图文件夹：${r.path}`);
+                } catch (e) {
+                  addToast(`打开失败: ${(e as Error).message}`, "err");
+                }
+              }}
+            >
+              <FolderOpen size={13} /> 打开背景图文件夹
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => void loadBackgrounds()} disabled={bgLoading}>
+              <RefreshCw size={13} /> 重新扫描
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                useGalleryVisual.getState().setPreferred(DEFAULT_BACKDROPS);
+                addToast("已恢复默认背景素材");
+              }}
+            >
+              <Undo2 size={13} /> 恢复默认
+            </Button>
+          </div>
+          <p className="mt-2 truncate text-[11px] text-[var(--muted)]" title={bgFolder}>
+            {bgFolder || "背景图文件夹路径…"}
+          </p>
+        </div>
+      </div>
+
+      {/* ---------- 常规设置 ---------- */}
+      <div className="glass space-y-5 rounded-2xl p-5">
+        <h2 className="border-b border-[var(--border)] pb-2 text-sm font-semibold">常规设置</h2>
 
         <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input

@@ -14,9 +14,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { cn, categoryHue } from "../lib";
 import { useStore } from "../store";
+import { useCardImagePicker } from "../store/cardImagePicker";
 import type { CardMeta, Category, Section } from "../types";
 import { Button, CategoryBadge, ConfirmDialog, IconBtn, Modal } from "./UI";
 
@@ -41,6 +43,8 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
   const colorMap = useStore((s) => s.categoryColor);
   const positive = useStore((s) => s.positive);
   const negative = useStore((s) => s.negative);
+  const startPick = useCardImagePicker((s) => s.startPick);
+  const navigate = useNavigate();
   const hue = colorMap[category] ?? categoryHue(category);
   const added = useMemo(() => {
     const key = `${category}:${card.name}`;
@@ -56,20 +60,55 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
       exit={{ opacity: 0, scale: 0.92 }}
       whileHover={{ y: -6, scale: 1.03 }}
       onClick={() => openDetail(category, card.name)}
-      className="group relative h-52 w-40 cursor-pointer overflow-hidden rounded-2xl border border-white/15 text-white shadow-lg transition-shadow hover:shadow-2xl"
-      style={{
-        background: `linear-gradient(145deg, hsl(${hue} 45% 38%), hsl(${hue} 60% 24%))`,
-      }}
+      className="card-shine group relative h-60 w-44 cursor-pointer overflow-hidden rounded-2xl border border-white/15 text-white shadow-lg transition-shadow hover:shadow-2xl"
       title={`${category}：${card.name} · 点击编辑`}
     >
-      <div className="absolute inset-0 opacity-20" style={{ background: "radial-gradient(circle at 30% 20%, rgba(255,255,255,.7), transparent 55%)" }} />
-      <div className="absolute left-2.5 top-2.5">
-        <div className="text-lg font-bold leading-none">{card.name}</div>
-        <div className="mt-1 text-[10px] uppercase tracking-wide opacity-70">{category}</div>
+      {/* 上半部分：演示图片（占卡面大部分面积） */}
+      <div
+        className="absolute inset-x-0 top-0 h-[67%]"
+        style={{ background: `linear-gradient(145deg, hsl(${hue} 45% 38%), hsl(${hue} 60% 24%))` }}
+      >
+        {card.image ? (
+          <img
+            src={api.libraryImageUrl(card.image)}
+            alt={card.name}
+            draggable={false}
+            loading="lazy"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+            }}
+            className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <ImagePlus size={24} className="text-white/45" />
+          </div>
+        )}
       </div>
+
+      {/* 下半部分：分类颜色带 + 卡片名称（单行） */}
+      <div
+        className="absolute inset-x-0 bottom-0 flex h-[33%] flex-col justify-center px-2.5"
+        style={{ background: `linear-gradient(160deg, hsl(${hue} 52% 40%), hsl(${hue} 64% 22%))` }}
+      >
+        <div className="truncate text-sm font-bold leading-tight drop-shadow">{card.name}</div>
+        <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider opacity-70">{category}</div>
+      </div>
+
+      <IconBtn
+        title={card.image ? "更换演示图" : "添加演示图"}
+        className="absolute left-1.5 top-1.5 z-20 hidden h-7 w-7 rounded-lg bg-black/40 text-white/90 backdrop-blur transition-colors hover:bg-black/60 hover:text-white group-hover:inline-flex"
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate("/library");
+          startPick(category, card.name);
+        }}
+      >
+        <ImagePlus size={14} />
+      </IconBtn>
       <IconBtn
         title="添加到当前区域"
-        className="absolute right-2 top-2 z-20 hidden h-7 w-7 rounded-lg bg-white/20 text-white backdrop-blur hover:bg-white/35 hover:text-white group-hover:inline-flex"
+        className="absolute right-1.5 top-1.5 z-20 hidden h-7 w-7 rounded-lg bg-white/20 text-white backdrop-blur hover:bg-white/35 hover:text-white group-hover:inline-flex"
         onClick={(e) => {
           e.stopPropagation();
           addCardBlock(category, card.name);
@@ -77,10 +116,6 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
       >
         <Plus size={14} />
       </IconBtn>
-      <p className="scroll-thin absolute inset-x-3 bottom-3 top-16 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-white/85">
-        {card.preview}
-      </p>
-      <div className="absolute bottom-2 right-2.5 h-1.5 w-1.5 rounded-full bg-white/80" />
       <AnimatePresence>
         {added && (
           <motion.div
@@ -374,6 +409,12 @@ function CardDetailModal() {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const startPick = useCardImagePicker((s) => s.startPick);
+  const navigate = useNavigate();
+
+  const cardImage = detail
+    ? categories.find((c) => c.name === detail.category)?.cards.find((c) => c.name === detail.name)?.image ?? null
+    : null;
 
   useEffect(() => {
     if (!detail) return;
@@ -437,13 +478,60 @@ function CardDetailModal() {
             className="scroll-thin w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-relaxed outline-none focus:border-[var(--accent)]"
           />
 
-          <button
-            onClick={() => {}}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-4 text-xs text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
-          >
-            <ImagePlus size={16} />
-            演示图片（预留，后续版本支持）
-          </button>
+          {cardImage ? (
+            <div className="mt-3 flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-2">
+              <img
+                src={api.libraryImageUrl(cardImage)}
+                alt=""
+                className="h-16 w-16 shrink-0 rounded-lg object-cover"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium">当前演示图片</div>
+                <div className="truncate text-[11px] text-[var(--muted)]" title={cardImage}>
+                  {cardImage}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  navigate("/library");
+                  startPick(detail.category, detail.name);
+                }}
+              >
+                更换
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={async () => {
+                  try {
+                    await api.removeCardImage(detail.category, detail.name);
+                    useStore.getState().refreshCategories();
+                    useStore.getState().addToast(`已移除 <${detail.category}:${detail.name}> 的演示图片`);
+                  } catch (e) {
+                    useStore.getState().addToast(`移除失败: ${(e as Error).message}`, "err");
+                  }
+                }}
+              >
+                移除
+              </Button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                navigate("/library");
+                startPick(detail.category, detail.name);
+              }}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-4 text-xs text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            >
+              <ImagePlus size={16} />
+              添加演示图片（从图库选择）
+            </button>
+          )}
 
           <div className="mt-4 flex items-center gap-2">
             <Button variant="danger" size="sm" onClick={() => setConfirmDel(true)}>

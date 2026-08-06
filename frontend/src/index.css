@@ -142,3 +142,33 @@ textarea {
   transform: translateX(420%) skewX(-20deg);
   opacity: 1;
 }
+
+/* 一次性扫光：用于 Like 离场等触发式特效 */
+@keyframes shine-sweep {
+  0% {
+    transform: translateX(-360%) skewX(-20deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(420%) skewX(-20deg);
+    opacity: 0;
+  }
+}
+
+.shine-sweep::after {
+  content: "";
+  position: absolute;
+  top: -60%;
+  bottom: -60%;
+  left: 0;
+  width: 32%;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent,
+    rgba(255, 255, 255, 0.65),
+    transparent
+  );
+  animation: shine-sweep 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

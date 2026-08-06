@@ -8,11 +8,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cards as cards_service
+from . import backgrounds as backgrounds_service
 from . import library as library_service
 from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
     AnrImportIn,
+    CardImageIn,
     CardIn,
     CardUpdate,
     CategoryColor,
@@ -180,6 +182,29 @@ def export_cards():
     )
 
 
+@app.get("/api/cards/images")
+def cards_images():
+    return cards_service.list_cards_images()
+
+
+@app.put("/api/cards/image")
+def set_card_image(body: CardImageIn):
+    try:
+        return cards_service.set_card_image(body.category, body.name, body.path)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.delete("/api/cards/image")
+def remove_card_image(category: str, name: str):
+    try:
+        return cards_service.remove_card_image(category, name)
+    except Exception as e:
+        raise _as_http(e)
+
+
 # ---------- 工作区 ----------
 
 
@@ -204,6 +229,33 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(body: dict):
     return save_settings(body)
+
+
+# ---------- 背景图 ----------
+
+
+@app.get("/api/backgrounds")
+def backgrounds_list():
+    return backgrounds_service.list_backgrounds()
+
+
+@app.get("/api/backgrounds/image")
+def backgrounds_image(name: str):
+    try:
+        file = backgrounds_service.resolve_background(name)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    if not file.exists() or not file.is_file():
+        raise HTTPException(404, "背景图不存在")
+    return FileResponse(file)
+
+
+@app.post("/api/backgrounds/open-folder")
+def backgrounds_open_folder():
+    try:
+        return backgrounds_service.open_backgrounds_folder()
+    except Exception as e:
+        raise _as_http(e)
 
 
 # ---------- 图片库 ----------

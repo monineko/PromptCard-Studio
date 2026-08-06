@@ -5,6 +5,7 @@ import {
   FolderOpen,
   FolderPlus,
   Heart,
+  ImagePlus,
   Images,
   LayoutGrid,
   Loader2,
@@ -26,6 +27,8 @@ import { ReviewMode } from "../components/gallery/ReviewMode";
 import { ZoomableImage } from "../components/gallery/ZoomableImage";
 import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
+import { Button } from "../components/UI";
+import { useCardImagePicker } from "../store/cardImagePicker";
 import { useGalleryVisual } from "../store/galleryVisual";
 import type {
   LibraryCategoryKey,
@@ -137,6 +140,9 @@ export function Gallery() {
   const setSidebarOpen = useSidebarStore((s) => s.setOpen);
   const registerGallery = useSidebarStore((s) => s.registerGallery);
   const unregisterGallery = useSidebarStore((s) => s.unregisterGallery);
+  const pendingCard = useCardImagePicker((s) => s.pendingCard);
+  const cancelPick = useCardImagePicker((s) => s.cancelPick);
+  const [pickCandidate, setPickCandidate] = useState<LibraryImageItem | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -209,7 +215,13 @@ export function Gallery() {
     }
   }, [addToast]);
 
+  // 为卡片选择演示图时：自动进入"全部"分类，点击图片不放大而是进入选择流程
+  useEffect(() => {
+    if (pendingCard && category !== "all") void openCategory("all");
+  }, [pendingCard, category, openCategory]);
+
   const backToCategories = useCallback(() => {
+    cancelPick();
     setCategory(null);
     setItems([]);
     setReviewing(false);
@@ -217,7 +229,7 @@ export function Gallery() {
     setUndoToken(null);
     setPngOpen(false);
     setPngInfo(null);
-  }, []);
+  }, [cancelPick]);
 
   const groups = useMemo(() => (category ? buildGroups(items, category) : []), [category, items]);
   const slides = useMemo(
@@ -570,6 +582,7 @@ export function Gallery() {
                 icon={meta.icon}
                 index={i}
                 onOpen={(e) => {
+                  if (pendingCard) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   useGalleryVisual.getState().fire(
                     e.clientX || rect.left + rect.width / 2,
@@ -642,6 +655,21 @@ export function Gallery() {
   const currentItem = lightboxIndex !== null ? items[lightboxIndex] : null;
   return (
     <div className="min-h-full animate-fade-in-up pb-10">
+      {pendingCard && (
+        <div className="flex items-center gap-2 border-b border-[var(--accent)]/30 bg-[var(--accent)]/10 px-4 py-2 text-xs">
+          <ImagePlus size={14} className="shrink-0 text-[var(--accent)]" />
+          <span className="min-w-0 truncate">
+            正在为 <b className="text-[var(--accent)]">{pendingCard.category}：{pendingCard.name}</b>{" "}
+            选择演示图片 —— 点击图片即可选择
+          </span>
+          <button
+            onClick={cancelPick}
+            className="ml-auto shrink-0 rounded-md bg-[var(--hover)] px-2 py-1 text-[var(--muted)] transition-colors hover:text-[var(--text)]"
+          >
+            取消选择
+          </button>
+        </div>
+      )}
       <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <button
           onClick={backToCategories}
@@ -700,6 +728,10 @@ export function Gallery() {
                 onToggleSelect={(item) => toggleSelect(item)}
                 onItemClick={(_item, idx) => {
                   if (quickPick) return;
+                  if (pendingCard) {
+                    setPickCandidate(_item);
+                    return;
+                  }
                   const base = items.findIndex((i) => i.path === group.items[0].path);
                   setLightboxIndex(base + idx);
                 }}
@@ -770,6 +802,50 @@ export function Gallery() {
           onDelete={handleQuickDelete}
           onClose={closeQuickPick}
         />
+      )}
+
+      {pickCandidate && pendingCard && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPickCandidate(null)}
+        >
+          <div className="glass w-full max-w-sm rounded-2xl p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-semibold">设为演示图片</div>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              将这张图片设为{" "}
+              <span className="font-medium text-[var(--accent)]">
+                {pendingCard.category}：{pendingCard.name}
+              </span>{" "}
+              的演示图？
+            </p>
+            <img
+              src={api.libraryImageUrl(pickCandidate.path)}
+              alt={pickCandidate.name}
+              className="mt-3 max-h-56 w-full rounded-xl border border-[var(--border)] bg-black/30 object-contain"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPickCandidate(null)}>
+                换一张
+              </Button>
+              <Button
+                onClick={async () => {
+                  try {
+                    await api.setCardImage(pendingCard.category, pendingCard.name, pickCandidate.path);
+                    useStore.getState().addToast(`已为 <${pendingCard.category}:${pendingCard.name}> 添加演示图片`);
+                    useStore.getState().refreshCategories();
+                    setPickCandidate(null);
+                    cancelPick();
+                    navigate("/");
+                  } catch (e) {
+                    useStore.getState().addToast(`设置失败: ${(e as Error).message}`, "err");
+                  }
+                }}
+              >
+                确认应用
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

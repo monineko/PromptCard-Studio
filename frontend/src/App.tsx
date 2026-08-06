@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { HashRouter, Route, Routes, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { api } from "./api";
+import { DEFAULT_BACKDROPS } from "./assets/backgrounds";
 import { AmbientBackground } from "./components/ambient/AmbientBackground";
 import { FireworksCanvas } from "./components/ambient/FireworksCanvas";
 import { AppSidebar } from "./components/AppSidebar";
@@ -13,6 +15,7 @@ import { Placeholder } from "./pages/Placeholder";
 import { Settings } from "./pages/Settings";
 import { useSidebarStore } from "./sidebarStore";
 import { useStore } from "./store";
+import { useGalleryVisual } from "./store/galleryVisual";
 
 function Shortcuts() {
   const undo = useStore((s) => s.undo);
@@ -47,6 +50,24 @@ function Shell() {
   useEffect(() => {
     init();
   }, [init]);
+
+  // 加载用户背景图（backgrounds/ 文件夹素材），没有则回退内置素材
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .backgrounds()
+      .then((r) => {
+        if (cancelled) return;
+        const bd = r.images.map((im) => ({ key: `bg:${im.name}`, url: im.url }));
+        useGalleryVisual.getState().setPreferred(bd.length ? bd : DEFAULT_BACKDROPS);
+      })
+      .catch(() => {
+        if (!cancelled) useGalleryVisual.getState().setPreferred(DEFAULT_BACKDROPS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 图片库页面不自动展开（进入图片流时才展开）；其他页面侧边栏自动向左侧隐藏
   useEffect(() => {

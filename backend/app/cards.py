@@ -9,10 +9,14 @@ import zipfile
 from pathlib import Path
 
 from .config import WILDCARDS_DIR, load_settings, save_settings
+from .library import resolve_image
 
 INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
 _sequential_state: dict[str, int] = {}
+
+CARD_IMAGES_FILE = WILDCARDS_DIR / ".card-images.json"
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 
 
 def _safe_name(name: str) -> str:
@@ -41,10 +45,29 @@ def _preview(content: str, limit: int = 100) -> str:
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
+def _load_card_images() -> dict[str, str]:
+    """卡片演示图映射：{"<分类>:<名称>": 图库相对路径}。"""
+    if not CARD_IMAGES_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CARD_IMAGES_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_card_images(images: dict[str, str]) -> None:
+    WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
+    CARD_IMAGES_FILE.write_text(
+        json.dumps(images, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def list_categories() -> list[dict]:
     result = []
     if not WILDCARDS_DIR.exists():
         return result
+    images = _load_card_images()
     for folder in sorted(p for p in WILDCARDS_DIR.iterdir() if p.is_dir()):
         cards = []
         for file in sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".txt"):
@@ -54,6 +77,7 @@ def list_categories() -> list[dict]:
                     "name": file.stem,
                     "preview": _preview(content),
                     "updated": file.stat().st_mtime,
+                    "image": images.get(f"{folder.name}:{file.stem}") or None,
                 }
             )
         result.append({"name": folder.name, "count": len(cards), "cards": cards})
@@ -110,6 +134,12 @@ def update_card(
         _category_path(dest_cat).mkdir(parents=True, exist_ok=True)
         path.rename(dest_path)
     dest_path.write_text(content or "", encoding="utf-8")
+    images = _load_card_images()
+    old_key = f"{_safe_name(category)}:{_safe_name(name)}"
+    new_key = f"{dest_cat}:{dest_name}"
+    if old_key != new_key and old_key in images:
+        images[new_key] = images.pop(old_key)
+        _save_card_images(images)
     return {"category": dest_cat, "name": dest_name, "content": content or ""}
 
 
@@ -118,6 +148,11 @@ def delete_card(category: str, name: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"卡片不存在: <{category}:{name}>")
     _trash(path)
+    images = _load_card_images()
+    key = f"{_safe_name(category)}:{_safe_name(name)}"
+    if key in images:
+        images.pop(key)
+        _save_card_images(images)
 
 
 def create_category(name: str) -> dict:
@@ -143,6 +178,15 @@ def rename_category(old_name: str, new_name: str) -> dict:
     if old_name in colors:
         colors[new_name] = colors.pop(old_name)
         save_settings({"category_colors": colors})
+    images = _load_card_images()
+    changed = False
+    prefix = f"{_safe_name(old_name)}:"
+    for key in list(images):
+        if key.startswith(prefix):
+            images[f"{dst.name}:{key[len(prefix):]}"] = images.pop(key)
+            changed = True
+    if changed:
+        _save_card_images(images)
     return {"name": dst.name}
 
 
@@ -156,6 +200,41 @@ def delete_category(name: str) -> None:
     if name in colors:
         colors.pop(name)
         save_settings({"category_colors": colors})
+    images = _load_card_images()
+    prefix = f"{_safe_name(name)}:"
+    if any(k.startswith(prefix) for k in images):
+        for key in [k for k in images if k.startswith(prefix)]:
+            images.pop(key)
+        _save_card_images(images)
+
+
+def list_cards_images() -> dict:
+    return _load_card_images()
+
+
+def set_card_image(category: str, name: str, path: str) -> dict:
+    """为卡片绑定一张图库内图片作为演示图。"""
+    cat, card_name = _safe_name(category), _safe_name(name)
+    if get_card(cat, card_name) is None:
+        raise FileNotFoundError(f"卡片不存在: <{cat}:{card_name}>")
+    if not path or Path(path).suffix.lower() not in IMAGE_EXTENSIONS:
+        raise ValueError("图片路径无效")
+    file = resolve_image(path)
+    if not file.exists() or not file.is_file():
+        raise FileNotFoundError("图片不存在")
+    images = _load_card_images()
+    images[f"{cat}:{card_name}"] = path
+    _save_card_images(images)
+    return {"ok": True, "category": cat, "name": card_name, "path": path}
+
+
+def remove_card_image(category: str, name: str) -> dict:
+    images = _load_card_images()
+    key = f"{_safe_name(category)}:{_safe_name(name)}"
+    if key in images:
+        images.pop(key)
+        _save_card_images(images)
+    return {"ok": True}
 
 
 def _trash(path: Path) -> None:
