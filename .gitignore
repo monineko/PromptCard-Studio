@@ -1,0 +1,15 @@
+# 虚拟环境与缓存
+.venv/
+__pycache__/
+*.pyc
+frontend/node_modules/
+
+# 用户数据（不提交仓库）
+wildcards/
+library/
+workspace.json
+.trash/
+
+# 系统文件
+.DS_Store
+Thumbs.db

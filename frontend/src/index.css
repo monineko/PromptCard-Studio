@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+:root[data-mode="dark"] {
+  --bg: #0b0c10;
+  --panel: rgba(26, 28, 38, 0.72);
+  --panel-solid: #161821;
+  --text: #e7e9ee;
+  --muted: #9aa0ae;
+  --border: rgba(255, 255, 255, 0.1);
+  --hover: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-mode="light"] {
+  --bg: #eef0f5;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-solid: #ffffff;
+  --text: #1d2029;
+  --muted: #6b7280;
+  --border: rgba(0, 0, 0, 0.1);
+  --hover: rgba(0, 0, 0, 0.05);
+  --input: rgba(0, 0, 0, 0.04);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent, #8b5cf6) 35%, transparent);
+}
+
+.glass {
+  background: var(--panel);
+  backdrop-filter: blur(calc(10px * var(--glass, 0.6)));
+  -webkit-backdrop-filter: blur(calc(10px * var(--glass, 0.6)));
+  border: 1px solid var(--border);
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea {
+  resize: vertical;
+}

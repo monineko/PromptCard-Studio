@@ -1,0 +1,71 @@
+import { Moon, Palette, Rocket, Sparkles, Sun } from "lucide-react";
+import { NavLink } from "react-router-dom";
+import { cn } from "../lib";
+import { useStore } from "../store";
+import { IconBtn } from "./UI";
+
+export function TopBar() {
+  const settings = useStore((s) => s.settings);
+  const setTheme = useStore((s) => s.setTheme);
+  const mode = settings?.theme.mode ?? "dark";
+  const accent = settings?.theme.accent ?? "#8b5cf6";
+
+  const links = [
+    { to: "/", label: "提示词工作区" },
+    { to: "/settings", label: "设置" },
+    { to: "/library", label: "图片库", soon: true },
+    { to: "/publish", label: "发布处理", soon: true },
+  ];
+
+  return (
+    <header className="glass sticky top-0 z-30 flex items-center gap-4 border-x-0 border-t-0 px-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-lg"
+          style={{ background: "var(--accent)" }}
+        >
+          <Sparkles size={16} />
+        </span>
+        <span className="text-sm font-semibold tracking-wide">Novelai Prompt Manager</span>
+      </div>
+
+      <nav className="ml-4 flex items-center gap-1">
+        {links.map((l) => (
+          <NavLink
+            key={l.to}
+            to={l.to}
+            className={({ isActive }) =>
+              cn(
+                "relative flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors",
+                isActive ? "text-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--text)]"
+              )
+            }
+          >
+            {l.label}
+            {l.soon && (
+              <span className="rounded bg-[var(--hover)] px-1 text-[10px] text-[var(--muted)]">M2/M3</span>
+            )}
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="ml-auto flex items-center gap-1.5">
+        <label
+          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-[var(--muted)]"
+          title="主色"
+        >
+          <Palette size={13} />
+          <input
+            type="color"
+            value={accent}
+            onChange={(e) => setTheme({ accent: e.target.value })}
+            className="h-5 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+          />
+        </label>
+        <IconBtn title={mode === "dark" ? "切换为亮色" : "切换为暗色"} onClick={() => setTheme({ mode: mode === "dark" ? "light" : "dark" })}>
+          {mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </IconBtn>
+      </div>
+    </header>
+  );
+}

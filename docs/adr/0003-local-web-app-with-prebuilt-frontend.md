@@ -1,0 +1,3 @@
+# Local web app: FastAPI + React, prebuilt frontend committed
+
+The app is a local web application: a Python FastAPI + SQLite backend serves a React + TypeScript single-page app whose production build is committed to the repo. End users only need Python 3.10+ and run `run.bat` (Windows) or `run.sh` (macOS); Node is required only for development. This mirrors ANR's "download and run" experience while giving us a modern interactive UI. Tauri/Electron were rejected (no Rust toolchain, heavier distribution); a Node-only stack was rejected because the Python ecosystem (NovelAI API work, PNG metadata, future image tooling) matters more than language uniformity.

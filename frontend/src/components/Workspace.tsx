@@ -1,0 +1,462 @@
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  ClipboardCopy,
+  FolderPlus,
+  Pencil,
+  Plus,
+  Redo2,
+  Trash2,
+  Undo2,
+  X,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { cn, categoryHue } from "../lib";
+import { useStore } from "../store";
+import type { Block, Section } from "../types";
+import { Button, CategoryBadge, ConfirmDialog, IconBtn, Modal } from "./UI";
+
+function ZoneTabs() {
+  const zone = useStore((s) => s.zone);
+  const setZone = useStore((s) => s.setZone);
+  const positiveCount = useStore((s) => s.positive.reduce((n, x) => n + x.blocks.length, 0));
+  const negativeCount = useStore((s) => s.negative.reduce((n, x) => n + x.blocks.length, 0));
+  return (
+    <div className="inline-flex rounded-xl border border-[var(--border)] bg-[var(--input)] p-1">
+      {(
+        [
+          ["positive", "正面提示词", positiveCount],
+          ["negative", "负面提示词", negativeCount],
+        ] as const
+      ).map(([key, label, count]) => (
+        <button
+          key={key}
+          onClick={() => setZone(key)}
+          className={cn(
+            "rounded-lg px-4 py-1.5 text-sm transition-all",
+            zone === key ? "text-white shadow" : "text-[var(--muted)] hover:text-[var(--text)]"
+          )}
+          style={zone === key ? { background: "var(--accent)" } : undefined}
+        >
+          {label}
+          <span className={cn("ml-1.5 text-xs opacity-70", zone !== key && "text-[var(--muted)]")}>
+            {count}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type DragState = {
+  block: Block;
+  fromSectionId: string;
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+};
+
+let suppressClickUntil = 0;
+
+function PromptChip({
+  block,
+  sectionId,
+  onDragStart,
+}: {
+  block: Extract<Block, { type: "prompt" }>;
+  sectionId: string;
+  onDragStart: (e: React.PointerEvent, block: Block) => void;
+}) {
+  const removeBlock = useStore((s) => s.removeBlock);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      data-block-id={block.id}
+      onPointerDown={(e) => onDragStart(e, block)}
+      className="group flex cursor-grab touch-none select-none items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs transition-colors hover:border-[var(--accent)] hover:bg-[var(--hover)] active:cursor-grabbing"
+      title="拖动排序或移动到其它分区"
+    >
+      <span>{block.text}</span>
+      <span
+        className="hidden h-1 w-1 rounded-full bg-[var(--muted)] group-hover:block"
+        title="翻译 / 注释（预留）"
+      />
+      <IconBtn
+        danger
+        title="删除该提示词"
+        className="hidden h-4 w-4 group-hover:inline-flex"
+        onClick={(e) => {
+          e.stopPropagation();
+          removeBlock(sectionId, block.id);
+        }}
+      >
+        <X size={11} />
+      </IconBtn>
+    </motion.div>
+  );
+}
+
+function CardChip({
+  block,
+  sectionId,
+  onDragStart,
+}: {
+  block: Extract<Block, { type: "card" }>;
+  sectionId: string;
+  onDragStart: (e: React.PointerEvent, block: Block) => void;
+}) {
+  const removeBlock = useStore((s) => s.removeBlock);
+  const openDetail = useStore((s) => s.openDetail);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      data-block-id={block.id}
+      onPointerDown={(e) => onDragStart(e, block)}
+      onClick={() => {
+        if (Date.now() < suppressClickUntil) return;
+        openDetail(block.category, block.name);
+      }}
+      className="group flex cursor-grab touch-none select-none items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2 py-1 text-xs transition-colors hover:border-[var(--accent)] hover:bg-[var(--hover)] active:cursor-grabbing"
+      title={`<${block.category}:${block.name}> · 点击打开卡片详情`}
+    >
+      <CategoryBadge name={block.category} />
+      <span className="text-[var(--muted)]">{block.category}：</span>
+      <span className="font-medium">{block.name}</span>
+      <IconBtn
+        danger
+        title="移除该块"
+        className="hidden h-4 w-4 group-hover:inline-flex"
+        onClick={(e) => {
+          e.stopPropagation();
+          removeBlock(sectionId, block.id);
+        }}
+      >
+        <X size={11} />
+      </IconBtn>
+    </motion.div>
+  );
+}
+
+function SectionView({
+  section,
+  drag,
+  hoverSectionId,
+  onDragStart,
+}: {
+  section: Section;
+  drag: DragState | null;
+  hoverSectionId: string | null;
+  onDragStart: (e: React.PointerEvent, block: Block) => void;
+}) {
+  const renameSection = useStore((s) => s.renameSection);
+  const deleteSection = useStore((s) => s.deleteSection);
+  const addPrompt = useStore((s) => s.addPrompt);
+  const addPrompts = useStore((s) => s.addPrompts);
+  const autoSplit = useStore((s) => s.autoSplit);
+  const [inputOpen, setInputOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState(section.name);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const hue = categoryHue(section.name);
+  const isTarget = drag !== null && hoverSectionId === section.id;
+
+  const submit = () => {
+    if (autoSplit && value.includes(",")) {
+      addPrompts(section.id, value.split(","));
+    } else {
+      addPrompt(section.id, value);
+    }
+    setValue("");
+    setInputOpen(false);
+  };
+
+  return (
+    <div
+      data-section-id={section.id}
+      className={cn(
+        "rounded-2xl border p-3 transition-all",
+        isTarget ? "border-[var(--accent)] bg-[var(--accent)]/5" : "border-[var(--border)] bg-[var(--input)]/50"
+      )}
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span
+          className="h-3 w-1 rounded-full"
+          style={{ background: `hsl(${hue} 70% 55%)`, boxShadow: `0 0 8px hsl(${hue} 70% 55% / .5)` }}
+        />
+        <span className="text-sm font-semibold">{section.name}</span>
+        <span className="text-xs text-[var(--muted)]">{section.blocks.length}</span>
+        <span className="ml-auto flex items-center gap-0.5">
+          {!section.locked && (
+            <>
+              <IconBtn title="重命名分区" onClick={() => { setNewName(section.name); setRenaming(true); }}>
+                <Pencil size={13} />
+              </IconBtn>
+              <IconBtn danger title="删除分区（内容移入其他）" onClick={() => setConfirmDel(true)}>
+                <Trash2 size={13} />
+              </IconBtn>
+            </>
+          )}
+          <IconBtn title="添加提示词" onClick={() => setInputOpen((v) => !v)}>
+            <Plus size={14} />
+          </IconBtn>
+        </span>
+      </div>
+
+      <div className="flex min-h-[34px] flex-wrap items-center gap-1.5">
+        <AnimatePresence initial={false}>
+          {section.blocks.map((b) =>
+            b.type === "prompt" ? (
+              <PromptChip key={b.id} block={b} sectionId={section.id} onDragStart={onDragStart} />
+            ) : (
+              <CardChip key={b.id} block={b} sectionId={section.id} onDragStart={onDragStart} />
+            )
+          )}
+        </AnimatePresence>
+        {inputOpen && (
+          <motion.input
+            autoFocus
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 160, opacity: 1 }}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+              if (e.key === "Escape") setInputOpen(false);
+            }}
+            onBlur={() => {
+              if (value.trim()) submit();
+              else setInputOpen(false);
+            }}
+            placeholder="输入提示词，回车添加"
+            className="rounded-lg border border-[var(--accent)] bg-[var(--input)] px-2 py-1 text-xs outline-none"
+          />
+        )}
+      </div>
+
+      <Modal open={renaming} onClose={() => setRenaming(false)} title={`重命名分区「${section.name}」`}>
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          className="mb-4 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setRenaming(false)}>取消</Button>
+          <Button
+            onClick={() => {
+              renameSection(section.id, newName);
+              setRenaming(false);
+            }}
+          >
+            保存
+          </Button>
+        </div>
+      </Modal>
+      <ConfirmDialog
+        open={confirmDel}
+        title="删除分区"
+        message={`确定删除分区「${section.name}」吗？其中的内容会移到「其他」。`}
+        danger
+        onConfirm={() => { deleteSection(section.id); setConfirmDel(false); }}
+        onCancel={() => setConfirmDel(false)}
+      />
+    </div>
+  );
+}
+
+export function Workspace() {
+  const zone = useStore((s) => s.zone);
+  const sections = useStore((s) => (s.zone === "positive" ? s.positive : s.negative));
+  const copyZone = useStore((s) => s.copyZone);
+  const undo = useStore((s) => s.undo);
+  const redo = useStore((s) => s.redo);
+  const clearZone = useStore((s) => s.clearZone);
+  const addSection = useStore((s) => s.addSection);
+  const autoSplit = useStore((s) => s.autoSplit);
+  const setAutoSplit = (v: boolean) => {
+    localStorage.setItem("npm_auto_split", v ? "1" : "0");
+    useStore.setState({ autoSplit: v });
+  };
+  const canUndo = useStore((s) => s.past.length > 0);
+  const canRedo = useStore((s) => s.future.length > 0);
+  const blocksCount = sections.reduce((n, x) => n + x.blocks.length, 0);
+
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [hoverSectionId, setHoverSectionId] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [showAddSection, setShowAddSection] = useState(false);
+  const [newSectionName, setNewSectionName] = useState("");
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+
+  const onDragStart = (e: React.PointerEvent, block: Block) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    const sectionId = (e.currentTarget.closest("[data-section-id]") as HTMLElement)?.dataset.sectionId;
+    if (!sectionId) return;
+    setDrag({ block, fromSectionId: sectionId, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
+  };
+
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (e: PointerEvent) => {
+      setDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : d));
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const sectionEl = el?.closest("[data-section-id]") as HTMLElement | null;
+      setHoverSectionId(sectionEl?.dataset.sectionId ?? null);
+    };
+    const onUp = (e: PointerEvent) => {
+      if (dragRef.current) {
+        const dx = e.clientX - dragRef.current.startX;
+        const dy = e.clientY - dragRef.current.startY;
+        if (Math.hypot(dx, dy) > 6) suppressClickUntil = Date.now() + 120;
+      }
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const sectionEl = el?.closest("[data-section-id]") as HTMLElement | null;
+      const toSectionId = sectionEl?.dataset.sectionId ?? dragRef.current?.fromSectionId;
+      const blockEl = el?.closest("[data-block-id]") as HTMLElement | null;
+      const sections = useStore.getState().zone === "positive" ? useStore.getState().positive : useStore.getState().negative;
+      const toSection = sections.find((s) => s.id === toSectionId);
+      let index: number | undefined;
+      if (blockEl && toSection) {
+        const targetId = blockEl.dataset.blockId;
+        const targetIndex = toSection.blocks.findIndex((b) => b.id === targetId);
+        if (targetIndex >= 0 && targetId !== dragRef.current?.block.id) index = targetIndex;
+      }
+      if (dragRef.current) {
+        useStore.getState().moveBlock(
+          dragRef.current.fromSectionId,
+          dragRef.current.block.id,
+          toSectionId ?? dragRef.current.fromSectionId,
+          index
+        );
+      }
+      setDrag(null);
+      setHoverSectionId(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [drag]);
+
+  return (
+    <div className="flex h-full flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <ZoneTabs />
+        <div className="ml-auto flex items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--muted)]">
+            <input
+              type="checkbox"
+              checked={autoSplit}
+              onChange={(e) => setAutoSplit(e.target.checked)}
+              className="accent-[var(--accent)]"
+            />
+            自动分块
+          </label>
+          <Button size="sm" variant="ghost" onClick={() => { setNewSectionName(""); setShowAddSection(true); }}>
+            <FolderPlus size={14} /> 添加分区
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => undo()} disabled={!canUndo} title="撤销 Ctrl+Z">
+            <Undo2 size={14} /> 撤销
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => redo()} disabled={!canRedo} title="重做 Ctrl+Y">
+            <Redo2 size={14} /> 重做
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirmClear(true)}>
+            <Trash2 size={14} /> 清空
+          </Button>
+          <Button size="sm" onClick={() => copyZone()} disabled={blocksCount === 0}>
+            <ClipboardCopy size={14} /> 复制
+          </Button>
+        </div>
+      </div>
+
+      <div className="scroll-thin min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
+        {sections.length === 0 ? (
+          <div className="flex h-full min-h-[140px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--border)] text-[var(--muted)]">
+            <span className="text-sm">当前区域还没有分区</span>
+            <span className="text-xs">点击"添加分区"创建，或在下方卡片面板添加卡片</span>
+          </div>
+        ) : (
+          sections.map((section) => (
+            <SectionView
+              key={section.id}
+              section={section}
+              drag={drag}
+              hoverSectionId={hoverSectionId}
+              onDragStart={onDragStart}
+            />
+          ))
+        )}
+      </div>
+
+      <AnimatePresence>
+        {drag && (
+          <motion.div
+            className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-[var(--accent)] bg-[var(--panel-solid)] px-2.5 py-1.5 text-xs shadow-2xl"
+            style={{ left: drag.x + 10, top: drag.y + 10 }}
+            initial={{ scale: 0.9, opacity: 0.8 }}
+            animate={{ scale: 1.05, opacity: 1 }}
+          >
+            {drag.block.type === "card" ? (
+              <>
+                <CategoryBadge name={drag.block.category} />
+                <span className="text-[var(--muted)]">{drag.block.category}：</span>
+                <span className="font-medium">{drag.block.name}</span>
+              </>
+            ) : (
+              <span>{drag.block.text}</span>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <Modal open={showAddSection} onClose={() => setShowAddSection(false)} title="添加分区">
+        <input
+          autoFocus
+          value={newSectionName}
+          onChange={(e) => setNewSectionName(e.target.value)}
+          placeholder="分区名称，如：外貌、服装"
+          className="mb-4 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newSectionName.trim()) {
+              addSection(newSectionName);
+              setShowAddSection(false);
+            }
+          }}
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setShowAddSection(false)}>取消</Button>
+          <Button
+            onClick={() => {
+              if (newSectionName.trim()) {
+                addSection(newSectionName);
+                setShowAddSection(false);
+              }
+            }}
+          >
+            创建
+          </Button>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={confirmClear}
+        title="清空当前区域"
+        message={`确定清空${zone === "positive" ? "正面" : "负面"}区域的所有提示词吗？可以用撤销恢复。`}
+        danger
+        onConfirm={() => { clearZone(); setConfirmClear(false); }}
+        onCancel={() => setConfirmClear(false)}
+      />
+    </div>
+  );
+}
