@@ -9,6 +9,7 @@ wildcards/
 library/
 backgrounds/
 workspace.json
+config.json
 .trash/
 
 # 系统文件
