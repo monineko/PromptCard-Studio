@@ -1,14 +1,32 @@
-import { Moon, Palette, Rocket, Sparkles, Sun } from "lucide-react";
+import { motion } from "framer-motion";
+import { Moon, Palette, PanelLeftClose, PanelLeftOpen, Rocket, Sparkles, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "../lib";
+import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
 import { IconBtn } from "./UI";
 
 export function TopBar() {
   const settings = useStore((s) => s.settings);
   const setTheme = useStore((s) => s.setTheme);
+  const sidebarOpen = useSidebarStore((s) => s.open);
+  const setSidebarOpen = useSidebarStore((s) => s.setOpen);
   const mode = settings?.theme.mode ?? "dark";
   const accent = settings?.theme.accent ?? "#8b5cf6";
+  const [hidden, setHidden] = useState(false);
+
+  // 向下滚动时顶部导航自动隐藏（保留），向上滚动恢复
+  useEffect(() => {
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      setHidden(y > lastY && y > 80);
+      lastY = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   const links = [
     { to: "/", label: "提示词工作区" },
@@ -18,7 +36,19 @@ export function TopBar() {
   ];
 
   return (
-    <header className="glass sticky top-0 z-30 flex items-center gap-4 border-x-0 border-t-0 px-4 py-2.5">
+    <motion.header
+      initial={false}
+      animate={{ y: hidden ? -64 : 0 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="glass sticky top-0 z-30 flex items-center gap-3 border-x-0 border-t-0 px-3 py-2.5"
+    >
+      <IconBtn
+        title={sidebarOpen ? "收起侧边栏" : "打开侧边栏"}
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        className="h-8 w-8"
+      >
+        {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+      </IconBtn>
       <div className="flex items-center gap-2">
         <span
           className="flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-lg"
@@ -66,6 +96,6 @@ export function TopBar() {
           {mode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </IconBtn>
       </div>
-    </header>
+    </motion.header>
   );
 }

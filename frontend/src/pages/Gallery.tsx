@@ -8,7 +8,6 @@ import {
   Images,
   LayoutGrid,
   Loader2,
-  Play,
   Plus,
   ThumbsUp,
   Undo2,
@@ -19,11 +18,11 @@ import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
 import { api } from "../api";
-import { cn } from "../lib";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
 import { ZoomableImage } from "../components/gallery/ZoomableImage";
+import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
 import type {
   LibraryCategoryKey,
@@ -108,9 +107,13 @@ export function Gallery() {
   const [pngLoading, setPngLoading] = useState(false);
   const [pngError, setPngError] = useState("");
   const [pngOpen, setPngOpen] = useState(false);
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const setSidebarGroups = useSidebarStore((s) => s.setGroups);
+  const setSidebarActive = useSidebarStore((s) => s.setActiveGroup);
+  const setReviewAvailable = useSidebarStore((s) => s.setReviewAvailable);
+  const registerGallery = useSidebarStore((s) => s.registerGallery);
+  const unregisterGallery = useSidebarStore((s) => s.unregisterGallery);
 
   const refresh = useCallback(async () => {
     try {
@@ -171,10 +174,17 @@ export function Gallery() {
     }
   }, [lightboxIndex]);
 
+  const scrollToGroup = useCallback((key: string) => {
+    const el = document.getElementById(`group-${key}`);
+    if (!el) return;
+    const y = el.getBoundingClientRect().top + window.scrollY - 96;
+    window.scrollTo({ top: y, behavior: "smooth" });
+  }, []);
+
   // 滚动时检测当前查看位置，高亮对应时间索引
   useEffect(() => {
     if (!groups.length) {
-      setActiveGroup(null);
+      setSidebarActive(null);
       return;
     }
     const onScroll = () => {
@@ -184,12 +194,41 @@ export function Gallery() {
         const el = document.getElementById(`group-${g.key}`);
         if (el && el.getBoundingClientRect().top + window.scrollY <= refY) current = g.key;
       }
-      setActiveGroup(current);
+      setSidebarActive(current);
     };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, [groups]);
+  }, [groups, setSidebarActive]);
+
+  // 向全局侧边栏注册时间索引与筛选模式
+  useEffect(() => {
+    if (!category || !groups.length) return;
+    setSidebarGroups(groups.map((g) => ({ key: g.key, label: g.label, count: g.items.length })));
+    setReviewAvailable(items.length > 0 && !reviewing);
+    registerGallery({
+      scrollTo: (key) => scrollToGroup(key),
+      startReview: () => {
+        setLightboxIndex(null);
+        setReviewing(true);
+      },
+    });
+    return () => {
+      setSidebarGroups([]);
+      setReviewAvailable(false);
+      unregisterGallery();
+    };
+  }, [
+    category,
+    groups,
+    items.length,
+    reviewing,
+    registerGallery,
+    scrollToGroup,
+    setReviewAvailable,
+    setSidebarGroups,
+    unregisterGallery,
+  ]);
 
   const handleReadPngInfo = useCallback(
     async (path: string) => {
@@ -223,13 +262,6 @@ export function Gallery() {
     },
     [navigate, overwriteZonesFromPng]
   );
-
-  const scrollToGroup = useCallback((key: string) => {
-    const el = document.getElementById(`group-${key}`);
-    if (!el) return;
-    const y = el.getBoundingClientRect().top + window.scrollY - 96;
-    window.scrollTo({ top: y, behavior: "smooth" });
-  }, []);
 
   const handleReviewFinished = useCallback(
     async (result: ReviewApplyResult) => {
@@ -442,67 +474,28 @@ export function Gallery() {
       )}
 
       {!loadingItems && items.length > 0 && (
-        <div className="mx-auto flex w-full max-w-7xl items-start gap-4 px-4 pt-2">
-          <aside className="sticky top-14 z-10 w-52 shrink-0">
-            <div className="glass flex max-h-[calc(100vh-5rem)] flex-col rounded-2xl p-3">
-              <div className="mb-2 px-1 text-xs font-semibold text-[var(--muted)]">时间索引</div>
-              <div className="min-h-0 flex-1 space-y-0.5 overflow-auto">
-                {groups.map((group) => (
-                  <button
-                    key={group.key}
-                    onClick={() => scrollToGroup(group.key)}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-                      activeGroup === group.key
-                        ? "bg-[var(--accent)] font-semibold text-white"
-                        : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                    )}
-                    title={`跳转到 ${group.label}`}
-                  >
-                    <span className="truncate">{group.label}</span>
-                    <span className="shrink-0 tabular-nums opacity-70">{group.items.length}</span>
-                  </button>
-                ))}
+        <div className="mx-auto w-full max-w-7xl px-4 pt-2">
+          {groups.map((group) => (
+            <section key={group.key} id={`group-${group.key}`} className="mb-3 scroll-mt-24">
+              <div className="sticky top-11 z-10 -mx-1 mb-2 flex items-center gap-2 px-1 py-1">
+                <span className="rounded-full bg-[var(--accent)] px-3 py-0.5 text-xs font-semibold text-white">
+                  {group.label}
+                </span>
+                {group.categoryLabel && (
+                  <span className="text-xs text-[var(--muted)]">{group.categoryLabel}</span>
+                )}
+                <span className="text-xs text-[var(--muted)]">{group.items.length} 张</span>
               </div>
-              <div className="mt-3 border-t border-[var(--border)] pt-3">
-                <button
-                  onClick={() => {
-                    setLightboxIndex(null);
-                    setReviewing(true);
-                  }}
-                  disabled={!items.length}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-85 disabled:opacity-40"
-                  style={{ background: "var(--accent)" }}
-                >
-                  <Play size={16} /> 筛选模式
-                </button>
-              </div>
-            </div>
-          </aside>
-
-          <div className="min-w-0 flex-1">
-            {groups.map((group) => (
-              <section key={group.key} id={`group-${group.key}`} className="mb-3 scroll-mt-24">
-                <div className="sticky top-11 z-10 -mx-1 mb-2 flex items-center gap-2 px-1 py-1">
-                  <span className="rounded-full bg-[var(--accent)] px-3 py-0.5 text-xs font-semibold text-white">
-                    {group.label}
-                  </span>
-                  {group.categoryLabel && (
-                    <span className="text-xs text-[var(--muted)]">{group.categoryLabel}</span>
-                  )}
-                  <span className="text-xs text-[var(--muted)]">{group.items.length} 张</span>
-                </div>
-                <GalleryMasonry
-                  key={group.key}
-                  items={group.items}
-                  onItemClick={(_item, idx) => {
-                    const base = items.findIndex((i) => i.path === group.items[0].path);
-                    setLightboxIndex(base + idx);
-                  }}
-                />
-              </section>
-            ))}
-          </div>
+              <GalleryMasonry
+                key={group.key}
+                items={group.items}
+                onItemClick={(_item, idx) => {
+                  const base = items.findIndex((i) => i.path === group.items[0].path);
+                  setLightboxIndex(base + idx);
+                }}
+              />
+            </section>
+          ))}
         </div>
       )}
 
