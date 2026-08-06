@@ -1,11 +1,13 @@
 import {
   ArrowLeft,
   Crown,
+  FileJson,
   FolderOpen,
   FolderPlus,
   Heart,
   Images,
   LayoutGrid,
+  Loader2,
   Play,
   Plus,
   ThumbsUp,
@@ -15,18 +17,18 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
-import Captions from "yet-another-react-lightbox/plugins/captions";
 import "yet-another-react-lightbox/styles.css";
-import "yet-another-react-lightbox/plugins/captions.css";
 import { api } from "../api";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
-import { PngPanel } from "../components/gallery/PngPanel";
+import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
+import { ZoomableImage } from "../components/gallery/ZoomableImage";
 import { useStore } from "../store";
 import type {
   LibraryCategoryKey,
   LibraryImageItem,
   LibrarySummary,
+  PngInfoResult,
   ReviewApplyResult,
 } from "../types";
 
@@ -101,6 +103,10 @@ export function Gallery() {
   const [reviewing, setReviewing] = useState(false);
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pngInfo, setPngInfo] = useState<PngInfoResult | null>(null);
+  const [pngLoading, setPngLoading] = useState(false);
+  const [pngError, setPngError] = useState("");
+  const [pngOpen, setPngOpen] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -139,6 +145,8 @@ export function Gallery() {
     setReviewing(false);
     setLightboxIndex(null);
     setUndoToken(null);
+    setPngOpen(false);
+    setPngInfo(null);
   }, []);
 
   const groups = useMemo(() => (category ? buildGroups(items, category) : []), [category, items]);
@@ -146,22 +154,58 @@ export function Gallery() {
     () =>
       items.map((item) => ({
         src: api.libraryImageUrl(item.path),
-        title: item.name,
-        description: (
-          <PngPanel
-            slides={items}
-            onSendToWorkspace={(prompt, uc) => {
-              const ok = window.confirm("发送到工作区会用这张图的提示词覆盖当前正面/负面区域的全部内容，是否继续？");
-              if (!ok) return;
-              overwriteZonesFromPng(prompt, uc);
-              setLightboxIndex(null);
-              navigate("/");
-            }}
-          />
-        ),
+        path: item.path,
+        name: item.name,
       })),
-    [items, navigate, overwriteZonesFromPng]
+    [items]
   );
+
+  // 切换图片时重置 PNG 信息状态
+  useEffect(() => {
+    setPngInfo(null);
+    setPngError("");
+    setPngOpen(false);
+  }, [lightboxIndex]);
+
+  const handleReadPngInfo = useCallback(
+    async (path: string) => {
+      if (!path || pngLoading) return;
+      setPngLoading(true);
+      setPngError("");
+      try {
+        const result = await api.libraryPngInfo(path);
+        setPngInfo(result);
+        setPngOpen(true);
+      } catch (e) {
+        setPngError((e as Error).message);
+        setPngOpen(true);
+      } finally {
+        setPngLoading(false);
+      }
+    },
+    [pngLoading]
+  );
+
+  const sendToWorkspace = useCallback(
+    (prompt: string, uc: string) => {
+      const ok = window.confirm(
+        "发送到工作区会用这张图的提示词覆盖当前正面/负面区域的全部内容，是否继续？"
+      );
+      if (!ok) return;
+      overwriteZonesFromPng(prompt, uc);
+      setLightboxIndex(null);
+      setPngOpen(false);
+      navigate("/");
+    },
+    [navigate, overwriteZonesFromPng]
+  );
+
+  const scrollToGroup = useCallback((key: string) => {
+    const el = document.getElementById(`group-${key}`);
+    if (!el) return;
+    const y = el.getBoundingClientRect().top + window.scrollY - 96;
+    window.scrollTo({ top: y, behavior: "smooth" });
+  }, []);
 
   const handleReviewFinished = useCallback(
     async (result: ReviewApplyResult) => {
@@ -333,6 +377,7 @@ export function Gallery() {
   // ---------- 图片流（按日期分组） ----------
   const meta = CATEGORY_META[category];
   const Icon = meta.icon;
+  const currentItem = lightboxIndex !== null ? items[lightboxIndex] : null;
   return (
     <div className="min-h-full pb-10">
       <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
@@ -384,28 +429,49 @@ export function Gallery() {
       )}
 
       {!loadingItems && items.length > 0 && (
-        <div className="mx-auto w-full max-w-6xl px-4 pt-2">
-          {groups.map((group) => (
-            <section key={group.key} className="mb-3">
-              <div className="sticky top-11 z-10 -mx-1 mb-2 flex items-center gap-2 px-1 py-1">
-                <span className="rounded-full bg-[var(--accent)] px-3 py-0.5 text-xs font-semibold text-white">
-                  {group.label}
-                </span>
-                {group.categoryLabel && (
-                  <span className="text-xs text-[var(--muted)]">{group.categoryLabel}</span>
-                )}
-                <span className="text-xs text-[var(--muted)]">{group.items.length} 张</span>
+        <div className="mx-auto flex w-full max-w-7xl items-start gap-4 px-4 pt-2">
+          <aside className="sticky top-14 z-10 hidden w-44 shrink-0 lg:block">
+            <div className="glass max-h-[calc(100vh-4.5rem)] overflow-auto rounded-2xl p-3">
+              <div className="mb-2 px-1 text-xs font-semibold text-[var(--muted)]">时间索引</div>
+              <div className="space-y-0.5">
+                {groups.map((group) => (
+                  <button
+                    key={group.key}
+                    onClick={() => scrollToGroup(group.key)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[var(--muted)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                    title={`跳转到 ${group.label}`}
+                  >
+                    <span className="truncate">{group.label}</span>
+                    <span className="shrink-0 tabular-nums opacity-70">{group.items.length}</span>
+                  </button>
+                ))}
               </div>
-              <GalleryMasonry
-                key={group.key}
-                items={group.items}
-                onItemClick={(_item, idx) => {
-                  const base = items.findIndex((i) => i.path === group.items[0].path);
-                  setLightboxIndex(base + idx);
-                }}
-              />
-            </section>
-          ))}
+            </div>
+          </aside>
+
+          <div className="min-w-0 flex-1">
+            {groups.map((group) => (
+              <section key={group.key} id={`group-${group.key}`} className="mb-3 scroll-mt-24">
+                <div className="sticky top-11 z-10 -mx-1 mb-2 flex items-center gap-2 px-1 py-1">
+                  <span className="rounded-full bg-[var(--accent)] px-3 py-0.5 text-xs font-semibold text-white">
+                    {group.label}
+                  </span>
+                  {group.categoryLabel && (
+                    <span className="text-xs text-[var(--muted)]">{group.categoryLabel}</span>
+                  )}
+                  <span className="text-xs text-[var(--muted)]">{group.items.length} 张</span>
+                </div>
+                <GalleryMasonry
+                  key={group.key}
+                  items={group.items}
+                  onItemClick={(_item, idx) => {
+                    const base = items.findIndex((i) => i.path === group.items[0].path);
+                    setLightboxIndex(base + idx);
+                  }}
+                />
+              </section>
+            ))}
+          </div>
         </div>
       )}
 
@@ -414,10 +480,52 @@ export function Gallery() {
         close={() => setLightboxIndex(null)}
         index={lightboxIndex ?? 0}
         slides={slides}
-        plugins={[Captions]}
-        captions={{ descriptionTextAlign: "start", descriptionMaxLines: 0 }}
-        on={{ view: ({ index }) => setLightboxIndex(index) }}
+        render={{
+          slide: ({ slide, offset }) =>
+            offset !== 0 ? null : (
+              <ZoomableImage key={slide.src} src={slide.src} onClose={() => setLightboxIndex(null)} />
+            ),
+          slideFooter: ({ slide }) => {
+            const sameItem = currentItem?.path === slide.path;
+            const hasInfo = sameItem && pngInfo;
+            return (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleReadPngInfo(slide.path ?? "");
+                }}
+                disabled={pngLoading && sameItem}
+                className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white shadow-lg transition-opacity hover:opacity-85 disabled:opacity-50"
+                style={{ background: "var(--accent)" }}
+                title="按需读取 PNG 元数据"
+              >
+                {pngLoading && sameItem ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <FileJson size={13} />
+                )}
+                {pngLoading && sameItem ? "读取中…" : hasInfo ? "PNG 信息" : "读取 PNG 信息"}
+              </button>
+            );
+          },
+        }}
+        on={{
+          view: ({ index }) => setLightboxIndex(index),
+          click: () => setLightboxIndex(null),
+        }}
       />
+
+      {pngOpen && currentItem && (
+        <PngInfoPopup
+          item={currentItem}
+          info={pngInfo}
+          loading={pngLoading}
+          error={pngError}
+          onRead={() => handleReadPngInfo(currentItem.path)}
+          onClose={() => setPngOpen(false)}
+          onSendToWorkspace={sendToWorkspace}
+        />
+      )}
     </div>
   );
 }
