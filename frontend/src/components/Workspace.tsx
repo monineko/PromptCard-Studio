@@ -79,7 +79,14 @@ function PromptChip({
       exit={{ opacity: 0, scale: 0.9 }}
       data-block-id={block.id}
       onPointerDown={(e) => onDragStart(e, block)}
-      className="group flex cursor-grab touch-none select-none items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--input)] px-1 py-1 text-xs transition-colors hover:border-[var(--accent)] hover:bg-[var(--hover)] active:cursor-grabbing"
+      className={
+        "group flex cursor-grab touch-none select-none items-center gap-0.5 rounded-lg border px-1 py-1 text-xs transition-colors active:cursor-grabbing " +
+        (weight !== null
+          ? weight > 1
+            ? "border-orange-400/60 bg-orange-400/10 hover:bg-orange-400/15"
+            : "border-sky-400/60 bg-sky-400/10 hover:bg-sky-400/15"
+          : "border-[var(--border)] bg-[var(--input)] hover:border-[var(--accent)] hover:bg-[var(--hover)]")
+      }
       title="拖动排序；+/- 调节提示词系数"
     >
       <button
