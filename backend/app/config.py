@@ -14,6 +14,7 @@ DEFAULT_SETTINGS = {
         "glass": 0.6,            # 玻璃强度 0-1
     },
     "library_path": str(LIBRARY_DIR),
+    "recycle_reject": True,        # 筛选结束时 Reject 图片移入回收站（False = 永久删除）
     "format_input": True,        # 复制时是否做格式规范化
     "port": 11451,
     "category_order": [],        # 分类的拖拽排序（名称列表）

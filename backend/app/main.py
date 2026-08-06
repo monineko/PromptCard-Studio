@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cards as cards_service
+from . import library as library_service
 from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
@@ -19,6 +20,8 @@ from .schemas import (
     CategoryIn,
     CategoryRename,
     ExpandRequest,
+    ReviewApplyIn,
+    ReviewUndoIn,
     WorkspaceIn,
 )
 
@@ -198,6 +201,62 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(body: dict):
     return save_settings(body)
+
+
+# ---------- 图片库 ----------
+
+
+@app.get("/api/library/summary")
+def library_summary():
+    return library_service.summary()
+
+
+@app.get("/api/library/images")
+def library_images(category: str = "all"):
+    try:
+        return library_service.list_images(category)
+    except ValueError as e:
+        raise _as_http(e, 404)
+
+
+@app.get("/api/library/image")
+def library_image(path: str):
+    try:
+        file = library_service.resolve_image(path)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    if not file.exists() or not file.is_file():
+        raise HTTPException(404, "图片不存在")
+    return FileResponse(file)
+
+
+@app.get("/api/library/png-info")
+def library_png_info(path: str):
+    try:
+        return library_service.read_png_info(path)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/library/review/apply")
+def library_review_apply(body: ReviewApplyIn):
+    try:
+        return library_service.apply_review(
+            [move.model_dump() for move in body.moves],
+            recycle_reject=body.recycle_reject,
+        )
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/library/review/undo")
+def library_review_undo(body: ReviewUndoIn):
+    try:
+        return library_service.undo_review(body.token)
+    except ValueError as e:
+        raise _as_http(e, 404)
 
 
 # ---------- 静态前端 ----------

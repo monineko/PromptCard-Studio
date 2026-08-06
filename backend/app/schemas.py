@@ -46,3 +46,17 @@ class CategoryOrder(BaseModel):
 class CategoryColor(BaseModel):
     name: str
     hue: int
+
+
+class ReviewMove(BaseModel):
+    path: str
+    tag: str
+
+
+class ReviewApplyIn(BaseModel):
+    moves: list[ReviewMove] = []
+    recycle_reject: bool = True
+
+
+class ReviewUndoIn(BaseModel):
+    token: str
