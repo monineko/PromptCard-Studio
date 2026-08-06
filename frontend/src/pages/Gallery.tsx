@@ -1,15 +1,18 @@
 import {
   ArrowLeft,
   Crown,
+  FolderOpen,
+  FolderPlus,
   Heart,
   Images,
   LayoutGrid,
   Play,
+  Plus,
   ThumbsUp,
   Undo2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
 import Captions from "yet-another-react-lightbox/plugins/captions";
@@ -97,6 +100,9 @@ export function Gallery() {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [undoToken, setUndoToken] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -182,14 +188,107 @@ export function Gallery() {
     }
   }, [addToast, category, openCategory, refresh, undoToken]);
 
+  const handleImport = useCallback(
+    async (fileList: FileList | null) => {
+      if (!fileList?.length || importing) return;
+      const files = Array.from(fileList).filter((f) =>
+        /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(f.name)
+      );
+      if (!files.length) {
+        addToast("没有可导入的图片文件", "err");
+        return;
+      }
+      setImporting(true);
+      try {
+        const result = await api.importLibraryFiles(files);
+        addToast(
+          `已导入 ${result.imported} 张` + (result.skipped ? `，跳过 ${result.skipped} 张` : "")
+        );
+        await refresh();
+      } catch (e) {
+        addToast(`导入失败: ${(e as Error).message}`, "err");
+      } finally {
+        setImporting(false);
+      }
+    },
+    [addToast, importing, refresh]
+  );
+
+  const openFolder = useCallback(async () => {
+    try {
+      await api.openLibraryFolder();
+      addToast("已在资源管理器中打开图库文件夹");
+    } catch (e) {
+      addToast(`打开文件夹失败: ${(e as Error).message}`, "err");
+    }
+  }, [addToast]);
+
   // ---------- 分类入口页 ----------
   if (!category) {
     return (
       <div className="mx-auto w-full max-w-4xl px-4 py-6">
-        <h1 className="mb-1 text-lg font-semibold">图片库</h1>
-        <p className="mb-5 text-xs text-[var(--muted)]">
-          {summary?.library_path || "正在读取图库路径…"}
-        </p>
+        <div className="mb-5 flex flex-wrap items-center gap-3">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold">图片库</h1>
+            <p className="mt-0.5 truncate text-xs text-[var(--muted)]" title={summary?.library_path}>
+              {summary?.library_path || "正在读取图库路径…"}
+            </p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              {...{ webkitdirectory: "" }}
+              onChange={(e) => {
+                handleImport(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                handleImport(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              disabled={importing}
+              className="flex items-center gap-1.5 rounded-lg bg-[var(--hover)] px-3 py-1.5 text-xs disabled:opacity-40"
+              title="选择整个文件夹，图片会复制进图库"
+            >
+              <FolderPlus size={14} /> 选择文件夹
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              className="flex items-center gap-1.5 rounded-lg bg-[var(--hover)] px-3 py-1.5 text-xs disabled:opacity-40"
+              title="多选图片导入图库"
+            >
+              <Plus size={14} /> 选择图片
+            </button>
+            <button
+              onClick={openFolder}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white transition-opacity hover:opacity-85"
+              style={{ background: "var(--accent)" }}
+              title="用系统资源管理器打开图库目录"
+            >
+              <FolderOpen size={14} /> 打开图库文件夹
+            </button>
+          </div>
+        </div>
+        {importing && (
+          <div className="mb-4 flex items-center gap-2 text-xs text-[var(--muted)]">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--muted)] border-t-transparent" />
+            正在导入图片…
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {CATEGORY_ORDER.map((key) => {
             const meta = CATEGORY_META[key];

@@ -60,3 +60,7 @@ class ReviewApplyIn(BaseModel):
 
 class ReviewUndoIn(BaseModel):
     token: str
+
+
+class ImportPathIn(BaseModel):
+    path: str

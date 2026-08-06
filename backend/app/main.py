@@ -20,6 +20,7 @@ from .schemas import (
     CategoryIn,
     CategoryRename,
     ExpandRequest,
+    ImportPathIn,
     ReviewApplyIn,
     ReviewUndoIn,
     WorkspaceIn,
@@ -257,6 +258,34 @@ def library_review_undo(body: ReviewUndoIn):
         return library_service.undo_review(body.token)
     except ValueError as e:
         raise _as_http(e, 404)
+
+
+@app.post("/api/library/import")
+async def library_import(files: list[UploadFile] = File(...)):
+    try:
+        return library_service.import_uploaded_files(
+            [(f.filename or "", await f.read()) for f in files]
+        )
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/library/import-path")
+def library_import_path(body: ImportPathIn):
+    try:
+        return library_service.import_from_path(body.path)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/library/open-folder")
+def library_open_folder():
+    try:
+        return library_service.open_library_folder()
+    except Exception as e:
+        raise _as_http(e)
 
 
 # ---------- 静态前端 ----------

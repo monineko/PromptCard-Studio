@@ -1,4 +1,12 @@
-import type { LibraryImages, LibrarySummary, PngInfoResult, ReviewApplyResult, Section, Settings } from "./types";
+import type {
+  ImportResult,
+  LibraryImages,
+  LibrarySummary,
+  PngInfoResult,
+  ReviewApplyResult,
+  Section,
+  Settings,
+} from "./types";
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
@@ -75,6 +83,15 @@ export const api = {
       "/api/library/review/undo",
       { method: "POST", body: JSON.stringify({ token }) }
     ),
+  importLibraryFiles: (files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return request<ImportResult>("/api/library/import", { method: "POST", body: fd });
+  },
+  importLibraryPath: (path: string) =>
+    request<ImportResult>("/api/library/import-path", { method: "POST", body: JSON.stringify({ path }) }),
+  openLibraryFolder: () =>
+    request<{ ok: boolean; path: string }>("/api/library/open-folder", { method: "POST" }),
 };
 
 export function uid(): string {

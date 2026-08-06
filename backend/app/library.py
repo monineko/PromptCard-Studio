@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import shutil
 import uuid
 from datetime import date
@@ -263,6 +264,86 @@ def _unique_dest(folder: Path, name: str) -> Path:
         if not candidate.exists():
             return candidate
         n += 1
+
+
+def _safe_filename(name: str) -> str:
+    """清洗上传文件名：去路径部分 + 去掉 Windows 非法字符。"""
+    name = Path(name or "image.png").name
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", name)
+    return (name or "image.png")[:200]
+
+
+def import_uploaded_files(files: list[tuple[str, bytes]]) -> dict:
+    """浏览器上传（选文件夹/多选图片）→ 复制进图库根目录（未评分），重名自动加后缀。"""
+    root = _library_root()
+    imported, skipped = 0, 0
+    errors: list[str] = []
+    for name, data in files:
+        if not data:
+            skipped += 1
+            continue
+        safe = _safe_filename(name)
+        if Path(safe).suffix.lower() not in IMAGE_EXTENSIONS:
+            skipped += 1
+            errors.append(f"{name}: 非图片文件")
+            continue
+        dest = _unique_dest(root, safe)
+        try:
+            dest.write_bytes(data)
+            imported += 1
+        except OSError as e:
+            skipped += 1
+            errors.append(f"{name}: {e}")
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+def import_from_path(path_str: str) -> dict:
+    """从本地路径导入：目录递归复制（保留相对子目录），或单个图片文件。"""
+    source = Path(path_str).expanduser()
+    if not source.exists():
+        raise FileNotFoundError(f"路径不存在: {path_str}")
+    root = _library_root()
+    imported, skipped = 0, 0
+    errors: list[str] = []
+
+    if source.is_file():
+        candidates = [source]
+    else:
+        candidates = [
+            p
+            for p in sorted(source.rglob("*"))
+            if _is_image(p) and not any(part.startswith(".") for part in p.relative_to(source).parts)
+        ]
+
+    for file in candidates:
+        rel = file.relative_to(source) if source.is_dir() else Path(file.name)
+        parent = rel.parent
+        dest_folder = root if str(parent) == "." else root / parent
+        try:
+            dest_folder.mkdir(parents=True, exist_ok=True)
+            dest = _unique_dest(dest_folder, file.name)
+            shutil.copy2(str(file), str(dest))
+            imported += 1
+        except OSError as e:
+            skipped += 1
+            errors.append(f"{file.name}: {e}")
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+def open_library_folder() -> dict:
+    """用系统资源管理器打开图库目录。"""
+    root = _library_root()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(str(root))  # type: ignore[attr-defined]
+        else:
+            import subprocess
+
+            subprocess.Popen(["xdg-open", str(root)])
+    except Exception as e:
+        raise RuntimeError(f"无法打开文件夹: {e}")
+    return {"ok": True, "path": str(root)}
 
 
 def _trash_file(path: Path) -> Path | None:

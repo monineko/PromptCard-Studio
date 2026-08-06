@@ -94,3 +94,9 @@ export type ReviewApplyResult = {
   undo_token: string | null;
   message: string;
 };
+
+export type ImportResult = {
+  imported: number;
+  skipped: number;
+  errors: string[];
+};

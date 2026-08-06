@@ -127,6 +127,32 @@ class LibraryServiceTest(unittest.TestCase):
         lib.undo_review(result["undo_token"])
         self.assertTrue(src.exists())
 
+    def test_08_import_uploaded_files(self):
+        result = lib.import_uploaded_files(
+            [("a.png", b"x"), ("a.png", b"y"), ("note.txt", b"z")]
+        )
+        self.assertEqual(result["imported"], 2)
+        self.assertEqual(result["skipped"], 1)
+        self.assertTrue((self.tmp / "a.png").exists())
+        self.assertTrue((self.tmp / "a (1).png").exists())
+
+    def test_09_import_from_path(self):
+        src = Path(tempfile.mkdtemp(prefix="npm_import_src_"))
+        (src / "2026-08-01").mkdir()
+        (src / "2026-08-01" / "x.png").write_bytes(b"x")
+        (src / "2026-08-02").mkdir()
+        (src / "2026-08-02" / "y.jpg").write_bytes(b"y")
+        (src / "2026-08-02" / "skip.txt").write_text("no", encoding="utf-8")
+        result = lib.import_from_path(str(src))
+        self.assertEqual(result["imported"], 2)
+        self.assertTrue((self.tmp / "2026-08-01" / "x.png").exists())
+        self.assertTrue((self.tmp / "2026-08-02" / "y.jpg").exists())
+        shutil.rmtree(src, ignore_errors=True)
+
+    def test_10_import_from_path_missing(self):
+        with self.assertRaises(FileNotFoundError):
+            lib.import_from_path(str(self.tmp / "no_such_dir"))
+
 
 class LibraryHttpSmokeTest(unittest.TestCase):
     """真实 HTTP 层冒烟：起一个临时 uvicorn，走一遍核心接口。"""
