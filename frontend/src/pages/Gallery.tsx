@@ -40,6 +40,14 @@ const CATEGORY_META: Record<
 };
 
 const CATEGORY_ORDER: LibraryCategoryKey[] = ["all", "treasure", "fine", "reject", "favorites", "unrated"];
+const CATEGORY_LABEL: Record<LibraryCategoryKey, string> = {
+  all: "全部",
+  treasure: "Treasure",
+  fine: "Fine",
+  reject: "Reject",
+  favorites: "收藏",
+  unrated: "未评分",
+};
 
 type Group = { key: string; label: string; categoryLabel?: string; items: LibraryImageItem[] };
 
@@ -54,13 +62,12 @@ function buildGroups(items: LibraryImageItem[], category: LibraryCategoryKey): G
     for (const key of CATEGORY_ORDER.slice(1)) {
       const list = items.filter((i) => i.category === key);
       if (!list.length) continue;
-      const labelOf = (k: LibraryCategoryKey) => CATEGORY_META[k].desc.split(" ")[0] ?? k;
       const dates = [...new Set(list.map((i) => i.date))].sort((a, b) => (a ? 1 : 0) - (b ? 1 : 0) || b.localeCompare(a));
       for (const d of dates) {
         groups.push({
           key: `${key}:${d}`,
           label: dateLabel(d, key),
-          categoryLabel: labelOf(key),
+          categoryLabel: CATEGORY_LABEL[key],
           items: list.filter((i) => i.date === d),
         });
       }

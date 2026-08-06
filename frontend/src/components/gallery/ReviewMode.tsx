@@ -1,5 +1,6 @@
 import { ArrowLeft, Check, CornerDownLeft, Crown, Heart, ThumbsUp, Undo2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { api } from "../../api";
 import type { LibraryImageItem, ReviewTag } from "../../types";
 
@@ -31,6 +32,8 @@ export function ReviewMode({
   const [tags, setTags] = useState<Record<string, ReviewTag>>({});
   const [history, setHistory] = useState<number[]>([]);
   const [applying, setApplying] = useState(false);
+  const [lastTag, setLastTag] = useState<ReviewTag | null>(null);
+  const [burst, setBurst] = useState<number>(0);
 
   const current = items[index];
   const currentTag = current ? tags[current.path] : undefined;
@@ -39,11 +42,30 @@ export function ReviewMode({
   const tag = useCallback(
     (t: ReviewTag) => {
       if (!current) return;
+      setLastTag(t);
       setTags((prev) => ({ ...prev, [current.path]: t }));
       setHistory((prev) => [...prev, index]);
+      if (t === "treasure" || t === "favorites") setBurst((b) => b + 1);
       setIndex((i) => Math.min(i + 1, items.length - 1));
     },
     [current, index, items.length]
+  );
+
+  const burstParticles = useMemo(
+    () =>
+      Array.from({ length: 14 }, (_, i) => {
+        const angle = (i / 14) * Math.PI * 2;
+        const dist = 70 + (i % 3) * 26;
+        const color = ["#f59e0b", "#ec4899", "#a78bfa", "#fbbf24", "#34d399"][i % 5];
+        return {
+          id: `${burst}-${i}`,
+          dx: Math.cos(angle) * dist,
+          dy: Math.sin(angle) * dist,
+          color,
+          size: 5 + (i % 3) * 3,
+        };
+      }),
+    [burst]
   );
 
   const undoLast = useCallback(() => {
@@ -169,12 +191,38 @@ export function ReviewMode({
         </div>
 
         <div className="relative flex h-full max-h-[68vh] max-w-[46vw] min-w-0 items-center justify-center">
-          <img
-            key={current.path}
-            src={api.libraryImageUrl(current.path)}
-            alt={current.name}
-            className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
-          />
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.img
+              key={current.path}
+              src={api.libraryImageUrl(current.path)}
+              alt={current.name}
+              initial={{ opacity: 0, scale: 0.9, x: 80, rotate: 3 }}
+              animate={{ opacity: 1, scale: 1, x: 0, rotate: 0 }}
+              exit={
+                lastTag === "reject"
+                  ? { opacity: 0, x: 180, rotate: 12, scale: 0.94 }
+                  : { opacity: 0, x: -140, rotate: -8, scale: 0.94 }
+              }
+              transition={{ duration: 0.16, ease: "easeOut" }}
+              className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
+            />
+          </AnimatePresence>
+          <AnimatePresence>
+            {burst > 0 && (
+              <div key={burst} className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                {burstParticles.map((p) => (
+                  <motion.span
+                    key={p.id}
+                    initial={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+                    animate={{ opacity: 0, x: p.dx, y: p.dy, scale: 0.4 }}
+                    transition={{ duration: 0.55, ease: "easeOut" }}
+                    className="absolute rounded-full"
+                    style={{ width: p.size, height: p.size, background: p.color }}
+                  />
+                ))}
+              </div>
+            )}
+          </AnimatePresence>
           {currentTag && (
             <span
               className="absolute left-3 top-3 rounded-full px-3 py-1 text-xs font-semibold text-white shadow"
