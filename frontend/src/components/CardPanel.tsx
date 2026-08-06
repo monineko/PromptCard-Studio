@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Download,
@@ -16,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { cn, categoryHue } from "../lib";
 import { useStore } from "../store";
-import type { CardMeta, Category } from "../types";
+import type { CardMeta, Category, Section } from "../types";
 import { Button, CategoryBadge, ConfirmDialog, IconBtn, Modal } from "./UI";
 
 function download(url: string, name: string) {
@@ -38,7 +39,15 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
   const addCardBlock = useStore((s) => s.addCardBlock);
   const openDetail = useStore((s) => s.openDetail);
   const colorMap = useStore((s) => s.categoryColor);
+  const positive = useStore((s) => s.positive);
+  const negative = useStore((s) => s.negative);
   const hue = colorMap[category] ?? categoryHue(category);
+  const added = useMemo(() => {
+    const key = `${category}:${card.name}`;
+    const has = (sections: Section[]) =>
+      sections.some((sec) => sec.blocks.some((b) => b.type === "card" && `${b.category}:${b.name}` === key));
+    return has(positive) || has(negative);
+  }, [positive, negative, category, card.name]);
   return (
     <motion.div
       layout
@@ -60,7 +69,7 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
       </div>
       <IconBtn
         title="添加到当前区域"
-        className="absolute right-2 top-2 hidden h-7 w-7 rounded-lg bg-white/20 text-white backdrop-blur hover:bg-white/35 hover:text-white group-hover:inline-flex"
+        className="absolute right-2 top-2 z-20 hidden h-7 w-7 rounded-lg bg-white/20 text-white backdrop-blur hover:bg-white/35 hover:text-white group-hover:inline-flex"
         onClick={(e) => {
           e.stopPropagation();
           addCardBlock(category, card.name);
@@ -72,6 +81,25 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
         {card.preview}
       </p>
       <div className="absolute bottom-2 right-2.5 h-1.5 w-1.5 rounded-full bg-white/80" />
+      <AnimatePresence>
+        {added && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none absolute inset-0 z-10 rounded-2xl"
+            style={{
+              background:
+                "linear-gradient(to top, rgba(112,112,118,.9), rgba(112,112,118,.38) 55%, rgba(112,112,118,0) 78%)",
+            }}
+          >
+            <div className="absolute inset-x-0 bottom-3 flex items-center justify-center gap-1.5">
+              <CheckCircle2 size={16} className="text-emerald-400" />
+              <span className="text-xs font-semibold text-emerald-300 drop-shadow">已添加</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
