@@ -102,7 +102,7 @@ export function Settings() {
             onChange={(e) => setForm({ ...form, recycle_reject: e.target.checked })}
             className="accent-[var(--accent)]"
           />
-          筛选结束后 Reject 图片移入系统回收站（关闭则永久删除）
+          Reject 回收站内删除图片时：移入系统回收站（关闭则永久删除）
         </label>
 
         <div>

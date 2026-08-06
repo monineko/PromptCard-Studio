@@ -100,3 +100,11 @@ export type ImportResult = {
   skipped: number;
   errors: string[];
 };
+
+export type MoveImagesResult = {
+  ok: boolean;
+  applied: { path: string; dest: string }[];
+  skipped: { path: string; reason: string }[];
+  undo_token: string | null;
+  message: string;
+};

@@ -20,7 +20,9 @@ from .schemas import (
     CategoryIn,
     CategoryRename,
     ExpandRequest,
+    DeleteImagesIn,
     ImportPathIn,
+    MoveImagesIn,
     ReviewApplyIn,
     ReviewUndoIn,
     WorkspaceIn,
@@ -284,6 +286,24 @@ def library_import_path(body: ImportPathIn):
 def library_open_folder():
     try:
         return library_service.open_library_folder()
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/library/move")
+def library_move(body: MoveImagesIn):
+    try:
+        return library_service.move_images(body.paths, body.target)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/library/delete")
+def library_delete(body: DeleteImagesIn):
+    try:
+        return library_service.delete_images(body.paths)
     except Exception as e:
         raise _as_http(e)
 

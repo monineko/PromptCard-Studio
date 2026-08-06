@@ -15,12 +15,13 @@ except ImportError:  # pragma: no cover
     Image = None
 
 
-# 大分类：key -> 图库内文件夹名（"收藏" 对应 Like/收藏夹）
-CATEGORY_FOLDERS = {
-    "treasure": "Treasure",
-    "fine": "Fine",
-    "reject": "Reject",
-    "favorites": "收藏",
+# 大分类：key -> 文件夹名前缀列表（目录结构：<前缀>-<筛选日期>/图片，
+# 如 Treasure-2026-08-06、like-2026-08-06；"收藏" 为旧式收藏夹名兼容）
+CATEGORY_PREFIXES = {
+    "treasure": ["Treasure"],
+    "fine": ["Fine"],
+    "reject": ["Reject"],
+    "favorites": ["like", "收藏"],
 }
 
 CATEGORY_ORDER = ["all", "treasure", "fine", "reject", "favorites", "unrated"]
@@ -91,14 +92,21 @@ def _image_size(file: Path) -> tuple[int, int]:
 
 
 def _category_of(parts: tuple[str, ...]) -> tuple[str, str]:
-    """根据相对路径判断大分类与日期分组。返回 (category_key, date_group)。"""
+    """根据相对路径判断大分类与日期分组。返回 (category_key, date_group)。
+
+    新目录结构：<前缀>-<日期>/图片（如 Treasure-2026-08-06/a.png）；
+    兼容旧结构：<分类名>/<日期>/图片；其余顶层目录视为未评分/自定义。
+    """
     if not parts:
         return "unrated", ""
     head = parts[0]
-    for key, folder in CATEGORY_FOLDERS.items():
-        if head.lower() == folder.lower():
-            date_group = parts[1] if len(parts) > 1 else ""
-            return key, date_group
+    for key, prefixes in CATEGORY_PREFIXES.items():
+        for prefix in prefixes:
+            if head.lower() == prefix.lower():
+                date_group = parts[1] if len(parts) > 1 else ""
+                return key, date_group
+            if head.lower().startswith(prefix.lower() + "-"):
+                return key, head[len(prefix) + 1 :]
     # 不在任何已知分类目录下 -> 未评分；日期分组取一层父目录名（根目录为空）
     date_group = parts[0] if len(parts) > 1 else ""
     return "unrated", date_group
@@ -148,7 +156,7 @@ def summary() -> dict:
                 "key": key,
                 "label": CATEGORY_LABELS[key],
                 "count": counts[key],
-                "folder": CATEGORY_FOLDERS.get(key),
+                "folder": (CATEGORY_PREFIXES.get(key) or [None])[0],
             }
             for key in CATEGORY_ORDER
         ],
@@ -346,19 +354,28 @@ def open_library_folder() -> dict:
     return {"ok": True, "path": str(root)}
 
 
-def _trash_file(path: Path) -> Path | None:
-    """优先送系统回收站；失败则移入项目内 .trash/library，返回新位置（可撤销）。"""
+def _send_to_trash(path: Path) -> tuple[str, Path | None]:
+    """送系统回收站；失败则移入项目内 .trash/library。返回 (mode, 内部新位置)。"""
     try:
         import send2trash
 
         send2trash.send2trash(str(path))
-        return None
+        return "recycle", None
     except Exception:
         trash_dir = _library_root().parent / ".trash" / "library"
         trash_dir.mkdir(parents=True, exist_ok=True)
         target = trash_dir / f"{date.today():%Y%m%d}_{random.randint(10000, 99999)}_{path.name}"
         shutil.move(str(path), str(target))
-        return target
+        return "internal", target
+
+
+def _target_folder(tag: str, today: str) -> Path:
+    """筛选/移动目标目录：library/<前缀>-<日期>。"""
+    prefixes = CATEGORY_PREFIXES.get(tag)
+    prefix = prefixes[0] if prefixes else None
+    if not prefix:
+        raise ValueError(f"未知目标分类: {tag}")
+    return _library_root() / f"{prefix}-{today}"
 
 
 def apply_review(moves: list[dict], recycle_reject: bool = True) -> dict:
@@ -372,8 +389,7 @@ def apply_review(moves: list[dict], recycle_reject: bool = True) -> dict:
     for move in moves:
         rel = (move or {}).get("path", "")
         tag = (move or {}).get("tag", "")
-        folder_name = CATEGORY_FOLDERS.get(tag)
-        if not folder_name:
+        if tag not in CATEGORY_PREFIXES:
             skipped.append({"path": rel, "tag": tag, "reason": "未知标签"})
             continue
         try:
@@ -385,25 +401,12 @@ def apply_review(moves: list[dict], recycle_reject: bool = True) -> dict:
             skipped.append({"path": rel, "tag": tag, "reason": "文件不存在"})
             continue
 
-        if tag == "reject":
-            if recycle_reject:
-                moved_to = _trash_file(src)
-                if moved_to is not None:
-                    undo_ops.append({"undoable": True, "src": str(src), "dest": str(moved_to)})
-                else:
-                    undo_ops.append({"undoable": False, "src": str(src), "dest": None})
-                applied.append({"path": rel, "tag": tag, "dest": None, "undoable": moved_to is not None})
-            else:
-                try:
-                    src.unlink()
-                except OSError as e:
-                    skipped.append({"path": rel, "tag": tag, "reason": str(e)})
-                    continue
-                undo_ops.append({"undoable": False, "src": str(src), "dest": None})
-                applied.append({"path": rel, "tag": tag, "dest": None, "undoable": False})
+        # Reject 作为图库内回收站：同样移动到 Reject-<日期> 文件夹，不删除
+        dest_folder = _target_folder(tag, today)
+        if src.parent == dest_folder:
+            skipped.append({"path": rel, "tag": tag, "reason": "已在目标位置"})
             continue
-
-        dest = _unique_dest(root / folder_name / today, src.name)
+        dest = _unique_dest(dest_folder, src.name)
         try:
             src.rename(dest)
         except OSError as e:
@@ -430,6 +433,86 @@ def apply_review(moves: list[dict], recycle_reject: bool = True) -> dict:
         "skipped": skipped,
         "undo_token": token if undo_ops else None,
         "message": f"已处理 {len(applied)} 张，跳过 {len(skipped)} 张",
+    }
+
+
+def move_images(paths: list[str], target: str) -> dict:
+    """快捷选取：把图片移动到目标文件夹（Treasure/Fine/Reject/收藏/未评分）。"""
+    if target not in CATEGORY_PREFIXES and target != "unrated":
+        raise ValueError(f"未知目标: {target}")
+    root = _library_root()
+    today = date.today().isoformat()
+    applied: list[dict] = []
+    skipped: list[dict] = []
+    undo_ops: list[dict] = []
+
+    for rel in paths:
+        try:
+            src = resolve_image(rel)
+        except ValueError as e:
+            skipped.append({"path": rel, "reason": str(e)})
+            continue
+        if not src.exists() or not src.is_file():
+            skipped.append({"path": rel, "reason": "文件不存在"})
+            continue
+        dest_folder = root if target == "unrated" else _target_folder(target, today)
+        if src.parent == dest_folder:
+            skipped.append({"path": rel, "reason": "已在目标位置"})
+            continue
+        dest = _unique_dest(dest_folder, src.name)
+        try:
+            src.rename(dest)
+        except OSError as e:
+            skipped.append({"path": rel, "reason": str(e)})
+            continue
+        undo_ops.append({"undoable": True, "src": str(src), "dest": str(dest)})
+        applied.append({"path": rel, "dest": dest.relative_to(root).as_posix()})
+
+    token = uuid.uuid4().hex
+    if undo_ops:
+        _UNDO_STORE[token] = undo_ops
+        if len(_UNDO_STORE) > 20:
+            _UNDO_STORE.pop(next(iter(_UNDO_STORE)), None)
+    return {
+        "ok": True,
+        "applied": applied,
+        "skipped": skipped,
+        "undo_token": token if undo_ops else None,
+        "message": f"已移动 {len(applied)} 张，跳过 {len(skipped)} 张",
+    }
+
+
+def delete_images(paths: list[str]) -> dict:
+    """删除图库内图片（Reject 回收站的一键删除）：按设置决定进系统回收站或永久删除。"""
+    settings = load_settings()
+    recycle = bool(settings.get("recycle_reject", True))
+    deleted: list[dict] = []
+    skipped: list[dict] = []
+
+    for rel in paths:
+        try:
+            path = resolve_image(rel)
+        except ValueError as e:
+            skipped.append({"path": rel, "reason": str(e)})
+            continue
+        if not path.exists() or not path.is_file():
+            skipped.append({"path": rel, "reason": "文件不存在"})
+            continue
+        if recycle:
+            mode, _ = _send_to_trash(path)
+            deleted.append({"path": rel, "mode": mode})
+        else:
+            try:
+                path.unlink()
+                deleted.append({"path": rel, "mode": "permanent"})
+            except OSError as e:
+                skipped.append({"path": rel, "reason": str(e)})
+
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "skipped": skipped,
+        "message": f"已删除 {len(deleted)} 张，跳过 {len(skipped)} 张",
     }
 
 

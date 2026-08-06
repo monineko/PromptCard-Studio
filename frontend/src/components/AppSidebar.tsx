@@ -1,5 +1,7 @@
 import { motion } from "framer-motion";
 import {
+  CheckSquare,
+  ChevronDown,
   Home,
   Images,
   ListOrdered,
@@ -9,6 +11,7 @@ import {
   Rocket,
   Settings as SettingsIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "../lib";
 import { useSidebarStore } from "../sidebarStore";
@@ -32,7 +35,17 @@ export function AppSidebar() {
   const reviewAvailable = useSidebarStore((s) => s.reviewAvailable);
   const scrollTo = useSidebarStore((s) => s.scrollTo);
   const startReview = useSidebarStore((s) => s.startReview);
+  const startQuickPick = useSidebarStore((s) => s.startQuickPick);
   const setOpen = useSidebarStore((s) => s.setOpen);
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
+
+  const toggleCat = (key: string) =>
+    setExpandedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   return (
     <>
@@ -88,28 +101,72 @@ export function AppSidebar() {
                 <ListOrdered size={12} /> 时间索引
               </div>
               <div className="min-h-0 flex-1 space-y-0.5 overflow-auto pr-0.5">
-                {groups.map((g) => (
-                  <button
-                    key={g.key}
-                    onClick={() => scrollTo?.(g.key)}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-                      activeGroup === g.key
-                        ? "bg-[var(--accent)] font-semibold text-white"
-                        : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                    )}
-                    title={`跳转到 ${g.label}`}
-                  >
-                    <span className="truncate">{g.label}</span>
-                    <span className="shrink-0 tabular-nums opacity-70">{g.count}</span>
-                  </button>
-                ))}
+                {groups.map((g) =>
+                  g.children?.length ? (
+                    <div key={g.key}>
+                      <button
+                        onClick={() => toggleCat(g.key)}
+                        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-[var(--text)] transition-colors hover:bg-[var(--hover)]"
+                        title="点击展开/收起日期"
+                      >
+                        <ChevronDown
+                          size={12}
+                          className={cn("shrink-0 transition-transform", !expandedCats.has(g.key) && "-rotate-90")}
+                        />
+                        <span className="truncate">{g.label}</span>
+                        <span className="ml-auto shrink-0 tabular-nums opacity-70">{g.count}</span>
+                      </button>
+                      {expandedCats.has(g.key) && (
+                        <div className="ml-3 mt-0.5 space-y-0.5 border-l border-[var(--border)] pl-2">
+                          {g.children.map((c) => (
+                            <button
+                              key={c.key}
+                              onClick={() => scrollTo?.(c.key)}
+                              className={cn(
+                                "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs transition-colors",
+                                activeGroup === c.key
+                                  ? "bg-[var(--accent)] font-semibold text-white"
+                                  : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                              )}
+                              title={`跳转到 ${c.label}`}
+                            >
+                              <span className="truncate">{c.label}</span>
+                              <span className="shrink-0 tabular-nums opacity-70">{c.count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      key={g.key}
+                      onClick={() => scrollTo?.(g.key)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+                        activeGroup === g.key
+                          ? "bg-[var(--accent)] font-semibold text-white"
+                          : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                      )}
+                      title={`跳转到 ${g.label}`}
+                    >
+                      <span className="truncate">{g.label}</span>
+                      <span className="shrink-0 tabular-nums opacity-70">{g.count}</span>
+                    </button>
+                  )
+                )}
               </div>
             </div>
           )}
 
           {reviewAvailable && (
             <div className="mt-3 border-t border-[var(--border)] pt-3">
+              <button
+                onClick={() => startQuickPick?.()}
+                className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--hover)] px-4 py-2.5 text-sm font-medium transition-colors hover:bg-[var(--accent)] hover:text-white"
+                title="多选图片，批量移动到其他文件夹"
+              >
+                <CheckSquare size={15} /> 快捷选取
+              </button>
               <button
                 onClick={() => startReview?.()}
                 className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-85"

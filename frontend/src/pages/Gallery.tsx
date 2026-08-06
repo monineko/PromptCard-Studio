@@ -20,6 +20,7 @@ import "yet-another-react-lightbox/styles.css";
 import { api } from "../api";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
+import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
 import { ZoomableImage } from "../components/gallery/ZoomableImage";
 import { useSidebarStore } from "../sidebarStore";
@@ -31,6 +32,7 @@ import type {
   PngInfoResult,
   ReviewApplyResult,
 } from "../types";
+import type { SidebarGroup } from "../sidebarStore";
 
 const CATEGORY_META: Record<
   LibraryCategoryKey,
@@ -64,7 +66,9 @@ function dateLabel(date: string, category: LibraryCategoryKey): string {
 function buildGroups(items: LibraryImageItem[], category: LibraryCategoryKey): Group[] {
   if (category === "all") {
     const groups: Group[] = [];
-    for (const key of CATEGORY_ORDER.slice(1)) {
+    // 全部视图索引顺序：Like 最高 → Treasure → Fine → Reject → 自定义/未评分最下方
+    const allOrder: LibraryCategoryKey[] = ["favorites", "treasure", "fine", "reject", "unrated"];
+    for (const key of allOrder) {
       const list = items.filter((i) => i.category === key);
       if (!list.length) continue;
       const dates = [...new Set(list.map((i) => i.date))].sort((a, b) => (a ? 1 : 0) - (b ? 1 : 0) || b.localeCompare(a));
@@ -105,6 +109,9 @@ export function Gallery() {
   const [reviewStartIndex, setReviewStartIndex] = useState(0);
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [quickPick, setQuickPick] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [quickPickBusy, setQuickPickBusy] = useState(false);
   const [pngInfo, setPngInfo] = useState<PngInfoResult | null>(null);
   const [pngLoading, setPngLoading] = useState(false);
   const [pngError, setPngError] = useState("");
@@ -218,10 +225,32 @@ export function Gallery() {
   useEffect(() => {
     if (!category || !groups.length) return;
     if (!reviewing) setSidebarOpen(true); // 进入图片流（出现时间索引）时才主动展开侧边栏
-    setSidebarGroups(groups.map((g) => ({ key: g.key, label: g.label, count: g.items.length })));
+    const sideGroups: SidebarGroup[] =
+      category === "all"
+        ? (() => {
+            const byCat = new Map<string, SidebarGroup>();
+            for (const g of groups) {
+              const catKey = g.categoryLabel ?? "自定义";
+              if (!byCat.has(catKey)) {
+                byCat.set(catKey, { key: `cat:${catKey}`, label: catKey, count: 0, children: [] });
+              }
+              const cat = byCat.get(catKey)!;
+              cat.count += g.items.length;
+              cat.children!.push({ key: g.key, label: g.label, count: g.items.length });
+            }
+            return [...byCat.values()];
+          })()
+        : groups.map((g) => ({ key: g.key, label: g.label, count: g.items.length }));
+    setSidebarGroups(sideGroups);
     setReviewAvailable(items.length > 0 && !reviewing);
     registerGallery({
       scrollTo: (key) => scrollToGroup(key),
+      startQuickPick: () => {
+        setLightboxIndex(null);
+        setSidebarOpen(false);
+        setSelectedPaths(new Set());
+        setQuickPick(true);
+      },
       startReview: () => {
         setLightboxIndex(null);
         setSidebarOpen(false);
@@ -255,6 +284,60 @@ export function Gallery() {
     },
     [items]
   );
+
+  const closeQuickPick = useCallback(() => {
+    setQuickPick(false);
+    setSelectedPaths(new Set());
+    setQuickPickBusy(false);
+  }, []);
+
+  const toggleSelect = useCallback((item: LibraryImageItem) => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.path)) next.delete(item.path);
+      else next.add(item.path);
+      return next;
+    });
+  }, []);
+
+  const handleQuickMove = useCallback(
+    async (target: string) => {
+      const paths = [...selectedPaths];
+      if (!paths.length || quickPickBusy) return;
+      setQuickPickBusy(true);
+      try {
+        const result = await api.moveImages(paths, target);
+        setUndoToken(result.undo_token);
+        addToast(result.message);
+        closeQuickPick();
+        await refresh();
+        if (category) await openCategory(category);
+      } catch (e) {
+        addToast(`移动失败: ${(e as Error).message}`, "err");
+      } finally {
+        setQuickPickBusy(false);
+      }
+    },
+    [addToast, category, closeQuickPick, openCategory, quickPickBusy, refresh, selectedPaths]
+  );
+
+  const handleQuickDelete = useCallback(async () => {
+    const paths = [...selectedPaths];
+    if (!paths.length || quickPickBusy) return;
+    if (!window.confirm(`确定删除已选的 ${paths.length} 张图片吗？`)) return;
+    setQuickPickBusy(true);
+    try {
+      const result = await api.deleteImages(paths);
+      addToast(result.message);
+      closeQuickPick();
+      await refresh();
+      if (category) await openCategory(category);
+    } catch (e) {
+      addToast(`删除失败: ${(e as Error).message}`, "err");
+    } finally {
+      setQuickPickBusy(false);
+    }
+  }, [addToast, category, closeQuickPick, openCategory, quickPickBusy, refresh, selectedPaths]);
 
   const handleReadPngInfo = useCallback(
     async (path: string) => {
@@ -553,7 +636,11 @@ export function Gallery() {
               <GalleryMasonry
                 key={group.key}
                 items={group.items}
+                selectionMode={quickPick}
+                selectedPaths={selectedPaths}
+                onToggleSelect={(item) => toggleSelect(item)}
                 onItemClick={(_item, idx) => {
+                  if (quickPick) return;
                   const base = items.findIndex((i) => i.path === group.items[0].path);
                   setLightboxIndex(base + idx);
                 }}
@@ -612,6 +699,17 @@ export function Gallery() {
           onRead={() => handleReadPngInfo(currentItem.path)}
           onClose={() => setPngOpen(false)}
           onSendToWorkspace={sendToWorkspace}
+        />
+      )}
+
+      {quickPick && (
+        <QuickPickPopup
+          count={selectedPaths.size}
+          showDelete={category === "reject"}
+          busy={quickPickBusy}
+          onMove={handleQuickMove}
+          onDelete={handleQuickDelete}
+          onClose={closeQuickPick}
         />
       )}
     </div>

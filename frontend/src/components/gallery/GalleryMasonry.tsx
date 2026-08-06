@@ -1,5 +1,6 @@
 import { VirtualMasonry } from "react-hybrid-masonry";
 import { api } from "../../api";
+import { cn } from "../../lib";
 import type { LibraryImageItem } from "../../types";
 
 export type GalleryItem = LibraryImageItem & { _idx: number };
@@ -11,11 +12,17 @@ export type GalleryItem = LibraryImageItem & { _idx: number };
 export function GalleryMasonry({
   items,
   onItemClick,
+  selectionMode = false,
+  selectedPaths,
+  onToggleSelect,
   minColumnWidth = 190,
   gap = 12,
 }: {
   items: LibraryImageItem[];
   onItemClick: (item: LibraryImageItem, index: number) => void;
+  selectionMode?: boolean;
+  selectedPaths?: Set<string>;
+  onToggleSelect?: (item: LibraryImageItem, index: number) => void;
   minColumnWidth?: number;
   gap?: number;
 }) {
@@ -37,7 +44,9 @@ export function GalleryMasonry({
         <div
           className="group cursor-pointer overflow-hidden rounded-xl bg-[var(--hover)] transition-transform duration-150 hover:z-10 hover:scale-[1.03]"
           style={{ position: "absolute", left: item.x, top: item.y, width: item.width, height: item.height }}
-          onClick={() => onItemClick(item, item._idx)}
+          onClick={() =>
+            selectionMode ? onToggleSelect?.(item, item._idx) : onItemClick(item, item._idx)
+          }
         >
           <img
             src={api.libraryImageUrl(item.path)}
@@ -46,6 +55,21 @@ export function GalleryMasonry({
             className="h-full w-full object-cover"
             draggable={false}
           />
+          {selectionMode && (
+            <>
+              {selectedPaths?.has(item.path) && <div className="absolute inset-0 bg-gray-400/50" />}
+              <span
+                className={cn(
+                  "absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border text-[11px] font-bold",
+                  selectedPaths?.has(item.path)
+                    ? "border-transparent bg-[var(--accent)] text-white"
+                    : "border-[var(--border)] bg-black/30 text-transparent"
+                )}
+              >
+                ✓
+              </span>
+            </>
+          )}
         </div>
       )}
     />

@@ -27,7 +27,10 @@ class LibraryServiceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="npm_lib_test_"))
-        lib.load_settings = lambda: {"library_path": str(cls.tmp)}  # type: ignore[method-assign]
+        lib.load_settings = lambda: {  # type: ignore[method-assign]
+            "library_path": str(cls.tmp),
+            "recycle_reject": False,
+        }
 
         (cls.tmp / "Treasure" / "2026-08-01").mkdir(parents=True)
         (cls.tmp / "Fine" / "2026-08-02").mkdir(parents=True)
@@ -104,26 +107,28 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertEqual(len(result["skipped"]), 0)
 
         today = lib.date.today().isoformat()
-        self.assertTrue((self.tmp / "Fine" / today / "t.png").exists())
-        self.assertTrue((self.tmp / "收藏" / today / "f.png").exists())
+        self.assertTrue((self.tmp / f"Fine-{today}" / "t.png").exists())
+        self.assertTrue((self.tmp / f"like-{today}" / "f.png").exists())
+        self.assertTrue((self.tmp / f"Reject-{today}" / "r.png").exists())
         self.assertFalse((self.tmp / "Reject" / "2026-08-01" / "r.png").exists())
 
         undo = lib.undo_review(result["undo_token"])
-        self.assertEqual(len(undo["restored"]), 2)
+        self.assertEqual(len(undo["restored"]), 3)
+        self.assertEqual(len(undo["failed"]), 0)
         self.assertTrue((self.tmp / "Treasure" / "2026-08-01" / "t.png").exists())
         self.assertTrue((self.tmp / "Fine" / "2026-08-02" / "f.png").exists())
-        self.assertFalse((self.tmp / "Fine" / today / "t.png").exists())
-        self.assertEqual(len(undo["failed"]), 1)  # reject 已永久删除，无法还原
+        self.assertTrue((self.tmp / "Reject" / "2026-08-01" / "r.png").exists())
+        self.assertFalse((self.tmp / f"Fine-{today}" / "t.png").exists())
 
-    def test_07_duplicate_name_dedup(self):
+    def test_07_reapply_same_target_skipped(self):
         src = self.tmp / "Treasure" / "2026-08-01" / "t.png"
         result = lib.apply_review([{"path": "Treasure/2026-08-01/t.png", "tag": "fine"}])
         today = lib.date.today().isoformat()
-        dest = self.tmp / "Fine" / today / "t.png"
+        dest = self.tmp / f"Fine-{today}" / "t.png"
         self.assertTrue(dest.exists())
-        second = lib.apply_review([{"path": f"Fine/{today}/t.png", "tag": "fine"}])
-        self.assertTrue((self.tmp / "Fine" / today / "t (1).png").exists())
-        lib.undo_review(second["undo_token"])
+        second = lib.apply_review([{"path": f"Fine-{today}/t.png", "tag": "fine"}])
+        self.assertEqual(len(second["applied"]), 0)
+        self.assertEqual(len(second["skipped"]), 1)
         lib.undo_review(result["undo_token"])
         self.assertTrue(src.exists())
 
@@ -152,6 +157,49 @@ class LibraryServiceTest(unittest.TestCase):
     def test_10_import_from_path_missing(self):
         with self.assertRaises(FileNotFoundError):
             lib.import_from_path(str(self.tmp / "no_such_dir"))
+
+    def test_11_new_folder_format(self):
+        (self.tmp / "Treasure-2026-08-07").mkdir(parents=True)
+        (self.tmp / "Treasure-2026-08-07" / "x.png").write_bytes(b"x")
+        (self.tmp / "like-2026-08-07").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "like-2026-08-07" / "y.png").write_bytes(b"y")
+        treasure = lib.list_images("treasure")["items"]
+        self.assertTrue(any(i["date"] == "2026-08-07" for i in treasure))
+        favorites = lib.list_images("favorites")["items"]
+        self.assertTrue(any(i["date"] == "2026-08-07" for i in favorites))
+
+    def test_12_move_images(self):
+        (self.tmp / "mv1.png").write_bytes(b"x")
+        # 已在根目录（未评分）时移动 unrated 应跳过而不是重命名
+        same = lib.move_images(["mv1.png"], "unrated")
+        self.assertEqual(len(same["applied"]), 0)
+        self.assertEqual(len(same["skipped"]), 1)
+        self.assertTrue((self.tmp / "mv1.png").exists())
+        self.assertFalse((self.tmp / "mv1 (1).png").exists())
+        # 移到 Treasure
+        result = lib.move_images(["mv1.png"], "treasure")
+        self.assertEqual(len(result["applied"]), 1)
+        today = lib.date.today().isoformat()
+        dest = self.tmp / f"Treasure-{today}" / "mv1.png"
+        self.assertTrue(dest.exists())
+        # 移回未评分
+        back = lib.move_images([f"Treasure-{today}/mv1.png"], "unrated")
+        self.assertTrue((self.tmp / "mv1.png").exists())
+        self.assertEqual(len(back["applied"]), 1)
+        undo = lib.undo_review(back["undo_token"])
+        self.assertEqual(len(undo["restored"]), 1)
+        self.assertTrue(dest.exists())
+
+    def test_13_delete_images(self):
+        today = lib.date.today().isoformat()
+        folder = self.tmp / f"Reject-{today}"
+        folder.mkdir(parents=True, exist_ok=True)
+        file = folder / "del.png"
+        file.write_bytes(b"x")
+        result = lib.delete_images([f"Reject-{today}/del.png"])
+        self.assertEqual(len(result["deleted"]), 1)
+        self.assertEqual(result["deleted"][0]["mode"], "permanent")
+        self.assertFalse(file.exists())
 
 
 class LibraryHttpSmokeTest(unittest.TestCase):

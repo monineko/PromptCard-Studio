@@ -2,6 +2,7 @@ import type {
   ImportResult,
   LibraryImages,
   LibrarySummary,
+  MoveImagesResult,
   PngInfoResult,
   ReviewApplyResult,
   Section,
@@ -92,6 +93,16 @@ export const api = {
     request<ImportResult>("/api/library/import-path", { method: "POST", body: JSON.stringify({ path }) }),
   openLibraryFolder: () =>
     request<{ ok: boolean; path: string }>("/api/library/open-folder", { method: "POST" }),
+  moveImages: (paths: string[], target: string) =>
+    request<MoveImagesResult>("/api/library/move", {
+      method: "POST",
+      body: JSON.stringify({ paths, target }),
+    }),
+  deleteImages: (paths: string[]) =>
+    request<{ ok: boolean; deleted: { path: string; mode: string }[]; skipped: { path: string; reason: string }[]; message: string }>(
+      "/api/library/delete",
+      { method: "POST", body: JSON.stringify({ paths }) }
+    ),
 };
 
 export function uid(): string {

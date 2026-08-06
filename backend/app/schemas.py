@@ -64,3 +64,12 @@ class ReviewUndoIn(BaseModel):
 
 class ImportPathIn(BaseModel):
     path: str
+
+
+class MoveImagesIn(BaseModel):
+    paths: list[str] = []
+    target: str
+
+
+class DeleteImagesIn(BaseModel):
+    paths: list[str] = []
