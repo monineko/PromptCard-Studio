@@ -208,7 +208,10 @@ export function Gallery() {
 
   // 切换页面离开图库时，自动取消"选择演示图片"状态
   useEffect(() => {
-    return () => cancelPick();
+    return () => {
+      cancelPick();
+      useNavStore.getState().clearLibraryHome();
+    };
   }, [cancelPick]);
 
   const openCategory = useCallback(async (key: LibraryCategoryKey) => {
@@ -251,7 +254,10 @@ export function Gallery() {
 
   // 点击顶部/侧边栏"图片库"标签：无论当前在哪个分类/筛选，都回到分类首页
   useEffect(() => {
-    if (libraryHomeTick > 0 && category) backToCategories();
+    if (libraryHomeTick > 0) {
+      if (category) backToCategories();
+      useNavStore.getState().clearLibraryHome();
+    }
   }, [libraryHomeTick, category, backToCategories]);
 
   const handleSetCover = useCallback(async () => {
@@ -731,7 +737,7 @@ export function Gallery() {
           </button>
         </div>
       )}
-      <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
+      <div className="glass sticky top-[52px] z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <button
           onClick={backToCategories}
           className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--text)]"
@@ -772,7 +778,7 @@ export function Gallery() {
         <div className="mx-auto w-full max-w-7xl px-4 pt-2">
           {groups.map((group) => (
             <section key={group.key} id={`group-${group.key}`} className="mb-3 scroll-mt-24">
-              <div className="sticky top-11 z-10 -mx-1 mb-2 flex items-center gap-2 px-1 py-1">
+              <div className="sticky top-[92px] z-10 -mx-1 mb-2 flex items-center gap-2 px-1 py-1">
                 <span className="rounded-full bg-[var(--accent)] px-3 py-0.5 text-xs font-semibold text-white">
                   {group.label}
                 </span>

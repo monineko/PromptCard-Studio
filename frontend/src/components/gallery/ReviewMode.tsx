@@ -265,7 +265,7 @@ export function ReviewMode({
         )}
       </AnimatePresence>
 
-      <div className="glass sticky top-0 z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
+      <div className="glass sticky top-[52px] z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <span className="text-sm font-medium">筛选模式 · {categoryLabel}</span>
         <span className="text-xs text-[var(--muted)]">
           {index + 1} / {items.length} · 已标记 {taggedCount}
