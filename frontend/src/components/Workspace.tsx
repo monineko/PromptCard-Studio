@@ -62,10 +62,12 @@ function PromptChip({
   block,
   sectionId,
   onDragStart,
+  onEdit,
 }: {
   block: Extract<Block, { type: "prompt" }>;
   sectionId: string;
   onDragStart: (e: React.PointerEvent, block: Block) => void;
+  onEdit: (block: Extract<Block, { type: "prompt" }>, sectionId: string) => void;
 }) {
   const removeBlock = useStore((s) => s.removeBlock);
   const adjustWeight = useStore((s) => s.adjustWeight);
@@ -79,6 +81,10 @@ function PromptChip({
       exit={{ opacity: 0, scale: 0.9 }}
       data-block-id={block.id}
       onPointerDown={(e) => onDragStart(e, block)}
+      onClick={() => {
+        if (Date.now() < suppressClickUntil) return;
+        onEdit(block, sectionId);
+      }}
       className={
         "group flex cursor-grab touch-none select-none items-center gap-0.5 rounded-lg border px-1 py-1 text-xs transition-colors active:cursor-grabbing " +
         (weight !== null
@@ -87,7 +93,7 @@ function PromptChip({
             : "border-sky-400/60 bg-sky-400/10 hover:bg-sky-400/15"
           : "border-[var(--border)] bg-[var(--input)] hover:border-[var(--accent)] hover:bg-[var(--hover)]")
       }
-      title="拖动排序；+/- 调节提示词系数"
+      title="点击编辑；拖动排序；+/- 调节提示词系数"
     >
       <button
         title="降低系数 0.1"
@@ -97,11 +103,11 @@ function PromptChip({
           stop(e);
           adjustWeight(sectionId, block.id, -0.1);
         }}
-        className="hidden h-4 w-4 items-center justify-center rounded text-[var(--muted)] hover:text-red-400 disabled:opacity-30 group-hover:flex"
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[var(--muted)] hover:text-red-400 disabled:opacity-30"
       >
         −
       </button>
-      <span className="px-0.5">{block.text}</span>
+      <span className="min-w-0 truncate px-0.5">{block.text}</span>
       {weight !== null && (
         <span className="rounded bg-[var(--hover)] px-1 font-mono text-[10px] text-[var(--accent)]">
           | {weight.toFixed(1)}
@@ -115,7 +121,7 @@ function PromptChip({
           stop(e);
           adjustWeight(sectionId, block.id, 0.1);
         }}
-        className="hidden h-4 w-4 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-30 group-hover:flex"
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-30"
       >
         +
       </button>
@@ -185,11 +191,13 @@ function SectionView({
   drag,
   hoverSectionId,
   onDragStart,
+  onEditPrompt,
 }: {
   section: Section;
   drag: DragState | null;
   hoverSectionId: string | null;
   onDragStart: (e: React.PointerEvent, block: Block) => void;
+  onEditPrompt: (block: Extract<Block, { type: "prompt" }>, sectionId: string) => void;
 }) {
   const renameSection = useStore((s) => s.renameSection);
   const deleteSection = useStore((s) => s.deleteSection);
@@ -251,7 +259,13 @@ function SectionView({
         <AnimatePresence initial={false}>
           {section.blocks.map((b) =>
             b.type === "prompt" ? (
-              <PromptChip key={b.id} block={b} sectionId={section.id} onDragStart={onDragStart} />
+              <PromptChip
+                key={b.id}
+                block={b}
+                sectionId={section.id}
+                onDragStart={onDragStart}
+                onEdit={onEditPrompt}
+              />
             ) : (
               <CardChip key={b.id} block={b} sectionId={section.id} onDragStart={onDragStart} />
             )
@@ -316,6 +330,10 @@ export function Workspace() {
   const redo = useStore((s) => s.redo);
   const clearZone = useStore((s) => s.clearZone);
   const addSection = useStore((s) => s.addSection);
+  const addPrompt = useStore((s) => s.addPrompt);
+  const addPrompts = useStore((s) => s.addPrompts);
+  const updatePrompt = useStore((s) => s.updatePrompt);
+  const addToast = useStore((s) => s.addToast);
   const autoSplit = useStore((s) => s.autoSplit);
   const setAutoSplit = (v: boolean) => {
     localStorage.setItem("npm_auto_split", v ? "1" : "0");
@@ -330,8 +348,31 @@ export function Workspace() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [showAddSection, setShowAddSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
+  const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; blockId: string } | null>(null);
+  const [promptDraft, setPromptDraft] = useState("");
+  const [bottomValue, setBottomValue] = useState("");
   const dragRef = useRef(drag);
   dragRef.current = drag;
+
+  const openPromptEdit = (block: Extract<Block, { type: "prompt" }>, sectionId: string) => {
+    setEditingPrompt({ sectionId, blockId: block.id });
+    setPromptDraft(block.text);
+  };
+
+  const addBottomPrompt = () => {
+    const v = bottomValue.trim();
+    if (!v) return;
+    const s = useStore.getState();
+    const zoneSections = s.zone === "positive" ? s.positive : s.negative;
+    const target = zoneSections.find((sec) => sec.name === "其他") ?? zoneSections[zoneSections.length - 1];
+    if (!target) {
+      addToast("当前区域还没有分区，请先添加分区", "err");
+      return;
+    }
+    if (autoSplit && v.includes(",")) addPrompts(target.id, v.split(","));
+    else addPrompt(target.id, v);
+    setBottomValue("");
+  };
 
   const onDragStart = (e: React.PointerEvent, block: Block) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
@@ -350,14 +391,26 @@ export function Workspace() {
       setHoverSectionId(sectionEl?.dataset.sectionId ?? null);
     };
     const onUp = (e: PointerEvent) => {
-      if (dragRef.current) {
-        const dx = e.clientX - dragRef.current.startX;
-        const dy = e.clientY - dragRef.current.startY;
-        if (Math.hypot(dx, dy) > 6) suppressClickUntil = Date.now() + 120;
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d) {
+        setDrag(null);
+        setHoverSectionId(null);
+        return;
+      }
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      const moved = Math.hypot(dx, dy) > 6;
+      if (moved) suppressClickUntil = Date.now() + 120;
+      if (!moved) {
+        // 纯点击（未拖动）：不触发移动，避免块被误挪到末尾
+        setDrag(null);
+        setHoverSectionId(null);
+        return;
       }
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const sectionEl = el?.closest("[data-section-id]") as HTMLElement | null;
-      const toSectionId = sectionEl?.dataset.sectionId ?? dragRef.current?.fromSectionId;
+      const toSectionId = sectionEl?.dataset.sectionId ?? d.fromSectionId;
       const blockEl = el?.closest("[data-block-id]") as HTMLElement | null;
       const sections = useStore.getState().zone === "positive" ? useStore.getState().positive : useStore.getState().negative;
       const toSection = sections.find((s) => s.id === toSectionId);
@@ -365,16 +418,14 @@ export function Workspace() {
       if (blockEl && toSection) {
         const targetId = blockEl.dataset.blockId;
         const targetIndex = toSection.blocks.findIndex((b) => b.id === targetId);
-        if (targetIndex >= 0 && targetId !== dragRef.current?.block.id) index = targetIndex;
+        if (targetIndex >= 0 && targetId !== d.block.id) index = targetIndex;
       }
-      if (dragRef.current) {
-        useStore.getState().moveBlock(
-          dragRef.current.fromSectionId,
-          dragRef.current.block.id,
-          toSectionId ?? dragRef.current.fromSectionId,
-          index
-        );
-      }
+      useStore.getState().moveBlock(
+        d.fromSectionId,
+        d.block.id,
+        toSectionId ?? d.fromSectionId,
+        index
+      );
       setDrag(null);
       setHoverSectionId(null);
     };
@@ -432,9 +483,30 @@ export function Workspace() {
               drag={drag}
               hoverSectionId={hoverSectionId}
               onDragStart={onDragStart}
+              onEditPrompt={openPromptEdit}
             />
           ))
         )}
+      </div>
+
+      {/* 常驻输入框：始终显示在工作区底部，回车添加到当前区域 */}
+      <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--input)]/50 px-3 py-2 transition-colors focus-within:border-[var(--accent)]">
+        <Plus size={14} className="shrink-0 text-[var(--muted)]" />
+        <input
+          value={bottomValue}
+          onChange={(e) => setBottomValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addBottomPrompt();
+            if (e.key === "Escape") setBottomValue("");
+          }}
+          placeholder={`输入提示词，回车添加到${zone === "positive" ? "正面" : "负面"}区域${
+            autoSplit ? "（支持逗号自动分块）" : ""
+          }`}
+          className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--muted)]"
+        />
+        <Button size="sm" onClick={addBottomPrompt} disabled={!bottomValue.trim()}>
+          <Plus size={13} /> 添加
+        </Button>
       </div>
 
       <AnimatePresence>
@@ -490,6 +562,32 @@ export function Workspace() {
             }}
           >
             创建
+          </Button>
+        </div>
+      </Modal>
+
+      {/* 非卡片提示词块编辑弹窗：仅提示词内容可编辑 */}
+      <Modal open={!!editingPrompt} onClose={() => setEditingPrompt(null)} title="编辑提示词">
+        <label className="mb-1 block text-xs text-[var(--muted)]">提示词内容</label>
+        <textarea
+          autoFocus
+          value={promptDraft}
+          onChange={(e) => setPromptDraft(e.target.value)}
+          rows={5}
+          placeholder="输入完整提示词…支持 <分类:名称> 嵌套引用"
+          className="scroll-thin w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-relaxed outline-none focus:border-[var(--accent)]"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setEditingPrompt(null)}>取消</Button>
+          <Button
+            onClick={() => {
+              if (editingPrompt && promptDraft.trim()) {
+                updatePrompt(editingPrompt.sectionId, editingPrompt.blockId, promptDraft);
+              }
+              setEditingPrompt(null);
+            }}
+          >
+            保存
           </Button>
         </div>
       </Modal>

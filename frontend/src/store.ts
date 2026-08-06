@@ -84,6 +84,7 @@ interface AppState {
   addPrompts: (sectionId: string, texts: string[]) => void;
   adjustWeight: (sectionId: string, blockId: string, delta: number) => void;
   removeBlock: (sectionId: string, blockId: string) => void;
+  updatePrompt: (sectionId: string, blockId: string, text: string) => void;
   moveBlock: (fromSectionId: string, blockId: string, toSectionId: string, index?: number) => void;
   renameSection: (sectionId: string, name: string) => void;
   deleteSection: (sectionId: string) => void;
@@ -294,6 +295,17 @@ export const useStore = create<AppState>((set, get) => {
         const current = block.weight ?? 1;
         const next = Math.min(3, Math.max(0.1, Math.round((current + delta) * 10) / 10));
         block.weight = next;
+      });
+    },
+
+    updatePrompt(sectionId, blockId, text) {
+      const t = text.trim();
+      if (!t) return;
+      commit((s) => {
+        const sections = zoneSections(s);
+        const section = sections.find((x) => x.id === sectionId);
+        const block = section?.blocks.find((b) => b.id === blockId && b.type === "prompt");
+        if (block && block.type === "prompt") block.text = t;
       });
     },
 
