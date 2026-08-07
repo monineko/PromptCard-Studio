@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, uid } from "./api";
-import { copyText, serializeSections } from "./lib";
+import { copyText, serializeSections, splitWeightedPrompt } from "./lib";
 import type { Block, Category, Section, Settings, Zone } from "./types";
 
 type Snapshot = { positive: Section[]; negative: Section[] };
@@ -9,10 +9,13 @@ type Toast = { id: number; text: string; kind: "ok" | "err" };
 
 type DetailState = { category: string; name: string } | null;
 
-const DEFAULT_SECTION_NAMES = ["角色", "动作", "画师串", "其他"];
+const DEFAULT_SECTION_NAMES = ["提示词工作台", "角色", "动作", "画师串"];
+const NEGATIVE_SECTION_NAME = "负面Prompt";
+const WORKBENCH_NAME = "提示词工作台";
+const LEGACY_OTHER_NAME = "其他";
 
-function makeSection(name: string, locked = false): Section {
-  return { id: uid(), name, locked, blocks: [] };
+function makeSection(name: string, locked = false, blocks: Block[] = []): Section {
+  return { id: uid(), name, locked, blocks: [...blocks] };
 }
 
 function sectionNameForCategory(category: string): string {
@@ -23,14 +26,37 @@ function ensureSection(sections: Section[], name: string): Section {
   const found = sections.find((s) => s.name === name);
   if (found) return found;
   const section = makeSection(name, DEFAULT_SECTION_NAMES.includes(name));
-  const last = sections[sections.length - 1];
-  if (last?.name === "其他") sections.splice(sections.length - 1, 0, section);
-  else sections.push(section);
+  sections.push(section);
   return section;
 }
 
-function defaultZone(): Section[] {
+function defaultPositiveZone(): Section[] {
   return DEFAULT_SECTION_NAMES.map((name) => makeSection(name, true));
+}
+
+function defaultNegativeZone(): Section[] {
+  return [makeSection(NEGATIVE_SECTION_NAME, true)];
+}
+
+/** 历史结构迁移：正面"其他" → 置顶"提示词工作台"；负面各分区合并为一个"负面Prompt"。 */
+function migratePositive(sections: Section[]): Section[] {
+  const list = sections.map((s) => ({ ...s, blocks: [...s.blocks] }));
+  const idx = list.findIndex((s) => s.name === LEGACY_OTHER_NAME);
+  if (idx >= 0) {
+    const [workbench] = list.splice(idx, 1);
+    list.unshift({ ...workbench, name: WORKBENCH_NAME, locked: true });
+  } else if (!list.some((s) => s.name === WORKBENCH_NAME)) {
+    list.unshift(makeSection(WORKBENCH_NAME, true));
+  }
+  return list;
+}
+
+function migrateNegative(sections: Section[]): Section[] {
+  if (sections.length === 1 && sections[0].name === NEGATIVE_SECTION_NAME) {
+    return sections.map((s) => ({ ...s, blocks: [...s.blocks] }));
+  }
+  const blocks = sections.flatMap((s) => s.blocks.map((b) => ({ ...b })));
+  return [makeSection(NEGATIVE_SECTION_NAME, true, blocks)];
 }
 
 function cloneZones(positive: Section[], negative: Section[]): { positive: Section[]; negative: Section[] } {
@@ -51,11 +77,11 @@ interface AppState {
   negative: Section[];
   past: Snapshot[];
   future: Snapshot[];
-  autoSplit: boolean;
   toasts: Toast[];
   detail: DetailState;
   showNewCard: boolean;
   newCardCategory: string;
+  newCardContent: string;
   showNewCategory: boolean;
   showImport: boolean;
   cardRefresher: number;
@@ -89,11 +115,13 @@ interface AppState {
   renameSection: (sectionId: string, name: string) => void;
   deleteSection: (sectionId: string) => void;
   addSection: (name: string) => void;
+  splitSectionPrompts: (sectionId: string) => void;
   clearZone: () => void;
   undo: () => void;
   redo: () => void;
   copyZone: () => Promise<void>;
   overwriteZonesFromPng: (prompt: string, uc: string) => void;
+  setNewCardContent: (content: string) => void;
 
   createCategory: (name: string) => Promise<boolean>;
   renameCategory: (oldName: string, newName: string) => Promise<boolean>;
@@ -146,6 +174,9 @@ export const useStore = create<AppState>((set, get) => {
   };
 
   const zoneSections = (s: AppState): Section[] => (s.zone === "positive" ? s.positive : s.negative);
+  const allSections = (s: AppState): Section[] => [...s.positive, ...s.negative];
+  const findSection = (s: AppState, id: string): Section | undefined =>
+    allSections(s).find((x) => x.id === id);
 
   return {
     ready: false,
@@ -159,11 +190,11 @@ export const useStore = create<AppState>((set, get) => {
     negative: [],
     past: [],
     future: [],
-    autoSplit: localStorage.getItem("npm_auto_split") !== "0",
     toasts: [],
     detail: null,
     showNewCard: false,
     newCardCategory: "",
+    newCardContent: "",
     showNewCategory: false,
     showImport: false,
     cardRefresher: 0,
@@ -175,8 +206,8 @@ export const useStore = create<AppState>((set, get) => {
         const ws = await api.workspace();
         applyTheme(settings);
         set((s) => {
-          const positive = ws.positive.length ? ws.positive : defaultZone();
-          const negative = ws.negative.length ? ws.negative : defaultZone();
+          const positive = migratePositive(ws.positive.length ? ws.positive : defaultPositiveZone());
+          const negative = migrateNegative(ws.negative.length ? ws.negative : defaultNegativeZone());
           return {
             settings,
             categories,
@@ -188,6 +219,7 @@ export const useStore = create<AppState>((set, get) => {
             ready: true,
           };
         });
+        scheduleSave(get);
       } catch (e) {
         get().addToast(`初始化失败: ${(e as Error).message}`, "err");
         set((s) => ({ ...s, ready: true }));
@@ -246,6 +278,7 @@ export const useStore = create<AppState>((set, get) => {
     closeDetail: () => set({ detail: null }),
     setShowNewCard: (v) => set({ showNewCard: v }),
     setNewCardCategory: (v) => set({ newCardCategory: v }),
+    setNewCardContent: (content) => set({ newCardContent: content }),
     setShowNewCategory: (v) => set({ showNewCategory: v }),
     setShowImport: (v) => set({ showImport: v }),
 
@@ -262,8 +295,7 @@ export const useStore = create<AppState>((set, get) => {
       const t = text.trim();
       if (!t) return;
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         if (section) section.blocks.push({ id: uid(), type: "prompt", text: t });
       });
     },
@@ -272,24 +304,21 @@ export const useStore = create<AppState>((set, get) => {
       const items = texts.map((t) => t.trim()).filter(Boolean);
       if (!items.length) return;
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         if (section) items.forEach((t) => section.blocks.push({ id: uid(), type: "prompt", text: t }));
       });
     },
 
     removeBlock(sectionId, blockId) {
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         if (section) section.blocks = section.blocks.filter((b) => b.id !== blockId);
       });
     },
 
     adjustWeight(sectionId, blockId, delta) {
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         const block = section?.blocks.find((b) => b.id === blockId && b.type === "prompt");
         if (!block || block.type !== "prompt") return;
         const current = block.weight ?? 1;
@@ -302,8 +331,7 @@ export const useStore = create<AppState>((set, get) => {
       const t = text.trim();
       if (!t) return;
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         const block = section?.blocks.find((b) => b.id === blockId && b.type === "prompt");
         if (block && block.type === "prompt") block.text = t;
       });
@@ -311,10 +339,9 @@ export const useStore = create<AppState>((set, get) => {
 
     moveBlock(fromSectionId, blockId, toSectionId, index) {
       commit((s) => {
-        const sections = zoneSections(s);
-        const from = sections.find((x) => x.id === fromSectionId);
+        const from = findSection(s, fromSectionId);
         if (!from) return;
-        const to = sections.find((x) => x.id === toSectionId) ?? from;
+        const to = findSection(s, toSectionId) ?? from;
         const idx = from.blocks.findIndex((b) => b.id === blockId);
         if (idx < 0) return;
         const [block] = from.blocks.splice(idx, 1);
@@ -331,20 +358,19 @@ export const useStore = create<AppState>((set, get) => {
       const n = name.trim();
       if (!n) return;
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         if (section && !section.locked && !DEFAULT_SECTION_NAMES.includes(n)) section.name = n;
       });
     },
 
     deleteSection(sectionId) {
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = sections.find((x) => x.id === sectionId);
+        const section = findSection(s, sectionId);
         if (!section || section.locked) return;
-        const other = sections.find((x) => x.name === "其他");
-        if (other) other.blocks.push(...section.blocks);
-        s[s.zone === "positive" ? "positive" : "negative"] = sections.filter((x) => x.id !== sectionId);
+        const workbench = s.positive.find((x) => x.name === WORKBENCH_NAME);
+        if (workbench) workbench.blocks.push(...section.blocks);
+        s.positive = s.positive.filter((x) => x.id !== sectionId);
+        s.negative = s.negative.filter((x) => x.id !== sectionId);
       });
     },
 
@@ -352,20 +378,46 @@ export const useStore = create<AppState>((set, get) => {
       const n = name.trim();
       if (!n) return;
       commit((s) => {
-        const sections = zoneSections(s);
-        if (sections.some((x) => x.name === n)) return;
+        if (allSections(s).some((x) => x.name === n)) return;
         const section = makeSection(n);
-        const last = sections[sections.length - 1];
-        if (last?.name === "其他") sections.splice(sections.length - 1, 0, section);
-        else sections.push(section);
+        s.positive.push(section);
+      });
+    },
+
+    splitSectionPrompts(sectionId) {
+      commit((s) => {
+        const section = findSection(s, sectionId);
+        if (!section) return;
+        const next: Block[] = [];
+        for (const b of section.blocks) {
+          if (b.type === "card") {
+            next.push(b);
+            continue;
+          }
+          const terms = splitWeightedPrompt(b.text);
+          if (terms.length === 1 && terms[0].text === b.text) {
+            next.push(b);
+            continue;
+          }
+          for (const t of terms) {
+            next.push({
+              id: uid(),
+              type: "prompt",
+              text: t.text,
+              weight: t.weight !== 1 ? t.weight : undefined,
+            });
+          }
+        }
+        section.blocks = next;
       });
     },
 
     clearZone() {
       commit((s) => {
-        zoneSections(s).forEach((sec) => (sec.blocks = []));
+        s.positive.forEach((sec) => (sec.blocks = []));
+        s.negative.forEach((sec) => (sec.blocks = []));
       });
-      get().addToast(`已清空${get().zone === "positive" ? "正面" : "负面"}区域`);
+      get().addToast("已清空提示词工作区（含负面Prompt）");
     },
 
     undo() {
@@ -398,10 +450,9 @@ export const useStore = create<AppState>((set, get) => {
 
     async copyZone() {
       const s = get();
-      const sections = zoneSections(s);
-      const raw = serializeSections(sections);
+      const raw = serializeSections(allSections(s));
       if (!raw.trim()) {
-        s.addToast("当前区域没有内容可复制", "err");
+        s.addToast("工作区没有内容可复制", "err");
         return;
       }
       try {
@@ -416,16 +467,16 @@ export const useStore = create<AppState>((set, get) => {
     overwriteZonesFromPng(prompt, uc) {
       commit((s) => {
         const clear = (sections: Section[]) => sections.forEach((sec) => (sec.blocks = []));
-        const put = (sections: Section[], text: string) => {
+        const put = (sections: Section[], text: string, preferName: string) => {
           const t = (text ?? "").trim();
           if (!t) return;
-          const section = sections.find((x) => x.name === "其他") ?? sections[0];
+          const section = sections.find((x) => x.name === preferName) ?? sections[0];
           if (section) section.blocks.push({ id: uid(), type: "prompt", text: t });
         };
         clear(s.positive);
         clear(s.negative);
-        put(s.positive, prompt);
-        put(s.negative, uc);
+        put(s.positive, prompt, WORKBENCH_NAME);
+        put(s.negative, uc, NEGATIVE_SECTION_NAME);
       });
       get().addToast("已用图片提示词覆盖工作区（可用 Ctrl+Z 撤销）");
     },

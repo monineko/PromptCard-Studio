@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ClipboardCopy,
+  FilePlus2,
   FolderPlus,
   Pencil,
   Plus,
@@ -9,43 +10,12 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { cn, categoryHue } from "../lib";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../api";
+import { cn, categoryHue, normalizePromptTerms, serializeSections, splitWeightedPrompt } from "../lib";
 import { useStore } from "../store";
 import type { Block, Section } from "../types";
 import { Button, CategoryBadge, ConfirmDialog, IconBtn, Modal } from "./UI";
-
-function ZoneTabs() {
-  const zone = useStore((s) => s.zone);
-  const setZone = useStore((s) => s.setZone);
-  const positiveCount = useStore((s) => s.positive.reduce((n, x) => n + x.blocks.length, 0));
-  const negativeCount = useStore((s) => s.negative.reduce((n, x) => n + x.blocks.length, 0));
-  return (
-    <div className="inline-flex rounded-xl border border-[var(--border)] bg-[var(--input)] p-1">
-      {(
-        [
-          ["positive", "正面提示词", positiveCount],
-          ["negative", "负面提示词", negativeCount],
-        ] as const
-      ).map(([key, label, count]) => (
-        <button
-          key={key}
-          onClick={() => setZone(key)}
-          className={cn(
-            "rounded-lg px-4 py-1.5 text-sm transition-all",
-            zone === key ? "text-white shadow" : "text-[var(--muted)] hover:text-[var(--text)]"
-          )}
-          style={zone === key ? { background: "var(--accent)" } : undefined}
-        >
-          {label}
-          <span className={cn("ml-1.5 text-xs opacity-70", zone !== key && "text-[var(--muted)]")}>
-            {count}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 type DragState = {
   block: Block;
@@ -192,18 +162,24 @@ function SectionView({
   hoverSectionId,
   onDragStart,
   onEditPrompt,
+  large,
+  isFirst,
+  onSplit,
+  onComposeCard,
 }: {
   section: Section;
   drag: DragState | null;
   hoverSectionId: string | null;
   onDragStart: (e: React.PointerEvent, block: Block) => void;
   onEditPrompt: (block: Extract<Block, { type: "prompt" }>, sectionId: string) => void;
+  large?: boolean;
+  isFirst?: boolean;
+  onSplit?: () => void;
+  onComposeCard?: () => void;
 }) {
   const renameSection = useStore((s) => s.renameSection);
   const deleteSection = useStore((s) => s.deleteSection);
   const addPrompt = useStore((s) => s.addPrompt);
-  const addPrompts = useStore((s) => s.addPrompts);
-  const autoSplit = useStore((s) => s.autoSplit);
   const [inputOpen, setInputOpen] = useState(false);
   const [value, setValue] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -214,11 +190,8 @@ function SectionView({
   const isTarget = drag !== null && hoverSectionId === section.id;
 
   const submit = () => {
-    if (autoSplit && value.includes(",")) {
-      addPrompts(section.id, value.split(","));
-    } else {
-      addPrompt(section.id, value);
-    }
+    // 加号添加提示词：一次只生成一个提示词块（不做自动分块）
+    addPrompt(section.id, value);
     setValue("");
     setInputOpen(false);
   };
@@ -239,23 +212,35 @@ function SectionView({
         <span className="text-sm font-semibold">{section.name}</span>
         <span className="text-xs text-[var(--muted)]">{section.blocks.length}</span>
         <span className="ml-auto flex items-center gap-0.5">
+          {isFirst && (
+            <>
+              <Button size="sm" variant="ghost" title="把本分区所有提示词按系数语法分块" onClick={onSplit}>
+                <Plus size={13} /> 提示词分块
+              </Button>
+              <Button size="sm" variant="ghost" title="规范化本分区提示词并新建卡片" onClick={onComposeCard}>
+                <FilePlus2 size={13} /> 合成Card
+              </Button>
+            </>
+          )}
           {!section.locked && (
             <>
               <IconBtn title="重命名分区" onClick={() => { setNewName(section.name); setRenaming(true); }}>
                 <Pencil size={13} />
               </IconBtn>
-              <IconBtn danger title="删除分区（内容移入其他）" onClick={() => setConfirmDel(true)}>
+              <IconBtn danger title="删除分区（内容移入提示词工作台）" onClick={() => setConfirmDel(true)}>
                 <Trash2 size={13} />
               </IconBtn>
             </>
           )}
-          <IconBtn title="添加提示词" onClick={() => setInputOpen((v) => !v)}>
-            <Plus size={14} />
-          </IconBtn>
         </span>
       </div>
 
-      <div className="flex min-h-[34px] flex-wrap items-center gap-1.5">
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-1.5",
+          large ? "min-h-[150px]" : "min-h-[34px]"
+        )}
+      >
         <AnimatePresence initial={false}>
           {section.blocks.map((b) =>
             b.type === "prompt" ? (
@@ -271,6 +256,13 @@ function SectionView({
             )
           )}
         </AnimatePresence>
+        <IconBtn
+          title="添加提示词"
+          className="h-5 w-5 shrink-0 self-start rounded-md hover:text-[var(--accent)]"
+          onClick={() => setInputOpen((v) => !v)}
+        >
+          <Plus size={13} />
+        </IconBtn>
         {inputOpen && (
           <motion.input
             autoFocus
@@ -313,7 +305,7 @@ function SectionView({
       <ConfirmDialog
         open={confirmDel}
         title="删除分区"
-        message={`确定删除分区「${section.name}」吗？其中的内容会移到「其他」。`}
+        message={`确定删除分区「${section.name}」吗？其中的内容会移到「提示词工作台」。`}
         danger
         onConfirm={() => { deleteSection(section.id); setConfirmDel(false); }}
         onCancel={() => setConfirmDel(false)}
@@ -323,24 +315,23 @@ function SectionView({
 }
 
 export function Workspace() {
-  const zone = useStore((s) => s.zone);
-  const sections = useStore((s) => (s.zone === "positive" ? s.positive : s.negative));
+  const positive = useStore((s) => s.positive);
+  const negative = useStore((s) => s.negative);
   const copyZone = useStore((s) => s.copyZone);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
   const clearZone = useStore((s) => s.clearZone);
   const addSection = useStore((s) => s.addSection);
   const addPrompt = useStore((s) => s.addPrompt);
-  const addPrompts = useStore((s) => s.addPrompts);
   const updatePrompt = useStore((s) => s.updatePrompt);
+  const splitSectionPrompts = useStore((s) => s.splitSectionPrompts);
+  const setNewCardContent = useStore((s) => s.setNewCardContent);
+  const setNewCardCategory = useStore((s) => s.setNewCardCategory);
+  const setShowNewCard = useStore((s) => s.setShowNewCard);
   const addToast = useStore((s) => s.addToast);
-  const autoSplit = useStore((s) => s.autoSplit);
-  const setAutoSplit = (v: boolean) => {
-    localStorage.setItem("npm_auto_split", v ? "1" : "0");
-    useStore.setState({ autoSplit: v });
-  };
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
+  const sections = useMemo(() => [...positive, ...negative], [positive, negative]);
   const blocksCount = sections.reduce((n, x) => n + x.blocks.length, 0);
 
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -363,16 +354,49 @@ export function Workspace() {
     const v = bottomValue.trim();
     if (!v) return;
     const s = useStore.getState();
-    const zoneSections = s.zone === "positive" ? s.positive : s.negative;
-    const target = zoneSections.find((sec) => sec.name === "其他") ?? zoneSections[zoneSections.length - 1];
+    const target = s.positive.find((sec) => sec.name === "提示词工作台") ?? s.positive[0];
     if (!target) {
-      addToast("当前区域还没有分区，请先添加分区", "err");
+      addToast("提示词工作台不存在", "err");
       return;
     }
-    if (autoSplit && v.includes(",")) addPrompts(target.id, v.split(","));
-    else addPrompt(target.id, v);
+    addPrompt(target.id, v);
     setBottomValue("");
   };
+
+  const handleSplit = useCallback(
+    (sectionId: string) => {
+      const s = useStore.getState();
+      const section = [...s.positive, ...s.negative].find((x) => x.id === sectionId);
+      if (!section) return;
+      const promptCount = section.blocks.filter((b) => b.type === "prompt").length;
+      splitSectionPrompts(sectionId);
+      addToast(`已按系数语法分块（原 ${promptCount} 个提示词块）`);
+    },
+    [splitSectionPrompts, addToast]
+  );
+
+  const handleComposeCard = useCallback(async (sectionId: string) => {
+    const s = useStore.getState();
+    const section = [...s.positive, ...s.negative].find((x) => x.id === sectionId);
+    if (!section || section.blocks.length === 0) {
+      s.addToast("提示词工作台还没有内容，无法合成卡片", "err");
+      return;
+    }
+    try {
+      const raw = serializeSections([section]);
+      const { text } = await api.expand(raw);
+      const terms = splitWeightedPrompt(text);
+      if (!terms.length) {
+        s.addToast("未解析到有效提示词", "err");
+        return;
+      }
+      setNewCardContent(normalizePromptTerms(terms));
+      setNewCardCategory("");
+      setShowNewCard(true);
+    } catch (e) {
+      s.addToast(`合成失败: ${(e as Error).message}`, "err");
+    }
+  }, [setNewCardContent, setNewCardCategory, setShowNewCard]);
 
   const onDragStart = (e: React.PointerEvent, block: Block) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
@@ -412,7 +436,8 @@ export function Workspace() {
       const sectionEl = el?.closest("[data-section-id]") as HTMLElement | null;
       const toSectionId = sectionEl?.dataset.sectionId ?? d.fromSectionId;
       const blockEl = el?.closest("[data-block-id]") as HTMLElement | null;
-      const sections = useStore.getState().zone === "positive" ? useStore.getState().positive : useStore.getState().negative;
+      const st = useStore.getState();
+      const sections = [...st.positive, ...st.negative];
       const toSection = sections.find((s) => s.id === toSectionId);
       let index: number | undefined;
       if (blockEl && toSection) {
@@ -440,17 +465,7 @@ export function Workspace() {
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <ZoneTabs />
         <div className="ml-auto flex items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--muted)]">
-            <input
-              type="checkbox"
-              checked={autoSplit}
-              onChange={(e) => setAutoSplit(e.target.checked)}
-              className="accent-[var(--accent)]"
-            />
-            自动分块
-          </label>
           <Button size="sm" variant="ghost" onClick={() => { setNewSectionName(""); setShowAddSection(true); }}>
             <FolderPlus size={14} /> 添加分区
           </Button>
@@ -476,7 +491,7 @@ export function Workspace() {
             <span className="text-xs">点击"添加分区"创建，或在下方卡片面板添加卡片</span>
           </div>
         ) : (
-          sections.map((section) => (
+          sections.map((section, i) => (
             <SectionView
               key={section.id}
               section={section}
@@ -484,6 +499,10 @@ export function Workspace() {
               hoverSectionId={hoverSectionId}
               onDragStart={onDragStart}
               onEditPrompt={openPromptEdit}
+              large={i === 0}
+              isFirst={i === 0}
+              onSplit={i === 0 ? () => handleSplit(section.id) : undefined}
+              onComposeCard={i === 0 ? () => void handleComposeCard(section.id) : undefined}
             />
           ))
         )}
@@ -499,9 +518,7 @@ export function Workspace() {
             if (e.key === "Enter") addBottomPrompt();
             if (e.key === "Escape") setBottomValue("");
           }}
-          placeholder={`输入提示词，回车添加到${zone === "positive" ? "正面" : "负面"}区域${
-            autoSplit ? "（支持逗号自动分块）" : ""
-          }`}
+          placeholder="输入提示词，回车添加到提示词工作台"
           className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--muted)]"
         />
         <Button size="sm" onClick={addBottomPrompt} disabled={!bottomValue.trim()}>
@@ -594,8 +611,8 @@ export function Workspace() {
 
       <ConfirmDialog
         open={confirmClear}
-        title="清空当前区域"
-        message={`确定清空${zone === "positive" ? "正面" : "负面"}区域的所有提示词吗？可以用撤销恢复。`}
+        title="清空提示词工作区"
+        message="确定清空整个提示词工作区（含负面Prompt）的所有提示词吗？可以用撤销恢复。"
         danger
         onConfirm={() => { clearZone(); setConfirmClear(false); }}
         onCancel={() => setConfirmClear(false)}

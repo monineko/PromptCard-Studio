@@ -77,3 +77,57 @@ export function extractRoleUnits(sections: Section[]): string[] {
     .map((t) => t.trim())
     .filter(Boolean);
 }
+
+export type WeightedTerm = { text: string; weight: number };
+
+/** 顶层按分隔符切分（括号/方括号/花括号内的分隔符不生效）。 */
+export function splitTopLevel(input: string, sep: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of input) {
+    if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
+    if (ch === sep && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
+ * 按 NovelAI 系数语法分词：
+ * - 冒号本身不参与分词（不会把 "::" 当成提示词）；
+ * - `2::ibuki,0.5::standing,` 与 `2::ibuki::,0.5::standing::,` 均解析为
+ *   ibuki(2) 与 standing(0.5)；
+ * - 无系数前缀的段权重为 1。
+ */
+export function splitWeightedPrompt(input: string): WeightedTerm[] {
+  const terms: WeightedTerm[] = [];
+  for (const raw of splitTopLevel(input, ",")) {
+    let seg = raw.trim();
+    if (!seg) continue;
+    let weight = 1;
+    const m = seg.match(/^(-?\d+(?:\.\d+)?)\s*::(.*)$/s);
+    if (m) {
+      weight = Math.min(10, Math.max(-10, Number(m[1])));
+      seg = m[2];
+    }
+    // 去掉包裹提示词的成对冒号：2::ibuki:: → ibuki
+    if (seg.startsWith("::")) seg = seg.slice(2);
+    if (seg.endsWith("::")) seg = seg.slice(0, -2);
+    seg = seg.trim();
+    if (!seg) continue;
+    terms.push({ text: seg, weight });
+  }
+  return terms;
+}
+
+/** 把分词结果规范化为卡片内容文本（带系数的词使用 N::text:: 包裹）。 */
+export function normalizePromptTerms(terms: WeightedTerm[]): string {
+  return terms.map((t) => (t.weight !== 1 ? `${t.weight}::${t.text}::` : t.text)).join(", ");
+}

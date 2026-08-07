@@ -584,6 +584,8 @@ function NewCardModal() {
   const open = useStore((s) => s.showNewCard);
   const setOpen = useStore((s) => s.setShowNewCard);
   const initialCategory = useStore((s) => s.newCardCategory);
+  const newCardContent = useStore((s) => s.newCardContent);
+  const setNewCardContent = useStore((s) => s.setNewCardContent);
   const createCard = useStore((s) => s.createCard);
   const categories = useStore((s) => s.categories);
   const [category, setCategory] = useState("");
@@ -598,12 +600,17 @@ function NewCardModal() {
       setNewCat(false);
       setCatName("");
       setName("");
-      setContent("");
+      setContent(newCardContent || "");
     }
-  }, [open, initialCategory]);
+  }, [open, initialCategory, newCardContent]);
+
+  const close = () => {
+    setOpen(false);
+    setNewCardContent("");
+  };
 
   return (
-    <Modal open={open} onClose={() => setOpen(false)} title="新建卡片" wide>
+    <Modal open={open} onClose={close} title="新建卡片" wide>
       <div className="mb-3 grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-xs text-[var(--muted)]">分类</label>
@@ -656,7 +663,7 @@ function NewCardModal() {
         className="scroll-thin w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-relaxed outline-none focus:border-[var(--accent)]"
       />
       <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" onClick={() => setOpen(false)}>取消</Button>
+        <Button variant="ghost" onClick={close}>取消</Button>
         <Button
           onClick={async () => {
             const finalCat = newCat ? catName.trim() : category;
@@ -664,7 +671,7 @@ function NewCardModal() {
               useStore.getState().addToast("分类与名称不能为空", "err");
               return;
             }
-            if (await createCard(finalCat, name.trim(), content)) setOpen(false);
+            if (await createCard(finalCat, name.trim(), content)) close();
           }}
         >
           保存
