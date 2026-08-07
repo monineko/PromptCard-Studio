@@ -7,7 +7,9 @@
 """
 
 import json
+import hashlib
 import os
+from datetime import datetime
 from pathlib import Path
 
 from .config import VIBES_DIR
@@ -160,3 +162,51 @@ def resolve_vibe(
         "strength": max(0.0, min(1.0, float(strength))),
         "information_extracted": float((entry.get("params") or {}).get("information_extracted") or 0.7),
     }
+
+
+def _normalize_encoding(enc: str) -> str:
+    enc = str(enc or "").strip()
+    if enc.startswith("data:") and ";base64," in enc:
+        enc = enc.split(";base64,", 1)[1]
+    return enc
+
+
+def import_vibe_file(
+    encoding: str,
+    strength: float,
+    info: float,
+    model: str,
+    name_hint: str = "",
+) -> dict:
+    """把编码保存为新的 .naiv4vibe 文件（用户主动导入），返回 {id, name}。"""
+    encoding = _normalize_encoding(encoding)
+    if not encoding:
+        raise ValueError("Vibe 编码为空")
+    key = MODEL_VIBE_KEYS.get(model)
+    if not key:
+        raise ValueError(f"模型 {model} 不支持 Vibe 导入")
+    VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    hint = str(name_hint or "").strip()
+    base = hint or f"图片导入_{datetime.now():%Y%m%d_%H%M%S}"
+    base = _safe_new_name(base)
+    name, n = base, 1
+    while (VIBES_DIR / f"{name}.naiv4vibe").exists():
+        n += 1
+        name = f"{base}_{n}"
+    digest = hashlib.md5(encoding.encode("utf-8")).hexdigest()[:16]
+    data = {
+        "identifier": "naiv4vibe",
+        "type": "image",
+        "image": encoding,
+        "id": digest,
+        "name": name,
+        "thumbnail": encoding,
+        "encodings": {
+            key: {digest: {"encoding": encoding, "params": {"information_extracted": info}}}
+        },
+        "importInfo": {"model": key, "information_extracted": info, "strength": strength},
+    }
+    (VIBES_DIR / f"{name}.naiv4vibe").write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
+    return {"ok": True, "id": name, "name": name}

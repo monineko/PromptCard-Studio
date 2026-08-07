@@ -173,6 +173,8 @@ export type GenerateVibe = {
   thumbnail: string;
   strength: number;
   information_extracted: number;
+  /** 来自 PNG 的临时 Vibe：直接携带编码，不依赖库文件 */
+  encoding?: string;
 };
 
 export type VibeItem = {
@@ -276,4 +278,27 @@ export type BatchStartPayload = {
   dimensions: BatchDimension[];
   params: Record<string, unknown>;
   stop_anlas: number;
+};
+
+export type PngSendCharacter = {
+  positive: string;
+  negative: string;
+};
+
+export type PngSendVibe = {
+  id: string;
+  name: string;
+  thumbnail: string;
+  strength: number;
+  information_extracted: number;
+  encoding: string;
+};
+
+export type PngSendResult = {
+  positive: string;
+  negative: string;
+  uc_preset: string;
+  characters: PngSendCharacter[];
+  params: Partial<GenerateParamsPayload>;
+  vibes: PngSendVibe[];
 };

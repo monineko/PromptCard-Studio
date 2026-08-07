@@ -79,7 +79,7 @@ function Shell() {
       <Shortcuts />
       <AmbientBackground />
       <FireworksCanvas />
-      <div className="flex h-full flex-col">
+      <div className="flex min-h-full flex-col">
         <TopBar />
         <AppSidebar />
         <main className={cn("relative z-10 min-h-0 flex-1 transition-[padding]", sidebarOpen && "pl-60")}>

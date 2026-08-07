@@ -118,3 +118,16 @@ class BatchStartIn(BaseModel):
     dimensions: list[BatchDimensionIn] = []
     params: dict = {}
     stop_anlas: int = 0
+
+
+class PngSendIn(BaseModel):
+    png: dict = {}
+    model: str = ""
+
+
+class VibeImportIn(BaseModel):
+    name: str = ""
+    encoding: str = ""
+    strength: float = 0.7
+    information_extracted: float | None = None
+    model: str = ""

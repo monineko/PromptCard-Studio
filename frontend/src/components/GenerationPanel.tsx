@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Dices,
+  Download,
   Image as ImageIcon,
   Loader2,
   RefreshCw,
@@ -257,12 +258,14 @@ function VibeCard({
   compatible,
   onUpdate,
   onRemove,
+  onSaveToLibrary,
 }: {
   vibe: GenerateVibe;
   index: number;
   compatible: boolean;
   onUpdate: (patch: Partial<GenerateVibe>) => void;
   onRemove: () => void;
+  onSaveToLibrary?: (vibe: GenerateVibe) => void;
 }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-2.5">
@@ -286,9 +289,14 @@ function VibeCard({
             {vibe.name}
           </div>
           <div className={cn("text-[10px]", compatible ? "text-[var(--muted)]" : "text-amber-400")}>
-            {compatible ? `Vibe ${index + 1}` : "当前模型无对应编码"}
+            {vibe.encoding ? "来自图片（暂存，未入库）" : compatible ? `Vibe ${index + 1}` : "当前模型无对应编码"}
           </div>
         </div>
+        {vibe.encoding && onSaveToLibrary && (
+          <IconBtn title="保存到 Vibe 库" onClick={() => onSaveToLibrary(vibe)}>
+            <Download size={12} />
+          </IconBtn>
+        )}
         <IconBtn danger title="移除该 Vibe" onClick={onRemove}>
           <Trash2 size={12} />
         </IconBtn>
@@ -468,6 +476,25 @@ export function GenerationPanel() {
       .then(setVibeItems)
       .catch((e) => addToast(`读取 Vibe 库失败: ${(e as Error).message}`, "err"));
   }, [addToast]);
+
+  const saveVibeToLibrary = useCallback(
+    async (vibe: GenerateVibe) => {
+      try {
+        const r = await api.vibeImport({
+          name: vibe.name,
+          encoding: vibe.encoding ?? "",
+          strength: vibe.strength,
+          information_extracted: vibe.information_extracted,
+          model: params.model,
+        });
+        addToast(`已保存到 Vibe 库：${r.name}`);
+        void reloadVibes();
+      } catch (e) {
+        addToast(`保存到 Vibe 库失败：${(e as Error).message}`, "err");
+      }
+    },
+    [addToast, params.model, reloadVibes]
+  );
 
   useEffect(() => {
     api
@@ -676,6 +703,7 @@ export function GenerationPanel() {
                   compatible={(vibeModels.get(v.id) ?? [params.model]).includes(params.model)}
                   onUpdate={(patch) => updateVibe(v.id, patch)}
                   onRemove={() => removeVibe(v.id)}
+                  onSaveToLibrary={saveVibeToLibrary}
                 />
               ))}
             </div>

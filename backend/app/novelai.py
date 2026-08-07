@@ -377,6 +377,25 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
     for v in params.vibes:
         if not isinstance(v, dict):
             continue
+        # 临时 Vibe（来自 PNG，未入库）：直接使用编码
+        encoding = str(v.get("encoding") or "").strip()
+        if encoding:
+            vibes.append(
+                {
+                    "encoding": encoding,
+                    "strength": max(
+                        0.0,
+                        min(
+                            1.0,
+                            float(v.get("strength") if v.get("strength") is not None else 0.7),
+                        ),
+                    ),
+                    "information_extracted": None
+                    if v.get("information_extracted") is None
+                    else float(v.get("information_extracted")),
+                }
+            )
+            continue
         resolved = resolve_vibe(
             str(v.get("id") or ""),
             model,

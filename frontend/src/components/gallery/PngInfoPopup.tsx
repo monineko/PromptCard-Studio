@@ -38,7 +38,7 @@ export function PngInfoPopup({
   error: string;
   onRead: () => void;
   onClose: () => void;
-  onSendToWorkspace: (prompt: string, uc: string) => void;
+  onSendToWorkspace: (info: PngInfoResult) => void;
 }) {
   const [pos, setPos] = useState(loadPos);
   const [showRaw, setShowRaw] = useState(false);
@@ -156,14 +156,14 @@ export function PngInfoPopup({
         )}
       </div>
 
-      {summary?.prompt && (
+      {info && !error && !!info.parsed && typeof info.parsed === "object" && (
         <div className="border-t border-[var(--border)] px-3 py-2">
           <button
-            onClick={() => onSendToWorkspace(summary.prompt ?? "", summary.uc ?? "")}
+            onClick={() => onSendToWorkspace(info)}
             className="flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white transition-opacity hover:opacity-85"
             style={{ background: "var(--accent)" }}
           >
-            <Send size={13} /> 发送到工作区（覆盖正面/负面）
+            <Send size={13} /> 发送到工作区（覆盖全部内容）
           </button>
         </div>
       )}

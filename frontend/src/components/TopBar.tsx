@@ -1,7 +1,6 @@
 import { motion } from "framer-motion";
 import { Moon, Palette, Sparkles, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "../lib";
 import { useStore } from "../store";
 import { useNavStore } from "../store/navStore";
@@ -12,26 +11,7 @@ export function TopBar() {
   const setTheme = useStore((s) => s.setTheme);
   const mode = settings?.theme.mode ?? "dark";
   const accent = settings?.theme.accent ?? "#8b5cf6";
-  const [hidden, setHidden] = useState(false);
-  const location = useLocation();
   const navigate = useNavigate();
-
-  // 向下滚动时顶部导航自动隐藏（图片库页面除外：需要随时返回分类页）
-  useEffect(() => {
-    let lastY = window.scrollY;
-    const onScroll = () => {
-      const y = window.scrollY;
-      if (location.pathname === "/library") {
-        setHidden(false);
-        lastY = y;
-        return;
-      }
-      setHidden(y > lastY && y > 80);
-      lastY = y;
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [location.pathname]);
 
   const links = [
     { to: "/", label: "提示词工作区" },
@@ -43,8 +23,6 @@ export function TopBar() {
   return (
     <motion.header
       initial={false}
-      animate={{ y: hidden ? -72 : 0 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
       className="glass sticky top-0 z-30 grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-x-0 border-t-0 px-3 py-2.5"
     >
       {/* 最左边：项目名与图标（点击回到提示词工作区） */}

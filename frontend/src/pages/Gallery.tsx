@@ -12,6 +12,7 @@ import {
   Plus,
   ThumbsUp,
   Undo2,
+  X,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,18 +26,21 @@ import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
 import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
+import { SendToWorkspaceModal } from "../components/gallery/SendToWorkspaceModal";
 import { ZoomableImage } from "../components/gallery/ZoomableImage";
 import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
 import { Button } from "../components/UI";
 import { useCardImagePicker } from "../store/cardImagePicker";
 import { useGalleryVisual } from "../store/galleryVisual";
+import { useGenerateStore } from "../store/generate";
 import { useNavStore } from "../store/navStore";
 import type {
   LibraryCategoryKey,
   LibraryImageItem,
   LibrarySummary,
   PngInfoResult,
+  PngSendResult,
   ReviewApplyResult,
 } from "../types";
 import type { SidebarGroup } from "../sidebarStore";
@@ -132,6 +136,7 @@ export function Gallery() {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [quickPickBusy, setQuickPickBusy] = useState(false);
   const [pngInfo, setPngInfo] = useState<PngInfoResult | null>(null);
+  const [sendPngInfo, setSendPngInfo] = useState<PngInfoResult | null>(null);
   const [pngLoading, setPngLoading] = useState(false);
   const [pngError, setPngError] = useState("");
   const [pngOpen, setPngOpen] = useState(false);
@@ -481,18 +486,34 @@ export function Gallery() {
     [pngLoading]
   );
 
-  const sendToWorkspace = useCallback(
-    (prompt: string, uc: string) => {
-      const ok = window.confirm(
-        "发送到工作区会用这张图的提示词覆盖当前正面/负面区域的全部内容，是否继续？"
+  const generateParams = useGenerateStore((s) => s.params);
+  const setParam = useGenerateStore((s) => s.setParam);
+  const setVibes = useGenerateStore((s) => s.setVibes);
+
+  const applyPngSend = useCallback(
+    (payload: PngSendResult) => {
+      overwriteZonesFromPng({
+        positive: payload.positive,
+        negative: payload.negative,
+        characters: payload.characters,
+      });
+      setParam(payload.params);
+      setVibes(
+        payload.vibes.map((v) => ({
+          id: v.id,
+          name: v.name,
+          thumbnail: v.thumbnail,
+          strength: v.strength,
+          information_extracted: v.information_extracted,
+        }))
       );
-      if (!ok) return;
-      overwriteZonesFromPng(prompt, uc);
+      setSendPngInfo(null);
       setLightboxIndex(null);
       setPngOpen(false);
+      addToast("已用图片完整覆盖工作区并恢复生成参数");
       navigate("/");
     },
-    [navigate, overwriteZonesFromPng]
+    [addToast, navigate, overwriteZonesFromPng, setParam, setVibes]
   );
 
   const handleReviewFinished = useCallback(
@@ -716,26 +737,28 @@ export function Gallery() {
   return (
     <div className="min-h-full animate-fade-in-up pb-10">
       {pendingCard && (
-        <div
-          className="pulse-pink flex items-center gap-2 border-b border-[#ffb6c1]/30 bg-[#ffb6c1]/10 px-4 py-2 text-xs"
-          style={{ color: "#ffb6c1" }}
-        >
-          <ImagePlus size={14} className="shrink-0" />
-          <span className="min-w-0 truncate">
-            正在为 <b>{pendingCard.category}：{pendingCard.name}</b>{" "}
-            选择演示图片 —— 点击图片即可选择
-          </span>
-          <button
-            onClick={() => {
-              cancelPick();
-              navigate("/");
-            }}
-            className="ml-auto shrink-0 rounded-md border border-[#ffb6c1]/60 bg-[#ffb6c1]/10 px-2.5 py-1 font-medium"
-            style={{ color: "#ffb6c1" }}
-          >
-            取消添加
-          </button>
-        </div>
+        createPortal(
+          <div className="fixed left-1/2 top-[16vh] z-[12000] -translate-x-1/2">
+          <div className="flex items-center gap-2.5 rounded-full border border-[#ffb6c1]/35 bg-[var(--panel)]/60 py-2 pl-4 pr-2 shadow-2xl backdrop-blur-md">
+            <ImagePlus size={15} className="shrink-0" style={{ color: "#ffb6c1" }} />
+            <span className="pulse-pink whitespace-nowrap text-xs" style={{ color: "#ffb6c1" }}>
+              正在为 <b>{pendingCard.category}：{pendingCard.name}</b>{" "}
+              选择演示图片 —— 点击图片即可选择
+            </span>
+            <button
+              onClick={() => {
+                cancelPick();
+                navigate("/");
+              }}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#ffb6c1]/50 text-[#ffb6c1] transition-colors hover:bg-[#ffb6c1]/15"
+              title="取消"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          </div>,
+          document.body
+        )
       )}
       <div className="glass sticky top-[52px] z-20 flex items-center gap-3 border-x-0 border-t-0 px-4 py-2">
         <button
@@ -856,9 +879,17 @@ export function Gallery() {
           error={pngError}
           onRead={() => handleReadPngInfo(currentItem.path)}
           onClose={() => setPngOpen(false)}
-          onSendToWorkspace={sendToWorkspace}
+          onSendToWorkspace={(info) => setSendPngInfo(info)}
         />
       )}
+
+      <SendToWorkspaceModal
+        open={!!sendPngInfo}
+        info={sendPngInfo}
+        model={generateParams.model}
+        onClose={() => setSendPngInfo(null)}
+        onConfirm={applyPngSend}
+      />
 
       {quickPick && (
         <QuickPickPopup

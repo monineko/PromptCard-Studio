@@ -143,7 +143,11 @@ interface AppState {
   undo: () => void;
   redo: () => void;
   copyZone: () => Promise<void>;
-  overwriteZonesFromPng: (prompt: string, uc: string) => void;
+  overwriteZonesFromPng: (payload: {
+    positive: string;
+    negative: string;
+    characters: { positive: string; negative: string }[];
+  }) => void;
   setNewCardContent: (content: string) => void;
 
   createCategory: (name: string) => Promise<boolean>;
@@ -509,21 +513,34 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
-    overwriteZonesFromPng(prompt, uc) {
+    overwriteZonesFromPng({ positive, negative, characters }) {
       commit((s) => {
-        const clear = (sections: Section[]) => sections.forEach((sec) => (sec.blocks = []));
+        s.positive.forEach((sec) => (sec.blocks = []));
+        s.negative.forEach((sec) => (sec.blocks = []));
         const put = (sections: Section[], text: string, preferName: string) => {
           const t = (text ?? "").trim();
           if (!t) return;
           const section = sections.find((x) => x.name === preferName) ?? sections[0];
           if (section) section.blocks.push({ id: uid(), type: "prompt", text: t });
         };
-        clear(s.positive);
-        clear(s.negative);
-        put(s.positive, prompt, WORKBENCH_NAME);
-        put(s.negative, uc, NEGATIVE_SECTION_NAME);
+        put(s.positive, positive, WORKBENCH_NAME);
+        put(s.negative, negative, NEGATIVE_SECTION_NAME);
+
+        // 角色：正面进正面区「角色」，负面进负面区「角色」（与生成面板逐角色对齐）
+        const roleSec =
+          s.positive.find((x) => x.name === "角色") ?? ensureSection(s.positive, "角色");
+        (characters || []).forEach((c) => {
+          const pos = (c.positive || "").trim();
+          if (pos) roleSec.blocks.push({ id: uid(), type: "prompt", text: pos });
+        });
+        const roleNeg = (characters || []).map((c) => (c.negative || "").trim()).filter(Boolean);
+        if (roleNeg.length) {
+          const roleNegSec =
+            s.negative.find((x) => x.name === "角色") ?? ensureSection(s.negative, "角色");
+          roleNeg.forEach((t) => roleNegSec.blocks.push({ id: uid(), type: "prompt", text: t }));
+        }
       });
-      get().addToast("已用图片提示词覆盖工作区（可用 Ctrl+Z 撤销）");
+      get().addToast("已用图片完整覆盖工作区（可用 Ctrl+Z 撤销）");
     },
 
     async createCategory(name) {

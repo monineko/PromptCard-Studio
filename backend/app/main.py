@@ -11,6 +11,7 @@ from . import cards as cards_service
 from . import batch as batch_service
 from . import backgrounds as backgrounds_service
 from . import novelai as novelai_service
+from . import png_send as png_send_service
 from . import library as library_service
 from . import vibes as vibes_service
 from . import workspace as workspace_service
@@ -28,6 +29,8 @@ from .schemas import (
     ExpandRequest,
     DeleteImagesIn,
     GenerateTokenIn,
+    PngSendIn,
+    VibeImportIn,
     ImportPathIn,
     MoveImagesIn,
     ReviewApplyIn,
@@ -277,6 +280,22 @@ def vibe_open_folder():
         raise _as_http(e)
 
 
+@app.post("/api/vibes/import")
+def vibe_import(body: VibeImportIn):
+    try:
+        return vibes_service.import_vibe_file(
+            body.encoding,
+            body.strength,
+            float(body.information_extracted)
+            if body.information_extracted is not None
+            else 0.7,
+            body.model,
+            body.name,
+        )
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
 @app.get("/api/generate/status")
 def generate_status():
     configured = novelai_service.is_configured()
@@ -375,6 +394,14 @@ def batch_end():
     try:
         return batch_service.end_batch()
     except Exception as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/generate/from-png")
+def generate_from_png(body: PngSendIn):
+    try:
+        return png_send_service.build_send_payload(body.png, body.model)
+    except ValueError as e:
         raise _as_http(e, 400)
 
 

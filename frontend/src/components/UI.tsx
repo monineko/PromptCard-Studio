@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useMotionValue, useSpring } from "framer-motion";
 import { X } from "lucide-react";
 import { useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn, categoryHue } from "../lib";
 import { useStore } from "../store";
 
@@ -101,18 +102,21 @@ export function Modal({
   title,
   children,
   wide,
+  zIndex,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
   children: ReactNode;
   wide?: boolean;
+  zIndex?: number;
 }) {
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          className="fixed inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          style={{ zIndex: zIndex ?? 50 }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -120,7 +124,7 @@ export function Modal({
         >
           <motion.div
             className={cn(
-              "glass w-full rounded-2xl p-5 shadow-2xl",
+              "glass max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-2xl p-5 shadow-2xl",
               wide ? "max-w-2xl" : "max-w-md"
             )}
             initial={{ scale: 0.86, y: 18, opacity: 0 }}
@@ -138,7 +142,8 @@ export function Modal({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
 

@@ -5,6 +5,7 @@ import type {
   BatchRun,
   BatchStartPayload,
   BatchStatusResponse,
+  PngSendResult,
   LibraryImages,
   LibrarySummary,
   MoveImagesResult,
@@ -168,6 +169,22 @@ export const api = {
       "/api/generate/batch/end",
       { method: "POST" }
     ),
+  pngSend: (png: unknown, model: string) =>
+    request<PngSendResult>("/api/generate/from-png", {
+      method: "POST",
+      body: JSON.stringify({ png, model }),
+    }),
+  vibeImport: (payload: {
+    name?: string;
+    encoding: string;
+    strength: number;
+    information_extracted?: number | null;
+    model: string;
+  }) =>
+    request<{ ok: boolean; id: string; name: string }>("/api/vibes/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 export function uid(): string {

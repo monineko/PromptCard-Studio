@@ -90,7 +90,7 @@ textarea {
 }
 
 .animate-fade-in-up {
-  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 /* ---------- 背景光斑缓慢浮动 ---------- */
