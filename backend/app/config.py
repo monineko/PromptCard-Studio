@@ -5,6 +5,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WILDCARDS_DIR = PROJECT_ROOT / "wildcards"
 LIBRARY_DIR = PROJECT_ROOT / "library"
 BACKGROUNDS_DIR = PROJECT_ROOT / "backgrounds"
+VIBES_DIR = PROJECT_ROOT / "vibes"
 CONFIG_FILE = PROJECT_ROOT / "config.json"
 WORKSPACE_FILE = PROJECT_ROOT / "workspace.json"
 
@@ -55,3 +56,4 @@ def ensure_dirs():
     WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
     LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
     BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
+    VIBES_DIR.mkdir(parents=True, exist_ok=True)

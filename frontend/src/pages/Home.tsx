@@ -1,5 +1,6 @@
 import { CardPanel } from "../components/CardPanel";
 import { GenerationPanel } from "../components/GenerationPanel";
+import { VibePanel } from "../components/VibePanel";
 import { Workspace } from "../components/Workspace";
 
 export function Home() {
@@ -20,7 +21,18 @@ export function Home() {
         <CardPanel />
       </section>
 
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">添加 Vibe</h2>
+          <span className="text-xs text-[var(--muted)]">
+            点击胶囊添加；每个 Vibe 可独立调节强度与信息提取度
+          </span>
+        </div>
+        <VibePanel />
+      </section>
+
       <section className="glass rounded-2xl p-4">
+        <h2 className="mb-3 text-base font-semibold">参数设置</h2>
         <GenerationPanel />
       </section>
     </div>

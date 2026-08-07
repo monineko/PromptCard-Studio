@@ -11,6 +11,7 @@ from . import cards as cards_service
 from . import backgrounds as backgrounds_service
 from . import novelai as novelai_service
 from . import library as library_service
+from . import vibes as vibes_service
 from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
@@ -244,6 +245,11 @@ def put_settings(body: dict):
 @app.get("/api/generate/meta")
 def generate_meta():
     return novelai_service.meta()
+
+
+@app.get("/api/vibes")
+def list_vibes():
+    return vibes_service.list_vibes()
 
 
 @app.get("/api/generate/status")

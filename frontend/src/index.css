@@ -36,6 +36,20 @@ body {
   --input: rgba(0, 0, 0, 0.04);
 }
 
+/* 原生下拉菜单适配主题（夜间模式白底白字修复） */
+select {
+  color: var(--text);
+}
+
+:root[data-mode="dark"] select {
+  color-scheme: dark;
+}
+
+select option {
+  background-color: var(--panel-solid);
+  color: var(--text);
+}
+
 ::selection {
   background: color-mix(in srgb, var(--accent, #8b5cf6) 35%, transparent);
 }

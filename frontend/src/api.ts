@@ -10,6 +10,7 @@ import type {
   Section,
   Settings,
   Text2ImageResult,
+  VibeItem,
 } from "./types";
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
@@ -130,6 +131,7 @@ export const api = {
   openBackgroundsFolder: () =>
     request<{ ok: boolean; path: string }>("/api/backgrounds/open-folder", { method: "POST" }),
   generateMeta: () => request<GenerateMeta>("/api/generate/meta"),
+  vibes: () => request<VibeItem[]>("/api/vibes"),
   generateStatus: () => request<GenerateStatus>("/api/generate/status"),
   generateAnlas: () => request<{ anlas: number | null; error: string | null }>("/api/generate/anlas"),
   saveGenerateToken: (token: string) =>

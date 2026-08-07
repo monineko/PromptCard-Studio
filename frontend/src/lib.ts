@@ -58,3 +58,22 @@ export function splitWorkspaceRole(sections: Section[]): { base: string; role: s
   }
   return { base: base.join("\n"), role: role.join("\n") };
 }
+
+/**
+ * 提取工作区"角色"分区的逐块内容：每张卡片（或提示词块）作为一个独立角色单元，
+ * 与 ANR 的 add character 语义一致 —— 一个卡片对应一个角色。
+ */
+export function extractRoleUnits(sections: Section[]): string[] {
+  const role = sections.find((s) => s.name === "角色");
+  if (!role) return [];
+  return role.blocks
+    .map((b) =>
+      b.type === "card"
+        ? `<${b.category}:${b.name}>`
+        : b.weight && b.weight !== 1
+          ? `${b.weight}::${b.text}::`
+          : b.text
+    )
+    .map((t) => t.trim())
+    .filter(Boolean);
+}

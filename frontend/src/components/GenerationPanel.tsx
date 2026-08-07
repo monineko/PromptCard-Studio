@@ -4,50 +4,30 @@ import {
   ChevronDown,
   ChevronRight,
   Dices,
-  ExternalLink,
   Image as ImageIcon,
   Loader2,
-  Plus,
   RefreshCw,
   Settings2,
+  Sparkles,
   Trash2,
   Wand2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { api, uid } from "../api";
-import { cn, splitWorkspaceRole } from "../lib";
+import { api } from "../api";
+import { cn, extractRoleUnits, splitWorkspaceRole } from "../lib";
 import { useStore } from "../store";
+import { useGenerateStore } from "../store/generate";
 import type {
-  GenerateCharacter,
   GenerateMeta,
   GenerateParamsPayload,
+  GenerateResolution,
   GenerateStatus,
-  Text2ImageResult,
+  GenerateVibe,
+  VibeItem,
 } from "../types";
 import { Button, IconBtn } from "./UI";
-
-const DEFAULT_PARAMS: GenerateParamsPayload = {
-  model: "nai-diffusion-4-5-full",
-  width: 832,
-  height: 1216,
-  steps: 23,
-  scale: 5,
-  cfg_rescale: 0,
-  sampler: "k_euler_ancestral",
-  noise_schedule: "karras",
-  seed: -1,
-  uc_preset: "Heavy",
-  quality_toggle: true,
-  variety: true,
-  sm: false,
-  sm_dyn: false,
-  decrisp: false,
-  legacy_uc: false,
-  furry_mode: false,
-};
-
-const CHAR_STORAGE_KEY = "npm_generate_characters";
 
 const inputCls =
   "w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-[var(--accent)]";
@@ -181,21 +161,58 @@ function SliderField({
   );
 }
 
-function CharacterCard({
-  character,
+function VibeSlider({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const commit = (v: number) => {
+    if (Number.isNaN(v)) return;
+    onChange(Math.min(1, Math.max(0.01, Math.round(v * 100) / 100)));
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-14 shrink-0 text-[10px] text-[var(--muted)]">{label}</span>
+      <input
+        type="range"
+        min={0.01}
+        max={1}
+        step={0.01}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="min-w-0 flex-1 accent-[var(--accent)]"
+      />
+      <input
+        type="number"
+        min={0.01}
+        max={1}
+        step={0.01}
+        value={value}
+        onChange={(e) => commit(Number(e.target.value))}
+        className="w-12 rounded-md border border-[var(--border)] bg-[var(--input)] px-1 py-0.5 text-right text-[11px] outline-none focus:border-[var(--accent)]"
+      />
+    </div>
+  );
+}
+
+function CharacterPreview({
   index,
-  onUpdate,
-  onRemove,
+  positive,
+  negative,
   defaultOpen,
 }: {
-  character: GenerateCharacter;
   index: number;
-  onUpdate: (patch: Partial<GenerateCharacter>) => void;
-  onRemove: () => void;
+  positive: string;
+  negative: string;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(!!defaultOpen);
   const [tab, setTab] = useState<"positive" | "negative">("positive");
+  const text = tab === "positive" ? positive : negative;
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/40">
       <div
@@ -203,38 +220,205 @@ function CharacterCard({
         onClick={() => setOpen((v) => !v)}
         title={open ? "收起" : "展开"}
       >
-        {open ? <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" /> : <ChevronRight size={14} className="shrink-0 text-[var(--muted)]" />}
+        {open ? (
+          <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
+        ) : (
+          <ChevronRight size={14} className="shrink-0 text-[var(--muted)]" />
+        )}
         <span className="text-xs font-medium">角色 {index + 1}</span>
         <span className="ml-auto truncate text-[10px] text-[var(--muted)]">
-          正 {character.positive.length} 字 · 负 {character.negative.length} 字
+          正 {positive.length} 字 · 负 {negative.length} 字
         </span>
-        <IconBtn
-          danger
-          title="删除该角色"
-          className="h-6 w-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-        >
-          <Trash2 size={12} />
-        </IconBtn>
       </div>
       {open && (
         <div className="space-y-2 px-2.5 pb-2.5">
-          <TabSwitch value={tab} onChange={setTab} options={[{ key: "positive", label: "正向" }, { key: "negative", label: "负面" }]} />
-          <textarea
-            value={tab === "positive" ? character.positive : character.negative}
-            onChange={(e) => onUpdate({ [tab]: e.target.value } as Partial<GenerateCharacter>)}
-            rows={4}
-            placeholder={tab === "positive" ? "角色正面提示词，如 <角色:伊吹ibuki>" : "角色负面提示词（可留空）"}
-            className="scroll-thin w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 text-xs leading-relaxed outline-none focus:border-[var(--accent)]"
+          <TabSwitch
+            value={tab}
+            onChange={setTab}
+            options={[
+              { key: "positive", label: "正向" },
+              { key: "negative", label: "负面" },
+            ]}
           />
-          <p className="text-[10px] text-[var(--muted)]">支持 &lt;分类:名称&gt; 引用，生成时自动展开</p>
+          <div className="scroll-thin max-h-36 overflow-y-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 text-xs leading-relaxed text-[var(--text)]">
+            {text.trim() || <span className="text-[var(--muted)]">（空）</span>}
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function VibeCard({
+  vibe,
+  index,
+  compatible,
+  onUpdate,
+  onRemove,
+}: {
+  vibe: GenerateVibe;
+  index: number;
+  compatible: boolean;
+  onUpdate: (patch: Partial<GenerateVibe>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-2.5">
+      <div className="mb-2 flex items-center gap-2">
+        {vibe.thumbnail ? (
+          <img
+            src={vibe.thumbnail}
+            alt={vibe.name}
+            className="h-10 w-10 shrink-0 rounded-lg border border-[var(--border)] object-cover"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+            }}
+          />
+        ) : (
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--hover)]">
+            <Sparkles size={16} className="text-[var(--muted)]" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium" title={vibe.name}>
+            {vibe.name}
+          </div>
+          <div className={cn("text-[10px]", compatible ? "text-[var(--muted)]" : "text-amber-400")}>
+            {compatible ? `Vibe ${index + 1}` : "当前模型无对应编码"}
+          </div>
+        </div>
+        <IconBtn danger title="移除该 Vibe" onClick={onRemove}>
+          <Trash2 size={12} />
+        </IconBtn>
+      </div>
+      <div className="space-y-1.5">
+        <VibeSlider label="强度" value={vibe.strength} onChange={(v) => onUpdate({ strength: v })} />
+        <VibeSlider
+          label="信息提取度"
+          value={vibe.information_extracted}
+          onChange={(v) => onUpdate({ information_extracted: v })}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ResolutionSelector({
+  params,
+  resolutions,
+  onChange,
+}: {
+  params: GenerateParamsPayload;
+  resolutions: GenerateResolution[];
+  onChange: (patch: Partial<GenerateParamsPayload>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const current = resolutions.find((r) => r.width === params.width && r.height === params.height);
+  const label = current?.label ?? "Custom";
+
+  const groups = useMemo(() => {
+    const order = ["NORMAL", "LARGE", "WALLPAPER", "SMALL"];
+    const map = new Map<string, GenerateResolution[]>();
+    for (const r of resolutions) {
+      const arr = map.get(r.category) ?? [];
+      arr.push(r);
+      map.set(r.category, arr);
+    }
+    return order.map((c) => ({ category: c, items: map.get(c) ?? [] }));
+  }, [resolutions]);
+
+  const show = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPos({ top: rect.bottom + 6, left: rect.left });
+    setOpen(true);
+  };
+  const hide = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setOpen(false), 180);
+  };
+  const keep = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  };
+  const pick = (r: GenerateResolution) => {
+    onChange({ width: r.width, height: r.height });
+    setOpen(false);
+  };
+
+  return (
+    <div ref={btnRef} className="relative" onMouseEnter={show} onMouseLeave={hide}>
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-[var(--accent)]"
+        title="悬停展开分辨率预设"
+      >
+        <span>{label}</span>
+        <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            className="fixed z-[120] grid grid-cols-5 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--panel-solid)] p-2 shadow-2xl"
+            style={{ top: pos.top, left: pos.left }}
+            onMouseEnter={keep}
+            onMouseLeave={hide}
+          >
+            {groups.map((g) => (
+              <div key={g.category} className="flex min-w-[96px] flex-col gap-0.5">
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold tracking-wider text-[var(--muted)]">
+                  {g.category}
+                </div>
+                {g.items.map((r) => (
+                  <button
+                    key={`${g.category}:${r.label}`}
+                    type="button"
+                    onClick={() => pick(r)}
+                    className={cn(
+                      "rounded-lg px-2 py-1.5 text-left transition-colors",
+                      current?.width === r.width && current?.height === r.height
+                        ? "bg-[var(--accent)]/15 text-[var(--accent)]"
+                        : "text-[var(--text)] hover:bg-[var(--hover)]"
+                    )}
+                  >
+                    <span className="block text-xs leading-tight">{r.label}</span>
+                    <span className="block text-[10px] leading-tight text-[var(--muted)]">
+                      {r.width} × {r.height}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))}
+            <div className="flex min-w-[96px] flex-col gap-0.5">
+              <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold tracking-wider text-[var(--muted)]">
+                CUSTOM
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+                  !current ? "bg-[var(--accent)]/15 text-[var(--accent)]" : "text-[var(--text)] hover:bg-[var(--hover)]"
+                )}
+              >
+                Custom
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+}
+
+function clampDim(v: number, fallback: number): number {
+  if (Number.isNaN(v) || v <= 0) return fallback;
+  return Math.min(4096, Math.max(64, Math.round(v)));
 }
 
 export function GenerationPanel() {
@@ -243,78 +427,53 @@ export function GenerationPanel() {
   const negative = useStore((s) => s.negative);
   const addToast = useStore((s) => s.addToast);
 
+  const params = useGenerateStore((s) => s.params);
+  const setParam = useGenerateStore((s) => s.setParam);
+  const vibes = useGenerateStore((s) => s.vibes);
+  const updateVibe = useGenerateStore((s) => s.updateVibe);
+  const removeVibe = useGenerateStore((s) => s.removeVibe);
+  const result = useGenerateStore((s) => s.result);
+  const setResult = useGenerateStore((s) => s.setResult);
+
   const [meta, setMeta] = useState<GenerateMeta | null>(null);
   const [status, setStatus] = useState<GenerateStatus | null>(null);
-  const [params, setParams] = useState<GenerateParamsPayload>(DEFAULT_PARAMS);
+  const [vibeItems, setVibeItems] = useState<VibeItem[]>([]);
   const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<Text2ImageResult | null>(null);
-  const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [baseTab, setBaseTab] = useState<"positive" | "negative">("positive");
 
   const posSplit = useMemo(() => splitWorkspaceRole(positive), [positive]);
   const negSplit = useMemo(() => splitWorkspaceRole(negative), [negative]);
 
-  const [characters, setCharacters] = useState<GenerateCharacter[]>(() => {
-    try {
-      const saved = localStorage.getItem(CHAR_STORAGE_KEY);
-      if (saved) {
-        const arr = JSON.parse(saved);
-        if (Array.isArray(arr) && arr.length)
-          return arr.map((c: Partial<GenerateCharacter>, i: number) => ({
-            id: uid(),
-            name: `角色${i + 1}`,
-            positive: c.positive || "",
-            negative: c.negative || "",
-            center: c.center || { x: 0.5, y: 0.5 },
-          }));
-      }
-    } catch {
-      /* ignore */
-    }
-    return [];
-  });
-
-  const charactersTouched = useRef(false);
-  const autoCharId = useRef<string | null>(null);
-  useEffect(() => {
-    if (charactersTouched.current) return;
-    const rolePos = posSplit.role.trim();
-    const roleNeg = negSplit.role.trim();
-    setCharacters((prev) => {
-      // 已有用户创建/本地保存的角色 → 不干预
-      if (prev.length > 0 && !prev.some((c) => c.id === autoCharId.current)) return prev;
-      if (prev.length === 0) {
-        if (!rolePos && !roleNeg) return prev; // 工作区尚未加载
-        const id = uid();
-        autoCharId.current = id;
-        return [{ id, name: "角色1", positive: rolePos, negative: roleNeg, center: { x: 0.5, y: 0.5 } }];
-      }
-      // 自动承接的角色实时跟随工作区"角色"分区
-      if (prev.length === 1 && prev[0].id === autoCharId.current) {
-        return [{ ...prev[0], positive: rolePos, negative: roleNeg }];
-      }
-      return prev;
-    });
-  }, [posSplit.role, negSplit.role]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        CHAR_STORAGE_KEY,
-        JSON.stringify(characters.map((c) => ({ positive: c.positive, negative: c.negative, center: c.center })))
-      );
-    } catch {
-      /* ignore */
-    }
-  }, [characters]);
+  // 角色区 = 工作区「角色」分区逐卡片自动对齐：1 卡片 → 角色1；多卡片自动扩展
+  const rolePositive = useMemo(() => extractRoleUnits(positive), [positive]);
+  const roleNegative = useMemo(() => extractRoleUnits(negative), [negative]);
+  const characters = useMemo(
+    () =>
+      rolePositive.map((pos, i) => ({
+        positive: pos,
+        negative: roleNegative[i] || "",
+        center: { x: 0.5, y: 0.5 },
+      })),
+    [rolePositive, roleNegative]
+  );
 
   useEffect(() => {
     api
       .generateMeta()
       .then(setMeta)
       .catch((e) => addToast(`读取参数表失败: ${(e as Error).message}`, "err"));
+    api
+      .vibes()
+      .then(setVibeItems)
+      .catch((e) => addToast(`读取 Vibe 库失败: ${(e as Error).message}`, "err"));
   }, [addToast]);
+
+  const vibeModels = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const it of vibeItems) map.set(it.id, it.models);
+    return map;
+  }, [vibeItems]);
 
   const refreshStatus = useCallback(async () => {
     setChecking(true);
@@ -333,42 +492,24 @@ export function GenerationPanel() {
 
   const rules = meta ? meta.model_rules[params.model] : null;
 
-  const setParam = (patch: Partial<GenerateParamsPayload>) => {
-    setParams((prev) => {
-      const next = { ...prev, ...patch };
-      if (patch.model && meta) {
-        const r = meta.model_rules[patch.model];
-        if (r) {
-          if (!r.samplers.includes(next.sampler))
-            next.sampler = r.samplers.includes("k_euler_ancestral") ? "k_euler_ancestral" : r.samplers[0];
-          if (!r.noise_schedules.includes(next.noise_schedule))
-            next.noise_schedule = r.noise_schedules.includes("karras") ? "karras" : r.noise_schedules[0];
-          if (!r.uc_presets.includes(next.uc_preset))
-            next.uc_preset = r.uc_presets.includes("Heavy") ? "Heavy" : r.uc_presets[0];
-        }
+  const setParamSafe = (patch: Partial<GenerateParamsPayload>) => {
+    const next = { ...params, ...patch };
+    if (patch.model && meta) {
+      const r = meta.model_rules[patch.model];
+      if (r) {
+        if (!r.samplers.includes(next.sampler))
+          next.sampler = r.samplers.includes("k_euler_ancestral") ? "k_euler_ancestral" : r.samplers[0];
+        if (!r.noise_schedules.includes(next.noise_schedule))
+          next.noise_schedule = r.noise_schedules.includes("karras") ? "karras" : r.noise_schedules[0];
+        if (!r.uc_presets.includes(next.uc_preset))
+          next.uc_preset = r.uc_presets.includes("Heavy") ? "Heavy" : r.uc_presets[0];
       }
-      return next;
-    });
+    }
+    setParam(next);
   };
 
   const currentRes = meta?.resolutions.find((r) => r.width === params.width && r.height === params.height);
   const free = !!meta && !!currentRes?.free && params.steps <= meta.free.max_steps;
-
-  const addCharacter = () => {
-    charactersTouched.current = true;
-    setCharacters((prev) => [
-      ...prev,
-      { id: uid(), name: `角色${prev.length + 1}`, positive: "", negative: "", center: { x: 0.5, y: 0.5 } },
-    ]);
-  };
-  const updateCharacter = (id: string, patch: Partial<GenerateCharacter>) => {
-    charactersTouched.current = true;
-    setCharacters((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-  };
-  const removeCharacter = (id: string) => {
-    charactersTouched.current = true;
-    setCharacters((prev) => prev.filter((c) => c.id !== id));
-  };
 
   const generate = async () => {
     if (!status?.configured) {
@@ -381,21 +522,23 @@ export function GenerationPanel() {
       return;
     }
     setGenerating(true);
-    setError("");
     setResult(null);
     try {
       const payload = {
         ...params,
-        characters: characters.map((c) => ({ positive: c.positive, negative: c.negative, center: c.center })),
+        characters,
+        vibes: vibes.map((v) => ({
+          id: v.id,
+          strength: v.strength,
+          information_extracted: v.information_extracted,
+        })),
       };
       const r = await api.text2image(posSplit.base, negSplit.base, payload);
       setResult(r);
       addToast("生成完成，已保存到图库（未评分）");
       void refreshStatus();
     } catch (e) {
-      const msg = (e as Error).message;
-      setError(msg);
-      addToast(`生成失败: ${msg}`, "err");
+      addToast(`生成失败: ${(e as Error).message}`, "err");
     } finally {
       setGenerating(false);
     }
@@ -410,7 +553,7 @@ export function GenerationPanel() {
           <select
             className={inputCls}
             value={params.model}
-            onChange={(e) => setParam({ model: e.target.value })}
+            onChange={(e) => setParamSafe({ model: e.target.value })}
           >
             {meta?.models.map((m) => (
               <option key={m} value={m}>
@@ -442,31 +585,27 @@ export function GenerationPanel() {
           </pre>
         </div>
 
-        {/* 角色提示词区域 */}
+        {/* 角色提示词区域（只读预览，自动对齐工作区卡片） */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/40">
           <div className="flex items-center justify-between gap-2 px-2.5 py-2">
             <span className="text-xs font-medium">
               角色提示词
               <span className="ml-1.5 text-[10px] font-normal text-[var(--muted)]">{characters.length} 个</span>
             </span>
-            <Button size="sm" variant="ghost" onClick={addCharacter}>
-              <Plus size={13} /> 添加角色
-            </Button>
           </div>
           {characters.length === 0 ? (
             <p className="px-2.5 pb-2.5 text-[10px] leading-relaxed text-[var(--muted)]">
-              未设置角色；添加后，角色词会与基础提示词分离，生成时放入角色的 char_captions。
+              未设置角色；在工作区「角色」分区添加卡片后，会自动按卡片数生成角色 1、角色 2…
             </p>
           ) : (
             <div className="space-y-2 px-2.5 pb-2.5">
               {characters.map((c, i) => (
-                <CharacterCard
-                  key={c.id}
-                  character={c}
+                <CharacterPreview
+                  key={i}
                   index={i}
+                  positive={c.positive}
+                  negative={c.negative}
                   defaultOpen={i === 0}
-                  onUpdate={(patch) => updateCharacter(c.id, patch)}
-                  onRemove={() => removeCharacter(c.id)}
                 />
               ))}
             </div>
@@ -482,7 +621,7 @@ export function GenerationPanel() {
             min={1}
             max={50}
             step={1}
-            onChange={(v) => setParam({ steps: v })}
+            onChange={(v) => setParamSafe({ steps: v })}
             hint={`≤ ${meta?.free.max_steps ?? 28} 步免费`}
           />
           <SliderField
@@ -491,7 +630,7 @@ export function GenerationPanel() {
             min={0}
             max={10}
             step={0.1}
-            onChange={(v) => setParam({ scale: v })}
+            onChange={(v) => setParamSafe({ scale: v })}
           />
           <SliderField
             label="Prompt Guidance Rescale"
@@ -499,8 +638,37 @@ export function GenerationPanel() {
             min={0}
             max={1}
             step={0.02}
-            onChange={(v) => setParam({ cfg_rescale: v })}
+            onChange={(v) => setParamSafe({ cfg_rescale: v })}
           />
+        </div>
+
+        {/* Vibe 参考 */}
+        <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-[var(--muted)]">
+              Vibe 参考
+              <span className="ml-1.5 font-normal text-[var(--muted)]">{vibes.length} 个</span>
+            </span>
+            <span className="text-[10px] text-[var(--muted)]">从下方 Vibe 库添加</span>
+          </div>
+          {vibes.length === 0 ? (
+            <p className="text-[10px] leading-relaxed text-[var(--muted)]">
+              未添加 Vibe；在上方「Vibe 库」点击胶囊即可加入，每个可独立调节强度与信息提取度。
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {vibes.map((v, i) => (
+                <VibeCard
+                  key={v.id}
+                  vibe={v}
+                  index={i}
+                  compatible={(vibeModels.get(v.id) ?? [params.model]).includes(params.model)}
+                  onUpdate={(patch) => updateVibe(v.id, patch)}
+                  onRemove={() => removeVibe(v.id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 更多参数 */}
@@ -518,24 +686,46 @@ export function GenerationPanel() {
             )}
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="分辨率">
+            <div className="col-span-2">
+              <span className="mb-1 block text-xs font-medium text-[var(--muted)]">分辨率</span>
+              <ResolutionSelector params={params} resolutions={meta?.resolutions ?? []} onChange={setParamSafe} />
+              <div className="mt-1.5 flex items-center justify-center gap-1">
+                <input
+                  type="number"
+                  min={64}
+                  max={4096}
+                  value={params.width}
+                  onBlur={(e) => {
+                    const v = clampDim(Number(e.target.value), 832);
+                    if (v !== params.width) setParamSafe({ width: v });
+                  }}
+                  onChange={(e) => setParamSafe({ width: Number(e.target.value) || 0 })}
+                  className="w-20 rounded-md border border-[var(--border)] bg-[var(--input)] px-1.5 py-1 text-center text-xs outline-none focus:border-[var(--accent)]"
+                  title="自定义宽度（64 的倍数，自动保存）"
+                />
+                <span className="text-xs text-[var(--muted)]">×</span>
+                <input
+                  type="number"
+                  min={64}
+                  max={4096}
+                  value={params.height}
+                  onBlur={(e) => {
+                    const v = clampDim(Number(e.target.value), 1216);
+                    if (v !== params.height) setParamSafe({ height: v });
+                  }}
+                  onChange={(e) => setParamSafe({ height: Number(e.target.value) || 0 })}
+                  className="w-20 rounded-md border border-[var(--border)] bg-[var(--input)] px-1.5 py-1 text-center text-xs outline-none focus:border-[var(--accent)]"
+                  title="自定义高度（64 的倍数，自动保存）"
+                />
+              </div>
+              <p className="mt-0.5 text-[10px] text-[var(--muted)]">直接修改数字即切换到 Custom</p>
+            </div>
+            <Field label="采样器">
               <select
                 className={inputCls}
-                value={`${params.width}x${params.height}`}
-                onChange={(e) => {
-                  const r = meta?.resolutions.find((x) => x.label === e.target.value);
-                  if (r) setParam({ width: r.width, height: r.height });
-                }}
+                value={params.sampler}
+                onChange={(e) => setParamSafe({ sampler: e.target.value })}
               >
-                {meta?.resolutions.map((r) => (
-                  <option key={r.label} value={r.label}>
-                    {r.label} · {r.free ? "免费" : "点数"}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="采样器">
-              <select className={inputCls} value={params.sampler} onChange={(e) => setParam({ sampler: e.target.value })}>
                 {rules?.samplers.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -547,7 +737,7 @@ export function GenerationPanel() {
               <select
                 className={inputCls}
                 value={params.noise_schedule}
-                onChange={(e) => setParam({ noise_schedule: e.target.value })}
+                onChange={(e) => setParamSafe({ noise_schedule: e.target.value })}
               >
                 {rules?.noise_schedules.map((n) => (
                   <option key={n} value={n}>
@@ -557,7 +747,11 @@ export function GenerationPanel() {
               </select>
             </Field>
             <Field label="负面预设 UC">
-              <select className={inputCls} value={params.uc_preset} onChange={(e) => setParam({ uc_preset: e.target.value })}>
+              <select
+                className={inputCls}
+                value={params.uc_preset}
+                onChange={(e) => setParamSafe({ uc_preset: e.target.value })}
+              >
                 {rules?.uc_presets.map((u) => (
                   <option key={u} value={u}>
                     {u}
@@ -571,31 +765,36 @@ export function GenerationPanel() {
                   type="number"
                   className={inputCls}
                   value={params.seed}
-                  onChange={(e) => setParam({ seed: Number(e.target.value) })}
+                  onChange={(e) => setParamSafe({ seed: Number(e.target.value) })}
                 />
-                <Button size="sm" variant="ghost" title="随机种子" onClick={() => setParam({ seed: -1 })}>
+                <Button size="sm" variant="ghost" title="随机种子" onClick={() => setParamSafe({ seed: -1 })}>
                   <Dices size={14} />
                 </Button>
               </div>
             </Field>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <Toggle label="质量词" checked={params.quality_toggle} onChange={(v) => setParam({ quality_toggle: v })} />
-            <Toggle label="Variety+" checked={params.variety} onChange={(v) => setParam({ variety: v })} />
+            <Toggle label="质量词" checked={params.quality_toggle} onChange={(v) => setParamSafe({ quality_toggle: v })} />
+            <Toggle label="Variety+" checked={params.variety} onChange={(v) => setParamSafe({ variety: v })} />
             {rules?.features.furry && (
-              <Toggle label="Furry" checked={params.furry_mode} onChange={(v) => setParam({ furry_mode: v })} />
+              <Toggle label="Furry" checked={params.furry_mode} onChange={(v) => setParamSafe({ furry_mode: v })} />
             )}
             {rules?.features.decrisp && (
-              <Toggle label="Decrisp" checked={params.decrisp} onChange={(v) => setParam({ decrisp: v })} />
+              <Toggle label="Decrisp" checked={params.decrisp} onChange={(v) => setParamSafe({ decrisp: v })} />
             )}
             {rules?.features.sm && (
               <>
-                <Toggle label="SMEA" checked={params.sm} onChange={(v) => setParam({ sm: v })} />
-                <Toggle label="DYN" checked={params.sm_dyn} disabled={!params.sm} onChange={(v) => setParam({ sm_dyn: v })} />
+                <Toggle label="SMEA" checked={params.sm} onChange={(v) => setParamSafe({ sm: v })} />
+                <Toggle
+                  label="DYN"
+                  checked={params.sm_dyn}
+                  disabled={!params.sm}
+                  onChange={(v) => setParamSafe({ sm_dyn: v })}
+                />
               </>
             )}
             {rules?.features.legacy_uc && (
-              <Toggle label="Legacy UC" checked={params.legacy_uc} onChange={(v) => setParam({ legacy_uc: v })} />
+              <Toggle label="Legacy UC" checked={params.legacy_uc} onChange={(v) => setParamSafe({ legacy_uc: v })} />
             )}
           </div>
         </div>
@@ -644,7 +843,12 @@ export function GenerationPanel() {
         </div>
 
         {/* 生成按钮 */}
-        <Button size="md" className="w-full py-3 text-base" onClick={() => void generate()} disabled={generating || !status?.configured || !posSplit.base.trim()}>
+        <Button
+          size="md"
+          className="w-full py-3 text-base"
+          onClick={() => void generate()}
+          disabled={generating || !status?.configured || !posSplit.base.trim()}
+        >
           <Wand2 size={17} />
           生成图片
           <span className={cn("text-xs", free ? "opacity-80" : "text-amber-300")}>
@@ -655,28 +859,6 @@ export function GenerationPanel() {
           <p className="text-center text-[11px] text-[var(--muted)]">
             尚未配置 Token，点击上方"配置 Token"前往设置
           </p>
-        )}
-
-        {error && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 text-xs leading-relaxed text-red-400">
-            {error}
-          </div>
-        )}
-
-        {result && (
-          <div className="rounded-xl border border-green-500/25 bg-green-500/5 p-3 text-xs">
-            <div className="mb-1 font-medium text-green-400">生成成功</div>
-            <div className="truncate text-[var(--muted)]" title={result.name}>
-              {result.name}
-            </div>
-            <div className="mt-0.5 text-[var(--muted)]">
-              {result.width}×{result.height} · 种子 {result.seed} · 耗时 {(result.elapsed_ms / 1000).toFixed(1)}s
-              {result.anlas !== null && result.anlas !== undefined && <span> · 剩余点数 {result.anlas}</span>}
-            </div>
-            <button onClick={() => navigate("/library")} className="mt-1.5 flex items-center gap-1 text-[var(--accent)] hover:underline">
-              <ExternalLink size={11} /> 在图库（未评分）中查看
-            </button>
-          </div>
         )}
       </div>
     </div>

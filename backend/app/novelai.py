@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .config import load_settings, save_settings
 from .library import _library_root
+from .vibes import resolve_vibe
 
 API_BASE = "https://image.novelai.net"
 GENERATE_URL = f"{API_BASE}/ai/generate-image"
@@ -51,20 +52,20 @@ NOISE_SCHEDULES = ["native", "karras", "exponential", "polyexponential"]
 UC_PRESETS = ["Heavy", "Light", "Furry Focus", "Human Focus", "None"]
 
 RESOLUTIONS = [
-    {"label": "832x1216", "width": 832, "height": 1216, "free": True},
-    {"label": "1216x832", "width": 1216, "height": 832, "free": False},
-    {"label": "1024x1024", "width": 1024, "height": 1024, "free": False},
-    {"label": "1024x1536", "width": 1024, "height": 1536, "free": False},
-    {"label": "1536x1024", "width": 1536, "height": 1024, "free": False},
-    {"label": "1472x1472", "width": 1472, "height": 1472, "free": False},
-    {"label": "1088x1920", "width": 1088, "height": 1920, "free": False},
-    {"label": "1920x1088", "width": 1920, "height": 1088, "free": False},
-    {"label": "512x768", "width": 512, "height": 768, "free": True},
-    {"label": "768x768", "width": 768, "height": 768, "free": True},
-    {"label": "640x640", "width": 640, "height": 640, "free": True},
+    {"label": "Portrait", "category": "NORMAL", "width": 832, "height": 1216, "free": True},
+    {"label": "Landscape", "category": "NORMAL", "width": 1216, "height": 832, "free": False},
+    {"label": "Square", "category": "NORMAL", "width": 1024, "height": 1024, "free": False},
+    {"label": "Portrait", "category": "LARGE", "width": 1024, "height": 1536, "free": False},
+    {"label": "Landscape", "category": "LARGE", "width": 1536, "height": 1024, "free": False},
+    {"label": "Normal Landscape", "category": "LARGE", "width": 1472, "height": 1472, "free": False},
+    {"label": "Portrait", "category": "WALLPAPER", "width": 1088, "height": 1920, "free": False},
+    {"label": "Landscape", "category": "WALLPAPER", "width": 1920, "height": 1088, "free": False},
+    {"label": "Portrait", "category": "SMALL", "width": 512, "height": 768, "free": True},
+    {"label": "Landscape", "category": "SMALL", "width": 768, "height": 512, "free": True},
+    {"label": "Square", "category": "SMALL", "width": 640, "height": 640, "free": True},
 ]
 
-FREE_RESOLUTIONS = [r["label"] for r in RESOLUTIONS if r["free"]]
+FREE_RESOLUTIONS = [f"{r['category']}:{r['label']}" for r in RESOLUTIONS if r["free"]]
 FREE_MAX_STEPS = 28
 FREE_N_SAMPLES = 1
 
@@ -291,6 +292,7 @@ class GenerationParams:
         self.legacy_uc = bool(data.get("legacy_uc", False))
         self.furry_mode = bool(data.get("furry_mode", False))
         self.characters = data.get("characters") or []
+        self.vibes = data.get("vibes") or []
         self.use_coords = bool(data.get("use_coords", True))
 
     def validate(self) -> None:
@@ -313,6 +315,11 @@ class GenerationParams:
             raise ValueError("分辨率必须大于 0")
         if self.seed < -1:
             raise ValueError("种子需为 -1（随机）或非负整数")
+        if not isinstance(self.vibes, list):
+            raise ValueError("vibes 必须为数组")
+        for v in self.vibes:
+            if not isinstance(v, dict) or not str(v.get("id") or "").strip():
+                raise ValueError("vibe 条目缺少 id")
 
     @property
     def effective_seed(self) -> int:
@@ -354,6 +361,22 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
             }
         )
 
+    vibes: list[dict] = []
+    for v in params.vibes:
+        if not isinstance(v, dict):
+            continue
+        resolved = resolve_vibe(
+            str(v.get("id") or ""),
+            model,
+            float(v.get("strength") if v.get("strength") is not None else 0.7),
+            None
+            if v.get("information_extracted") is None
+            else float(v.get("information_extracted")),
+        )
+        if resolved is None:
+            raise ValueError(f"Vibe「{v.get('id')}」不适用于模型 {model}（缺少对应编码）")
+        vibes.append(resolved)
+
     base = {
         "input": _input,
         "model": model,
@@ -390,6 +413,14 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
         },
         "use_new_shared_trial": True,
     }
+
+    if vibes:
+        base["parameters"]["reference_image_multiple"] = [v["encoding"] for v in vibes]
+        base["parameters"]["reference_strength_multiple"] = [v["strength"] for v in vibes]
+        if all(v.get("information_extracted") is not None for v in vibes):
+            base["parameters"]["reference_information_extracted_multiple"] = [
+                v["information_extracted"] for v in vibes
+            ]
 
     if not is_v3:
         base["parameters"]["noise_schedule"] = params.noise_schedule

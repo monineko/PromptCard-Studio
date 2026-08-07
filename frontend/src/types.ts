@@ -111,6 +111,7 @@ export type MoveImagesResult = {
 
 export type GenerateResolution = {
   label: string;
+  category: string;
   width: number;
   height: number;
   free: boolean;
@@ -164,6 +165,25 @@ export type GenerateParamsPayload = {
   decrisp: boolean;
   legacy_uc: boolean;
   furry_mode: boolean;
+};
+
+export type GenerateVibe = {
+  id: string;
+  name: string;
+  thumbnail: string;
+  strength: number;
+  information_extracted: number;
+};
+
+export type VibeItem = {
+  id: string;
+  name: string;
+  file: string;
+  thumbnail: string;
+  models: string[];
+  default_strength: number;
+  default_information_extracted: number;
+  encodings: Record<string, number[]>;
 };
 
 export type GenerateCharacter = {

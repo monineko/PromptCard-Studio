@@ -192,6 +192,14 @@ export function ToastHost() {
               style={{ background: t.kind === "ok" ? "#22c55e" : "#ef4444" }}
             />
             <span className="max-w-[320px] truncate">{t.text}</span>
+            <button
+              type="button"
+              title="关闭提示"
+              onClick={() => dismiss(t.id)}
+              className="shrink-0 rounded-md p-0.5 text-[var(--muted)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            >
+              <X size={13} />
+            </button>
           </motion.div>
         ))}
       </AnimatePresence>
