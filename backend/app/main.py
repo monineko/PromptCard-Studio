@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -55,6 +56,17 @@ app.add_middleware(
 
 def _as_http(e: Exception, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail=str(e))
+
+
+def _shutdown_now() -> None:
+    """响应发送完成后再退出进程（延迟 0.5s）。"""
+    os._exit(0)
+
+
+@app.post("/api/system/shutdown")
+def system_shutdown():
+    threading.Timer(0.5, _shutdown_now).start()
+    return {"ok": True, "message": "本地服务正在关闭，可关闭本页面；再次使用时重新运行启动脚本"}
 
 
 @app.get("/api/health")

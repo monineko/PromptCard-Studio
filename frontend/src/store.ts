@@ -113,6 +113,7 @@ interface AppState {
   toggleExpanded: (name: string) => void;
   setZone: (z: Zone) => void;
   setTheme: (patch: Partial<Settings["theme"]>) => void;
+  setEffects: (patch: Partial<Settings["effects"]>) => void;
   saveSettings: (patch: Partial<Settings>) => Promise<void>;
 
   addToast: (text: string, kind?: Toast["kind"]) => void;
@@ -284,6 +285,16 @@ export const useStore = create<AppState>((set, get) => {
         if (!s.settings) return s;
         const settings = { ...s.settings, theme: { ...s.settings.theme, ...patch } };
         applyTheme(settings);
+        api.saveSettings(settings).catch(() => {});
+        return { settings };
+      });
+    },
+
+    setEffects(patch) {
+      set((s) => {
+        if (!s.settings) return s;
+        const effects = { ...s.settings.effects, ...patch };
+        const settings = { ...s.settings, effects };
         api.saveSettings(settings).catch(() => {});
         return { settings };
       });

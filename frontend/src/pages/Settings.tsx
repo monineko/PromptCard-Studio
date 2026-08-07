@@ -1,14 +1,15 @@
-import { FolderOpen, Images, KeyRound, RefreshCw, Save, Undo2, Zap } from "lucide-react";
+import { FolderOpen, Images, KeyRound, Power, RefreshCw, Save, Undo2, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
-import { Button } from "../components/UI";
+import { Button, ConfirmDialog } from "../components/UI";
 import { useStore } from "../store";
 import { useGalleryVisual } from "../store/galleryVisual";
 
 export function Settings() {
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
+  const setEffects = useStore((s) => s.setEffects);
   const addToast = useStore((s) => s.addToast);
   const [form, setForm] = useState({
     mode: "dark",
@@ -27,6 +28,18 @@ export function Settings() {
   const [naiError, setNaiError] = useState("");
   const [naiSaving, setNaiSaving] = useState(false);
   const [naiChecking, setNaiChecking] = useState(false);
+  const [shutdownOpen, setShutdownOpen] = useState(false);
+
+  const doShutdown = async () => {
+    try {
+      await api.systemShutdown();
+      setShutdownOpen(false);
+      addToast("本地服务已关闭，可关闭本页面；重新使用请运行 start_local.cmd");
+    } catch (e) {
+      addToast(`关闭失败：${(e as Error).message}`, "err");
+      setShutdownOpen(false);
+    }
+  };
 
   useEffect(() => {
     if (!settings) return;
@@ -191,6 +204,52 @@ export function Settings() {
             <Images size={14} />
           </span>
           <h2 className="text-sm font-semibold">界面个性化</h2>
+        </div>
+
+        <div className="space-y-3">
+          <div className="text-xs font-medium text-[var(--muted)]">特效开关（更改立即生效并自动保存）</div>
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.effects.background_rotation}
+              onChange={(e) => setEffects({ background_rotation: e.target.checked })}
+              className="mt-0.5 accent-[var(--accent)]"
+            />
+            <span>
+              开启背景图轮换
+              <span className="block text-xs text-[var(--muted)]">
+                取消后背景为纯静态颜色，仅随日间/夜间切换，降低性能需求
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.effects.review_particles}
+              onChange={(e) => setEffects({ review_particles: e.target.checked })}
+              className="mt-0.5 accent-[var(--accent)]"
+            />
+            <span>
+              开启图片筛选粒子
+              <span className="block text-xs text-[var(--muted)]">
+                取消后筛选模式按钮按下的烟花、爱心等粒子效果关闭
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.effects.review_animations}
+              onChange={(e) => setEffects({ review_animations: e.target.checked })}
+              className="mt-0.5 accent-[var(--accent)]"
+            />
+            <span>
+              开启图片筛选动效
+              <span className="block text-xs text-[var(--muted)]">
+                取消后筛选模式仅保留图片替换（去掉飞入出/变色/淡化），切换间隔更短
+              </span>
+            </span>
+          </label>
         </div>
 
         <div>
@@ -361,6 +420,26 @@ export function Settings() {
             <Save size={14} /> 保存设置
           </Button>
         </div>
+      </div>
+
+      {/* ---------- 本地服务 ---------- */}
+      <div className="glass space-y-4 rounded-2xl p-5">
+        <h2 className="border-b border-[var(--border)] pb-2 text-sm font-semibold">本地服务</h2>
+        <p className="text-xs leading-relaxed text-[var(--muted)]">
+          前端页面由本机后端服务托管。点击关闭后服务立即停止，本页面将无法继续访问；再次使用请运行
+          start_local.cmd。
+        </p>
+        <Button variant="danger" onClick={() => setShutdownOpen(true)}>
+          <Power size={14} /> 关闭本地服务
+        </Button>
+        <ConfirmDialog
+          open={shutdownOpen}
+          title="关闭本地服务"
+          message="确定关闭本机后端服务吗？关闭后页面将无法访问，需重新运行 start_local.cmd 才能恢复；若有批量生成正在运行也会中断。"
+          danger
+          onConfirm={() => void doShutdown()}
+          onCancel={() => setShutdownOpen(false)}
+        />
       </div>
     </div>
   );

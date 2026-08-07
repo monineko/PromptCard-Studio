@@ -185,6 +185,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  systemShutdown: () =>
+    request<{ ok: boolean; message: string }>("/api/system/shutdown", { method: "POST" }),
 };
 
 export function uid(): string {

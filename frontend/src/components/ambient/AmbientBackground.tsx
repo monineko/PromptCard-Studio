@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { useStore } from "../../store";
 import { useGalleryVisual } from "../../store/galleryVisual";
 import { SakuraCanvas } from "./SakuraCanvas";
 
@@ -17,6 +18,7 @@ export function AmbientBackground() {
   const [index, setIndex] = useState(0);
   const keyStr = backdrops.map((b) => b.key).join("|");
   const inLibrary = location.pathname === "/library";
+  const backgroundRotation = useStore((s) => s.settings?.effects.background_rotation);
 
   useEffect(() => {
     setIndex(0);
@@ -31,6 +33,9 @@ export function AmbientBackground() {
   }, [backdrops.length, keyStr]);
 
   const current = backdrops.length ? backdrops[index % backdrops.length] : null;
+
+  // 关闭「背景图轮换」：纯静态背景（仅日/夜主题色），不渲染图片/光斑/樱花，降低性能需求
+  if (backgroundRotation === false) return null;
 
   return (
     <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">

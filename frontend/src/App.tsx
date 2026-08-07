@@ -46,6 +46,7 @@ function Shell() {
   const sidebarOpen = useSidebarStore((s) => s.open);
   const setSidebarOpen = useSidebarStore((s) => s.setOpen);
   const location = useLocation();
+  const effects = useStore((s) => s.settings?.effects);
 
   useEffect(() => {
     init();
@@ -78,7 +79,7 @@ function Shell() {
     <>
       <Shortcuts />
       <AmbientBackground />
-      <FireworksCanvas />
+      {effects?.review_particles !== false && <FireworksCanvas />}
       <div className="flex min-h-full flex-col">
         <TopBar />
         <AppSidebar />

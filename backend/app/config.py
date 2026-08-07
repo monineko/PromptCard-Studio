@@ -21,6 +21,11 @@ DEFAULT_SETTINGS = {
     "port": 11451,
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
+    "effects": {                 # 特效开关（界面个性化）
+        "background_rotation": True,   # 背景图轮换（关闭后为纯静态背景，仅日/夜配色）
+        "review_particles": True,      # 图片筛选粒子（烟花/爱心）
+        "review_animations": True,     # 图片筛选动效（飞入出/变色/淡化）
+    },
 }
 
 

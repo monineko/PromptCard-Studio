@@ -2,6 +2,7 @@ import { Check, Crown, Heart, ThumbsUp, Undo2, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, type TargetAndTransition } from "framer-motion";
 import { api } from "../../api";
+import { useStore } from "../../store";
 import { useGalleryVisual } from "../../store/galleryVisual";
 import type { LibraryImageItem, ReviewTag } from "../../types";
 
@@ -77,6 +78,9 @@ export function ReviewMode({
   const [leaving, setLeaving] = useState<{ id: number; tag: ReviewTag; path: string } | null>(null);
   const [heartsBurst, setHeartsBurst] = useState<{ id: number; x: number; y: number } | null>(null);
   const [rejectFlash, setRejectFlash] = useState<{ id: number } | null>(null);
+  const effects = useStore((s) => s.settings?.effects);
+  const particles = effects?.review_particles !== false;
+  const animations = effects?.review_animations !== false;
   const leavingSeq = useRef(0);
   const leavingRef = useRef(leaving);
   leavingRef.current = leaving;
@@ -92,13 +96,13 @@ export function ReviewMode({
       if (!current || leavingRef.current) return; // 离场动画期间锁定，防止连击
       setTags((prev) => ({ ...prev, [current.path]: t }));
       setHistory((prev) => [...prev, index]);
-      if (t === "treasure") {
+      if (t === "treasure" && particles) {
         const rect = centerRef.current?.getBoundingClientRect();
         if (rect) {
           useGalleryVisual.getState().fire(rect.left + rect.width / 2, rect.top + rect.height / 2);
         }
       }
-      if (t === "favorites") {
+      if (t === "favorites" && particles) {
         // 心形粒子独立于卡片切换：全屏播放约 2 秒，从卡片中心向外扩散
         const rootRect = rootRef.current?.getBoundingClientRect();
         const cardRect = centerRef.current?.getBoundingClientRect();
@@ -111,15 +115,20 @@ export function ReviewMode({
         setHeartsBurst({ id: leavingSeq.current, x: sx, y: sy });
         window.setTimeout(() => setHeartsBurst(null), 2500);
       }
-      if (t === "reject") {
+      if (t === "reject" && animations) {
         // 全屏溶解模糊：1 秒，不阻塞图片切换节奏
         setRejectFlash({ id: leavingSeq.current });
         window.setTimeout(() => setRejectFlash(null), 1300);
       }
       leavingSeq.current += 1;
-      setLeaving({ id: leavingSeq.current, tag: t, path: current.path });
+      if (animations) {
+        setLeaving({ id: leavingSeq.current, tag: t, path: current.path });
+      } else {
+        // 关闭动效：不做飞入出/变色/淡化，直接替换为下一张
+        setIndex((i) => Math.min(i + 1, items.length - 1));
+      }
     },
-    [current, index]
+    [current, index, items.length, particles, animations]
   );
 
   const finishLeaving = useCallback(() => {
@@ -302,7 +311,7 @@ export function ReviewMode({
         {/* 当前卡片舞台（perspective 供 Fine 3D 翻转使用） */}
         <div
           ref={centerRef}
-          className="relative flex h-full max-h-[68vh] max-w-[46vw] min-w-0 items-center justify-center"
+          className="relative flex h-[68vh] max-w-[46vw] min-w-0 items-center justify-center"
           style={{ perspective: 1000 }}
         >
           <AnimatePresence mode="popLayout" initial={false}>
@@ -313,7 +322,7 @@ export function ReviewMode({
               initial={{ opacity: 0, scale: 0.92, x: 30 }}
               animate={{ opacity: 1, scale: 1, x: 0 }}
               exit={{ opacity: 0, scale: 0.95, x: -20 }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
+              transition={{ duration: animations ? 0.18 : 0, ease: "easeOut" }}
               className="max-h-full max-w-full rounded-2xl object-contain shadow-[0_32px_90px_-24px_rgba(0,0,0,0.85)] will-change-transform"
             />
           </AnimatePresence>

@@ -11,8 +11,8 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-echo [1/2] Starting backend (frontend is served by backend, port 11451)...
-start "npm-backend" /min ".venv\Scripts\python.exe" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 11451
+echo [1/2] Starting backend fully hidden (frontend is served by backend, port 11451)...
+powershell -NoProfile -Command "Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList '-m','uvicorn','app.main:app','--app-dir','backend','--host','127.0.0.1','--port','11451' -WindowStyle Hidden -RedirectStandardError '%TEMP%\npm_uvicorn.err.log' -RedirectStandardOutput '%TEMP%\npm_uvicorn.out.log'"
 
 echo [2/2] Waiting for service to become ready...
 set /a tries=0
@@ -30,6 +30,7 @@ if errorlevel 1 goto wait
 echo Service ready: http://127.0.0.1:11451
 start "" "http://127.0.0.1:11451"
 echo.
-echo Note: closing this window will NOT stop the service.
-echo To stop it: close the "npm-backend" window, or run: taskkill /F /IM python.exe
+echo Note: the backend runs fully hidden.
+echo To stop it: open Settings - "Close local service" in the app, or run: taskkill /F /IM python.exe
+echo Error log (if startup fails): %TEMP%\npm_uvicorn.err.log
 pause

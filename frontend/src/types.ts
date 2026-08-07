@@ -25,6 +25,11 @@ export type Settings = {
   recycle_reject: boolean;
   format_input: boolean;
   port: number;
+  effects: {
+    background_rotation: boolean;
+    review_particles: boolean;
+    review_animations: boolean;
+  };
 };
 
 export type LibraryCategoryKey = "all" | "treasure" | "fine" | "reject" | "favorites" | "unrated";
