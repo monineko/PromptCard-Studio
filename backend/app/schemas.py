@@ -90,6 +90,11 @@ class GenerateTokenIn(BaseModel):
     token: str = ""
 
 
+class VibeRenameIn(BaseModel):
+    id: str = ""
+    name: str = ""
+
+
 class Text2ImageIn(BaseModel):
     prompt: str = ""
     negative_prompt: str = ""

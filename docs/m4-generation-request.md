@@ -53,6 +53,7 @@
 
 - 资源：`vibes/*.naiv4vibe`（JSON：`encodings[模型键][哈希] = {encoding, params.information_extracted}`；显示名取文件名）。
 - 枚举：`GET /api/vibes` 返回 id/name/thumbnail/models/默认强度与信息提取度/各模型可用变体。
+- 管理：`POST /api/vibes/rename`（重命名文件，文件名即显示名）、`POST /api/vibes/open-folder`（资源管理器打开目录）。
 - 请求：`params.vibes = [{ id, strength, information_extracted }]`；后端按当前模型选最接近的编码并写入：
   - `parameters.reference_image_multiple`（base64 编码）
   - `parameters.reference_strength_multiple`（0.01~1）

@@ -32,6 +32,7 @@ from .schemas import (
     ReviewUndoIn,
     SetCoverIn,
     Text2ImageIn,
+    VibeRenameIn,
     WorkspaceIn,
 )
 
@@ -250,6 +251,26 @@ def generate_meta():
 @app.get("/api/vibes")
 def list_vibes():
     return vibes_service.list_vibes()
+
+
+@app.post("/api/vibes/rename")
+def vibe_rename(body: VibeRenameIn):
+    try:
+        return vibes_service.rename_vibe(body.id, body.name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except FileExistsError as e:
+        raise _as_http(e, 409)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/vibes/open-folder")
+def vibe_open_folder():
+    try:
+        return vibes_service.open_vibes_folder()
+    except Exception as e:
+        raise _as_http(e)
 
 
 @app.get("/api/generate/status")

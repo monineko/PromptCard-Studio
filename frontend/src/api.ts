@@ -132,6 +132,13 @@ export const api = {
     request<{ ok: boolean; path: string }>("/api/backgrounds/open-folder", { method: "POST" }),
   generateMeta: () => request<GenerateMeta>("/api/generate/meta"),
   vibes: () => request<VibeItem[]>("/api/vibes"),
+  renameVibe: (id: string, name: string) =>
+    request<{ ok: boolean; id: string; name: string }>("/api/vibes/rename", {
+      method: "POST",
+      body: JSON.stringify({ id, name }),
+    }),
+  openVibesFolder: () =>
+    request<{ ok: boolean; path: string }>("/api/vibes/open-folder", { method: "POST" }),
   generateStatus: () => request<GenerateStatus>("/api/generate/status"),
   generateAnlas: () => request<{ anlas: number | null; error: string | null }>("/api/generate/anlas"),
   saveGenerateToken: (token: string) =>

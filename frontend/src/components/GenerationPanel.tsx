@@ -28,6 +28,7 @@ import type {
   VibeItem,
 } from "../types";
 import { Button, IconBtn } from "./UI";
+import { VibeLibraryModal } from "./VibeLibraryModal";
 
 const inputCls =
   "w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-[var(--accent)]";
@@ -438,6 +439,7 @@ export function GenerationPanel() {
   const [meta, setMeta] = useState<GenerateMeta | null>(null);
   const [status, setStatus] = useState<GenerateStatus | null>(null);
   const [vibeItems, setVibeItems] = useState<VibeItem[]>([]);
+  const [vibeModalOpen, setVibeModalOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [checking, setChecking] = useState(false);
   const [baseTab, setBaseTab] = useState<"positive" | "negative">("positive");
@@ -458,16 +460,20 @@ export function GenerationPanel() {
     [rolePositive, roleNegative]
   );
 
-  useEffect(() => {
-    api
-      .generateMeta()
-      .then(setMeta)
-      .catch((e) => addToast(`读取参数表失败: ${(e as Error).message}`, "err"));
+  const reloadVibes = useCallback(() => {
     api
       .vibes()
       .then(setVibeItems)
       .catch((e) => addToast(`读取 Vibe 库失败: ${(e as Error).message}`, "err"));
   }, [addToast]);
+
+  useEffect(() => {
+    api
+      .generateMeta()
+      .then(setMeta)
+      .catch((e) => addToast(`读取参数表失败: ${(e as Error).message}`, "err"));
+    reloadVibes();
+  }, [addToast, reloadVibes]);
 
   const vibeModels = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -649,11 +655,13 @@ export function GenerationPanel() {
               Vibe 参考
               <span className="ml-1.5 font-normal text-[var(--muted)]">{vibes.length} 个</span>
             </span>
-            <span className="text-[10px] text-[var(--muted)]">从下方 Vibe 库添加</span>
+            <Button size="sm" variant="ghost" onClick={() => setVibeModalOpen(true)} title="打开 Vibe 库">
+              <Sparkles size={13} /> 导入 Vibe
+            </Button>
           </div>
           {vibes.length === 0 ? (
             <p className="text-[10px] leading-relaxed text-[var(--muted)]">
-              未添加 Vibe；在上方「Vibe 库」点击胶囊即可加入，每个可独立调节强度与信息提取度。
+              未添加 Vibe；点击「导入 Vibe」从库中添加，每个可独立调节强度与信息提取度。
             </p>
           ) : (
             <div className="space-y-2">
@@ -861,6 +869,13 @@ export function GenerationPanel() {
           </p>
         )}
       </div>
+
+      <VibeLibraryModal
+        open={vibeModalOpen}
+        onClose={() => setVibeModalOpen(false)}
+        items={vibeItems}
+        onReload={reloadVibes}
+      />
     </div>
   );
 }

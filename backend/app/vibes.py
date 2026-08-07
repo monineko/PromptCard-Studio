@@ -7,6 +7,7 @@
 """
 
 import json
+import os
 from pathlib import Path
 
 from .config import VIBES_DIR
@@ -38,6 +39,49 @@ def _safe_id(vibe_id: str) -> str:
     if not cleaned or Path(cleaned).name != cleaned or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
         raise ValueError(f"非法的 vibe id: {vibe_id!r}")
     return cleaned
+
+
+def _safe_new_name(name: str) -> str:
+    n = str(name or "").strip()
+    bad = set('<>:"/\\|?*')
+    if not n:
+        raise ValueError("名称不能为空")
+    if len(n) > 120:
+        raise ValueError("名称过长（最多 120 字符）")
+    if any(ch in bad for ch in n) or n in (".", "..") or n.endswith((".", " ")):
+        raise ValueError("名称包含非法字符")
+    return n
+
+
+def open_vibes_folder() -> dict:
+    """用系统资源管理器打开 Vibe 目录。"""
+    VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(str(VIBES_DIR))  # type: ignore[attr-defined]
+        else:
+            import subprocess
+
+            subprocess.Popen(["xdg-open", str(VIBES_DIR)])
+    except OSError as e:
+        raise RuntimeError(f"打开文件夹失败: {e}") from e
+    return {"ok": True, "path": str(VIBES_DIR)}
+
+
+def rename_vibe(vibe_id: str, new_name: str) -> dict:
+    """重命名 .naiv4vibe 文件（文件名即显示名）。"""
+    old = _safe_id(vibe_id)
+    new = _safe_new_name(new_name)
+    if new == old:
+        return {"ok": True, "id": new, "name": new}
+    old_file = VIBES_DIR / f"{old}.naiv4vibe"
+    if not old_file.exists():
+        raise FileNotFoundError(f"Vibe 不存在: {old}")
+    new_file = VIBES_DIR / f"{new}.naiv4vibe"
+    if new_file.exists():
+        raise FileExistsError(f"已存在同名 Vibe: {new}")
+    old_file.rename(new_file)
+    return {"ok": True, "id": new, "name": new}
 
 
 def list_vibes() -> list[dict]:
