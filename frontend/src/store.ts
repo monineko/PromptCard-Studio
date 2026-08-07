@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, uid } from "./api";
-import { copyText, serializeSections, splitWeightedPrompt } from "./lib";
+import { copyText, serializeSections, splitWeightedPrompt, SYSTEM_SECTIONS } from "./lib";
 import type { Block, Category, Section, Settings, Zone } from "./types";
 
 type Snapshot = { positive: Section[]; negative: Section[] };
@@ -9,8 +9,9 @@ type Toast = { id: number; text: string; kind: "ok" | "err" };
 
 type DetailState = { category: string; name: string } | null;
 
-const DEFAULT_SECTION_NAMES = ["提示词工作台", "角色", "动作", "画师串"];
-const NEGATIVE_SECTION_NAME = "负面Prompt";
+const DEFAULT_POSITIVE_SECTIONS = ["提示词工作台", "角色", "动作", "画师串"];
+const NEGATIVE_SECTION_NAME = "负面";
+const LEGACY_NEGATIVE_NAME = "负面Prompt";
 const WORKBENCH_NAME = "提示词工作台";
 const LEGACY_OTHER_NAME = "其他";
 
@@ -25,38 +26,57 @@ function sectionNameForCategory(category: string): string {
 function ensureSection(sections: Section[], name: string): Section {
   const found = sections.find((s) => s.name === name);
   if (found) return found;
-  const section = makeSection(name, DEFAULT_SECTION_NAMES.includes(name));
+  const section = makeSection(name, SYSTEM_SECTIONS.includes(name as (typeof SYSTEM_SECTIONS)[number]));
   sections.push(section);
   return section;
 }
 
 function defaultPositiveZone(): Section[] {
-  return DEFAULT_SECTION_NAMES.map((name) => makeSection(name, true));
+  return DEFAULT_POSITIVE_SECTIONS.map((name) => makeSection(name, true));
 }
 
 function defaultNegativeZone(): Section[] {
   return [makeSection(NEGATIVE_SECTION_NAME, true)];
 }
 
-/** 历史结构迁移：正面"其他" → 置顶"提示词工作台"；负面各分区合并为一个"负面Prompt"。 */
-function migratePositive(sections: Section[]): Section[] {
-  const list = sections.map((s) => ({ ...s, blocks: [...s.blocks] }));
-  const idx = list.findIndex((s) => s.name === LEGACY_OTHER_NAME);
+/**
+ * 历史结构迁移：
+ * - 正面"其他" → 置顶"提示词工作台"；
+ * - 正面的自定义"负面"分区并入负面区，负面各分区合并为一个"负面"（旧名"负面Prompt"兼容）。
+ */
+function migrateWorkspace(positive: Section[], negative: Section[]): { positive: Section[]; negative: Section[] } {
+  const cloneBlocks = (blocks: Block[]): Block[] =>
+    blocks.map((b) =>
+      b.type === "card" && b.category === LEGACY_NEGATIVE_NAME
+        ? { ...b, category: NEGATIVE_SECTION_NAME }
+        : { ...b }
+    );
+  const pos = positive.map((s) => ({ ...s, blocks: cloneBlocks(s.blocks) }));
+  const idx = pos.findIndex((s) => s.name === LEGACY_OTHER_NAME);
   if (idx >= 0) {
-    const [workbench] = list.splice(idx, 1);
-    list.unshift({ ...workbench, name: WORKBENCH_NAME, locked: true });
-  } else if (!list.some((s) => s.name === WORKBENCH_NAME)) {
-    list.unshift(makeSection(WORKBENCH_NAME, true));
+    const [workbench] = pos.splice(idx, 1);
+    pos.unshift({ ...workbench, name: WORKBENCH_NAME, locked: true });
+  } else if (!pos.some((s) => s.name === WORKBENCH_NAME)) {
+    pos.unshift(makeSection(WORKBENCH_NAME, true));
   }
-  return list;
-}
 
-function migrateNegative(sections: Section[]): Section[] {
-  if (sections.length === 1 && sections[0].name === NEGATIVE_SECTION_NAME) {
-    return sections.map((s) => ({ ...s, blocks: [...s.blocks] }));
+  // 正面"负面"分区的内容移入负面区
+  const posNegIdx = pos.findIndex((s) => s.name === NEGATIVE_SECTION_NAME);
+  const movedBlocks = posNegIdx >= 0 ? cloneBlocks(pos[posNegIdx].blocks) : [];
+  if (posNegIdx >= 0) pos.splice(posNegIdx, 1);
+
+  let neg: Section[];
+  if (negative.length === 1 && negative[0].name === NEGATIVE_SECTION_NAME) {
+    neg = [{ ...negative[0], blocks: cloneBlocks(negative[0].blocks) }];
+  } else {
+    const blocks = negative.flatMap((s) => cloneBlocks(s.blocks));
+    neg = [makeSection(NEGATIVE_SECTION_NAME, true, blocks)];
+    if (negative.length === 1 && negative[0].name === LEGACY_NEGATIVE_NAME) {
+      neg[0].locked = true;
+    }
   }
-  const blocks = sections.flatMap((s) => s.blocks.map((b) => ({ ...b })));
-  return [makeSection(NEGATIVE_SECTION_NAME, true, blocks)];
+  if (movedBlocks.length) neg[0].blocks.push(...movedBlocks);
+  return { positive: pos, negative: neg };
 }
 
 function cloneZones(positive: Section[], negative: Section[]): { positive: Section[]; negative: Section[] } {
@@ -116,6 +136,9 @@ interface AppState {
   deleteSection: (sectionId: string) => void;
   addSection: (name: string) => void;
   splitSectionPrompts: (sectionId: string) => void;
+  composeSectionId: string | null;
+  setComposeSectionId: (id: string | null) => void;
+  replaceSectionWithCard: (sectionId: string, category: string, name: string) => void;
   clearZone: () => void;
   undo: () => void;
   redo: () => void;
@@ -173,7 +196,6 @@ export const useStore = create<AppState>((set, get) => {
     });
   };
 
-  const zoneSections = (s: AppState): Section[] => (s.zone === "positive" ? s.positive : s.negative);
   const allSections = (s: AppState): Section[] => [...s.positive, ...s.negative];
   const findSection = (s: AppState, id: string): Section | undefined =>
     allSections(s).find((x) => x.id === id);
@@ -195,6 +217,7 @@ export const useStore = create<AppState>((set, get) => {
     showNewCard: false,
     newCardCategory: "",
     newCardContent: "",
+    composeSectionId: null,
     showNewCategory: false,
     showImport: false,
     cardRefresher: 0,
@@ -206,8 +229,10 @@ export const useStore = create<AppState>((set, get) => {
         const ws = await api.workspace();
         applyTheme(settings);
         set((s) => {
-          const positive = migratePositive(ws.positive.length ? ws.positive : defaultPositiveZone());
-          const negative = migrateNegative(ws.negative.length ? ws.negative : defaultNegativeZone());
+          const { positive, negative } = migrateWorkspace(
+            ws.positive.length ? ws.positive : defaultPositiveZone(),
+            ws.negative.length ? ws.negative : defaultNegativeZone()
+          );
           return {
             settings,
             categories,
@@ -284,8 +309,11 @@ export const useStore = create<AppState>((set, get) => {
 
     addCardBlock(category, name) {
       commit((s) => {
-        const sections = zoneSections(s);
-        const section = ensureSection(sections, sectionNameForCategory(category));
+        const secName = sectionNameForCategory(category);
+        // 负面分类的卡片进入负面区（系统"负面"分区），其余进入正面区
+        const section =
+          allSections(s).find((x) => x.name === secName) ??
+          ensureSection(secName === NEGATIVE_SECTION_NAME ? s.negative : s.positive, secName);
         section.blocks.push({ id: uid(), type: "card", category, name });
       });
       get().addToast(`已添加 <${category}:${name}>`);
@@ -359,7 +387,8 @@ export const useStore = create<AppState>((set, get) => {
       if (!n) return;
       commit((s) => {
         const section = findSection(s, sectionId);
-        if (section && !section.locked && !DEFAULT_SECTION_NAMES.includes(n)) section.name = n;
+        if (section && !section.locked && !SYSTEM_SECTIONS.includes(n as (typeof SYSTEM_SECTIONS)[number]))
+          section.name = n;
       });
     },
 
@@ -377,6 +406,10 @@ export const useStore = create<AppState>((set, get) => {
     addSection(name) {
       const n = name.trim();
       if (!n) return;
+      if (SYSTEM_SECTIONS.includes(n as (typeof SYSTEM_SECTIONS)[number])) {
+        get().addToast(`「${n}」是系统默认分区，无需重复添加`, "err");
+        return;
+      }
       commit((s) => {
         if (allSections(s).some((x) => x.name === n)) return;
         const section = makeSection(n);
@@ -412,12 +445,24 @@ export const useStore = create<AppState>((set, get) => {
       });
     },
 
+    setComposeSectionId(id) {
+      set({ composeSectionId: id });
+    },
+
+    replaceSectionWithCard(sectionId, category, name) {
+      commit((s) => {
+        const section = findSection(s, sectionId);
+        if (!section) return;
+        section.blocks = [{ id: uid(), type: "card", category, name }];
+      });
+    },
+
     clearZone() {
       commit((s) => {
         s.positive.forEach((sec) => (sec.blocks = []));
         s.negative.forEach((sec) => (sec.blocks = []));
       });
-      get().addToast("已清空提示词工作区（含负面Prompt）");
+      get().addToast("已清空提示词工作区（含负面）");
     },
 
     undo() {

@@ -11,6 +11,8 @@ from pathlib import Path
 from .config import WILDCARDS_DIR, load_settings, save_settings
 from .library import resolve_image
 
+SYSTEM_CATEGORIES = {"角色", "动作", "画师串", "负面"}
+
 INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
 _sequential_state: dict[str, int] = {}
@@ -191,6 +193,8 @@ def rename_category(old_name: str, new_name: str) -> dict:
 
 
 def delete_category(name: str) -> None:
+    if name in SYSTEM_CATEGORIES:
+        raise ValueError("系统默认分类不可删除")
     folder = _category_path(name)
     if not folder.exists() or not folder.is_dir():
         raise FileNotFoundError(f"分类不存在: {name}")

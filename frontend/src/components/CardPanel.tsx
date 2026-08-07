@@ -16,7 +16,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { cn, categoryHue } from "../lib";
+import { cn, categoryHue, SYSTEM_SECTIONS } from "../lib";
 import { useStore } from "../store";
 import { useCardImagePicker } from "../store/cardImagePicker";
 import type { CardMeta, Category, Section } from "../types";
@@ -155,6 +155,7 @@ function CategoryPack({ category }: { category: Category }) {
   const [newHue, setNewHue] = useState(colorMap[category.name] ?? categoryHue(category.name));
   const [confirmDel, setConfirmDel] = useState(false);
   const hue = colorMap[category.name] ?? categoryHue(category.name);
+  const systemCategory = SYSTEM_SECTIONS.includes(category.name as (typeof SYSTEM_SECTIONS)[number]);
   const PALETTE = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
 
   return (
@@ -200,16 +201,18 @@ function CategoryPack({ category }: { category: Category }) {
         >
           <Pencil size={13} />
         </IconBtn>
-        <IconBtn
-          danger
-          title="删除分类"
-          onClick={(e) => {
-            e.stopPropagation();
-            setConfirmDel(true);
-          }}
-        >
-          <Trash2 size={13} />
-        </IconBtn>
+        {!systemCategory && (
+          <IconBtn
+            danger
+            title="删除分类"
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmDel(true);
+            }}
+          >
+            <Trash2 size={13} />
+          </IconBtn>
+        )}
       </div>
 
       <AnimatePresence initial={false}>
@@ -238,8 +241,12 @@ function CategoryPack({ category }: { category: Category }) {
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
+          disabled={systemCategory}
           className="mb-3 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
         />
+        {systemCategory && (
+          <p className="-mt-2 mb-3 text-[10px] text-[var(--muted)]">系统默认分类，名称不可修改（仅可调整颜色）</p>
+        )}
         <label className="mb-1 block text-xs text-[var(--muted)]">颜色</label>
         <div className="mb-4 flex flex-wrap items-center gap-2">
           {PALETTE.map((h) => (
@@ -273,7 +280,7 @@ function CategoryPack({ category }: { category: Category }) {
           <Button
             onClick={async () => {
               const target = newName.trim() || category.name;
-              const nameChanged = target !== category.name;
+              const nameChanged = target !== category.name && !systemCategory;
               if (nameChanged) {
                 const ok = await renameCategory(category.name, target);
                 if (!ok) return;
@@ -607,6 +614,7 @@ function NewCardModal() {
   const close = () => {
     setOpen(false);
     setNewCardContent("");
+    useStore.getState().setComposeSectionId(null);
   };
 
   return (
@@ -667,11 +675,20 @@ function NewCardModal() {
         <Button
           onClick={async () => {
             const finalCat = newCat ? catName.trim() : category;
-            if (!finalCat || !name.trim()) {
+            const finalName = name.trim();
+            if (!finalCat || !finalName) {
               useStore.getState().addToast("分类与名称不能为空", "err");
               return;
             }
-            if (await createCard(finalCat, name.trim(), content)) close();
+            if (await createCard(finalCat, finalName, content)) {
+              const st = useStore.getState();
+              if (st.composeSectionId) {
+                st.replaceSectionWithCard(st.composeSectionId, finalCat, finalName);
+                st.setComposeSectionId(null);
+                st.addToast("已用新卡片替换提示词工作台内容");
+              }
+              close();
+            }
           }}
         >
           保存

@@ -328,6 +328,7 @@ export function Workspace() {
   const setNewCardContent = useStore((s) => s.setNewCardContent);
   const setNewCardCategory = useStore((s) => s.setNewCardCategory);
   const setShowNewCard = useStore((s) => s.setShowNewCard);
+  const setComposeSectionId = useStore((s) => s.setComposeSectionId);
   const addToast = useStore((s) => s.addToast);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
@@ -390,13 +391,14 @@ export function Workspace() {
         s.addToast("未解析到有效提示词", "err");
         return;
       }
+      setComposeSectionId(sectionId);
       setNewCardContent(normalizePromptTerms(terms));
       setNewCardCategory("");
       setShowNewCard(true);
     } catch (e) {
       s.addToast(`合成失败: ${(e as Error).message}`, "err");
     }
-  }, [setNewCardContent, setNewCardCategory, setShowNewCard]);
+  }, [setNewCardContent, setNewCardCategory, setShowNewCard, setComposeSectionId]);
 
   const onDragStart = (e: React.PointerEvent, block: Block) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;

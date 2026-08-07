@@ -86,6 +86,8 @@ def remove_category(name: str):
     try:
         cards_service.delete_category(name)
         return {"ok": True}
+    except ValueError as e:
+        raise _as_http(e, 400)
     except Exception as e:
         raise _as_http(e, 404)
 
