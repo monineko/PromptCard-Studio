@@ -1,4 +1,4 @@
-import type { Section } from "./types";
+import type { Block, Section } from "./types";
 
 export function cn(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -21,22 +21,40 @@ export function copyText(text: string): Promise<void> {
   return Promise.resolve();
 }
 
-/** 把区域的分区列表序列化为提示词文本（卡片引用保留 <分类:名称>，展开在服务端完成）。 */
+/** 把块列表序列化为提示词文本（卡片引用保留 <分类:名称>，展开在服务端完成）。 */
+export function serializeBlocks(blocks: Block[]): string {
+  const text = blocks
+    .map((b) =>
+      b.type === "card"
+        ? `<${b.category}:${b.name}>`
+        : b.weight && b.weight !== 1
+          ? `${b.weight}::${b.text}::`
+          : b.text
+    )
+    .join(" ");
+  return text.trim() ? text + "," : "";
+}
+
+/** 把区域的分区列表序列化为提示词文本。 */
 export function serializeSections(sections: Section[]): string {
-  const parts: string[] = [];
-  for (const section of sections) {
-    if (!section.blocks.length) continue;
-    const text =
-      section.blocks
-        .map((b) =>
-          b.type === "card"
-            ? `<${b.category}:${b.name}>`
-            : b.weight && b.weight !== 1
-              ? `${b.weight}::${b.text}::`
-              : b.text
-        )
-        .join(" ") + ",";
-    if (text.trim()) parts.push(text);
+  return sections
+    .map((s) => serializeBlocks(s.blocks))
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * 拆分工作区：名为"角色"的分区视为角色内容，其余为基础提示词。
+ * 返回 { base, role } 两部分文本（均保留卡片引用，服务端展开）。
+ */
+export function splitWorkspaceRole(sections: Section[]): { base: string; role: string } {
+  const base: string[] = [];
+  const role: string[] = [];
+  for (const s of sections) {
+    const text = serializeBlocks(s.blocks);
+    if (!text.trim()) continue;
+    if (s.name === "角色") role.push(text);
+    else base.push(text);
   }
-  return parts.join("\n");
+  return { base: base.join("\n"), role: role.join("\n") };
 }

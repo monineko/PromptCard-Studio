@@ -166,6 +166,14 @@ export type GenerateParamsPayload = {
   furry_mode: boolean;
 };
 
+export type GenerateCharacter = {
+  id: string;
+  name: string;
+  positive: string;
+  negative: string;
+  center: { x: number; y: number };
+};
+
 export type Text2ImageResult = {
   ok: boolean;
   path: string;

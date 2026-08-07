@@ -273,8 +273,23 @@ def generate_text2image(body: Text2ImageIn):
     try:
         prompt = cards_service.expand(body.prompt)
         negative_prompt = cards_service.expand(body.negative_prompt)
+        params = body.params or {}
+        characters = params.get("characters") or []
+        if characters:
+            expanded = []
+            for c in characters:
+                if not isinstance(c, dict):
+                    continue
+                expanded.append(
+                    {
+                        **c,
+                        "positive": cards_service.expand(str(c.get("positive") or "")),
+                        "negative": cards_service.expand(str(c.get("negative") or "")),
+                    }
+                )
+            params = {**params, "characters": expanded}
         return novelai_service.generate_text2image(
-            prompt, negative_prompt, body.params or {}
+            prompt, negative_prompt, params
         )
     except ValueError as e:
         raise _as_http(e, 400)
