@@ -1,4 +1,5 @@
 import { CardPanel } from "../components/CardPanel";
+import { BatchPanel } from "../components/BatchPanel";
 import { GenerationPanel } from "../components/GenerationPanel";
 import { Workspace } from "../components/Workspace";
 
@@ -23,6 +24,11 @@ export function Home() {
       <section className="glass rounded-2xl p-4">
         <h2 className="mb-3 text-base font-semibold">参数设置</h2>
         <GenerationPanel />
+      </section>
+
+      <section className="glass rounded-2xl p-4">
+        <h2 className="mb-3 text-base font-semibold">批量生成</h2>
+        <BatchPanel />
       </section>
     </div>
   );

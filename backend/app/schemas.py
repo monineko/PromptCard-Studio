@@ -99,3 +99,22 @@ class Text2ImageIn(BaseModel):
     prompt: str = ""
     negative_prompt: str = ""
     params: dict = {}
+
+
+class BatchCardIn(BaseModel):
+    category: str
+    name: str
+    coefficient: int = 1
+
+
+class BatchDimensionIn(BaseModel):
+    name: str
+    cards: list[BatchCardIn] = []
+
+
+class BatchStartIn(BaseModel):
+    base_positive: str = ""
+    negative: str = ""
+    dimensions: list[BatchDimensionIn] = []
+    params: dict = {}
+    stop_anlas: int = 0

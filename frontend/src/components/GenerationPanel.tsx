@@ -18,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { cn, extractRoleUnits, splitWorkspaceRole } from "../lib";
 import { useStore } from "../store";
+import { useBatchStore } from "../store/batch";
 import { useGenerateStore } from "../store/generate";
 import type {
   GenerateMeta,
@@ -435,6 +436,7 @@ export function GenerationPanel() {
   const removeVibe = useGenerateStore((s) => s.removeVibe);
   const result = useGenerateStore((s) => s.result);
   const setResult = useGenerateStore((s) => s.setResult);
+  const batchRun = useBatchStore((s) => s.run);
 
   const [meta, setMeta] = useState<GenerateMeta | null>(null);
   const [status, setStatus] = useState<GenerateStatus | null>(null);
@@ -553,7 +555,8 @@ export function GenerationPanel() {
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       {/* ---------- 左侧：参数设置面板 ---------- */}
-      <div className="scroll-thin flex w-full shrink-0 flex-col gap-4 lg:w-[360px] lg:max-h-[calc(100vh-230px)] lg:overflow-y-auto lg:pr-1">
+      <div className="relative w-full shrink-0 lg:w-[360px]">
+        <div className="scroll-thin flex flex-col gap-4 lg:max-h-[calc(100vh-230px)] lg:overflow-y-auto lg:pr-1">
         {/* 模型选择 */}
         <Field label="模型">
           <select
@@ -806,6 +809,14 @@ export function GenerationPanel() {
             )}
           </div>
         </div>
+        </div>
+        {batchRun && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-[var(--panel)]/70 backdrop-blur-sm">
+            <span className="rounded-lg bg-[var(--panel-solid)] px-3 py-1.5 text-xs font-medium shadow-lg">
+              批量生成进行中，参数已锁定
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ---------- 右侧：图片预览与生成区 ---------- */}
@@ -829,7 +840,13 @@ export function GenerationPanel() {
         </div>
 
         {/* 图片预览区 */}
-        <div className="flex min-h-[420px] flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] bg-[var(--input)]/25 p-4">
+        <div className="relative flex min-h-[420px] flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] bg-[var(--input)]/25 p-4">
+          {batchRun && (
+            <span className="absolute left-3 top-3 z-10 rounded-lg bg-[var(--panel-solid)] px-2 py-1 text-[10px] font-medium text-[var(--accent)] shadow">
+              批量 {batchRun.done}/{batchRun.total}
+              {batchRun.failed > 0 ? `（失败 ${batchRun.failed}）` : ""}
+            </span>
+          )}
           {generating ? (
             <div className="flex flex-col items-center gap-2 text-[var(--muted)]">
               <Loader2 size={28} className="animate-spin" />
@@ -853,11 +870,11 @@ export function GenerationPanel() {
         {/* 生成按钮 */}
         <Button
           size="md"
-          className="w-full py-3 text-base"
+          className="w-full rounded-xl py-4 text-lg"
           onClick={() => void generate()}
-          disabled={generating || !status?.configured || !posSplit.base.trim()}
+          disabled={generating || !!batchRun || !status?.configured || !posSplit.base.trim()}
         >
-          <Wand2 size={17} />
+          <Wand2 size={20} />
           生成图片
           <span className={cn("text-xs", free ? "opacity-80" : "text-amber-300")}>
             {generating ? "生成中…" : free ? "· 免费" : "· 消耗点数"}

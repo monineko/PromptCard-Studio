@@ -11,6 +11,7 @@ backgrounds/
 vibes/
 workspace.json
 config.json
+batch_runs/
 .trash/
 
 # 系统文件

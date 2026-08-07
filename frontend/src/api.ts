@@ -2,6 +2,9 @@ import type {
   ImportResult,
   GenerateMeta,
   GenerateStatus,
+  BatchRun,
+  BatchStartPayload,
+  BatchStatusResponse,
   LibraryImages,
   LibrarySummary,
   MoveImagesResult,
@@ -151,6 +154,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ prompt, negative_prompt, params }),
     }),
+  batchStatus: () => request<BatchStatusResponse>("/api/generate/batch"),
+  batchStart: (payload: BatchStartPayload) =>
+    request<BatchRun>("/api/generate/batch", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  batchPause: () =>
+    request<{ ok: boolean; message: string }>("/api/generate/batch/pause", { method: "POST" }),
+  batchResume: () => request<BatchRun>("/api/generate/batch/resume", { method: "POST" }),
+  batchEnd: () =>
+    request<{ ok: boolean; message: string; summary: { total: number; done: number } }>(
+      "/api/generate/batch/end",
+      { method: "POST" }
+    ),
 };
 
 export function uid(): string {

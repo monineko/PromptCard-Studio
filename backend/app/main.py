@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cards as cards_service
+from . import batch as batch_service
 from . import backgrounds as backgrounds_service
 from . import novelai as novelai_service
 from . import library as library_service
@@ -16,6 +17,7 @@ from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
     AnrImportIn,
+    BatchStartIn,
     CardImageIn,
     CardIn,
     CardUpdate,
@@ -324,6 +326,56 @@ def generate_text2image(body: Text2ImageIn):
         raise _as_http(e, 400)
     except RuntimeError as e:
         raise _as_http(e, 502)
+
+
+# ---------- 批量生成 ----------
+
+
+@app.get("/api/generate/batch")
+def batch_status():
+    return batch_service.status()
+
+
+@app.post("/api/generate/batch")
+def batch_start(body: BatchStartIn):
+    try:
+        return batch_service.start_batch(
+            body.base_positive,
+            body.negative,
+            [d.model_dump() for d in body.dimensions],
+            body.params,
+            body.stop_anlas,
+        )
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except RuntimeError as e:
+        raise _as_http(e, 502)
+
+
+@app.post("/api/generate/batch/pause")
+def batch_pause():
+    try:
+        return batch_service.pause_batch()
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/generate/batch/resume")
+def batch_resume():
+    try:
+        return batch_service.resume_batch()
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except RuntimeError as e:
+        raise _as_http(e, 502)
+
+
+@app.post("/api/generate/batch/end")
+def batch_end():
+    try:
+        return batch_service.end_batch()
+    except Exception as e:
+        raise _as_http(e, 400)
 
 
 # ---------- 背景图 ----------

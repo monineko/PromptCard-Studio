@@ -68,6 +68,7 @@ RESOLUTIONS = [
 FREE_RESOLUTIONS = [f"{r['category']}:{r['label']}" for r in RESOLUTIONS if r["free"]]
 FREE_MAX_STEPS = 28
 FREE_N_SAMPLES = 1
+_FREE_SIZE_SET = {(832, 1216), (512, 768), (768, 512), (640, 640)}
 
 # 各模型的可用采样器 / 调度器 / UC 预设（与 ANR update_components_for_models_change 一致）
 _BASE_SAMPLERS = [s for s in SAMPLERS if s != "ddim_v3"]
@@ -324,6 +325,17 @@ class GenerationParams:
     @property
     def effective_seed(self) -> int:
         return random.randint(1000000000, 9999999999) if self.seed == -1 else self.seed
+
+
+def is_free_params(params: dict) -> bool:
+    """免费判定：步数 ≤ 28 且分辨率属于免费档且单次 1 张（批量始终 1 张）。"""
+    try:
+        steps = int(params.get("steps") or 0)
+        width = int(params.get("width") or 0)
+        height = int(params.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    return steps <= FREE_MAX_STEPS and (width, height) in _FREE_SIZE_SET
 
 
 def build_text2image_payload(params: GenerationParams, prompt: str, negative_prompt: str) -> dict:

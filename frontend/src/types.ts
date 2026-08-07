@@ -204,3 +204,76 @@ export type Text2ImageResult = {
   anlas: number | null;
   elapsed_ms: number;
 };
+
+export type BatchCardSpec = {
+  category: string;
+  name: string;
+  coefficient: number;
+};
+
+export type BatchDimension = {
+  name: string;
+  cards: BatchCardSpec[];
+};
+
+export type BatchLastImage = {
+  path: string;
+  name: string;
+  seed: number;
+  width?: number;
+  height?: number;
+};
+
+export type BatchRun = {
+  id: string;
+  status: "running" | "paused" | "stopped" | "completed";
+  stop_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  total: number;
+  done: number;
+  failed: number;
+  remaining: number;
+  current_index: number | null;
+  current_combo: Record<string, string> | null;
+  last_image: BatchLastImage | null;
+  anlas: number | null;
+  estimate_sec: number;
+  eta_sec: number;
+  free: boolean;
+  stop_anlas: number;
+  dimensions: BatchDimension[];
+  base_positive: string;
+  negative: string;
+  params: {
+    model?: string;
+    width?: number;
+    height?: number;
+    steps?: number;
+    sampler?: string;
+    noise_schedule?: string;
+    uc_preset?: string;
+    seed?: number;
+    quality_toggle?: boolean;
+    variety?: boolean;
+    furry_mode?: boolean;
+    decrisp?: boolean;
+    sm?: boolean;
+    sm_dyn?: boolean;
+    legacy_uc?: boolean;
+    vibes?: string[];
+  };
+};
+
+export type BatchStatusResponse = {
+  active: boolean;
+  run: BatchRun | null;
+};
+
+export type BatchStartPayload = {
+  base_positive: string;
+  negative: string;
+  dimensions: BatchDimension[];
+  params: Record<string, unknown>;
+  stop_anlas: number;
+};
