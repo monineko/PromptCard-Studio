@@ -29,13 +29,14 @@ RECORD_FILE = BATCH_DIR / "active.json"
 
 DEFAULT_ESTIMATE_SEC = 30.0
 
-# 请求间隔（与 ANR sleep_for_cool 一致）：每张之间随机 3~5 秒，避免触发 NovelAI 限流；
-# 网络错误后的重试等待再长一些（6~10 秒），最多重试 2 次。
-COOL_MIN = 3.0
-COOL_MAX = 5.0
-RETRY_WAIT_MIN = 6.0
-RETRY_WAIT_MAX = 10.0
-MAX_RETRIES = 2
+# 请求间隔（与 ANR sleep_for_cool 一致）：每张图片**收到之后**再随机等待 4~6 秒
+# （最短 4 秒），避免连续请求过快触发 NovelAI 限流；
+# 请求失败后先等待 8~15 秒再重试，同一张图连续 3 次失败才中断并暂停任务。
+COOL_MIN = 4.0
+COOL_MAX = 6.0
+RETRY_WAIT_MIN = 8.0
+RETRY_WAIT_MAX = 15.0
+MAX_RETRIES = 2  # 首次 + 2 次重试 = 连续 3 次失败才暂停
 
 _lock = threading.Lock()
 _worker: threading.Thread | None = None
