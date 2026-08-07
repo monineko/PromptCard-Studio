@@ -48,3 +48,26 @@
 - 基础提示词 = 工作区正面/负面区内容，**排除名为"角色"的分区**。
 - 角色提示词 = 生成面板"角色提示词"区的角色卡片（正向/负向文本框）。
 - 工作区中旧"角色"分区的卡片引用会自动作为角色 1 的初始内容（一次性填充，避免历史数据丢失）。
+
+## 6. Vibe 请求（2026-08-08 起）
+
+- 资源：`vibes/*.naiv4vibe`（JSON：`encodings[模型键][哈希] = {encoding, params.information_extracted}`；显示名取文件名）。
+- 枚举：`GET /api/vibes` 返回 id/name/thumbnail/models/默认强度与信息提取度/各模型可用变体。
+- 请求：`params.vibes = [{ id, strength, information_extracted }]`；后端按当前模型选最接近的编码并写入：
+  - `parameters.reference_image_multiple`（base64 编码）
+  - `parameters.reference_strength_multiple`（0.01~1）
+  - `parameters.reference_information_extracted_multiple`（0.01~1，文件版 Vibe 可调）
+- 实证：官网带 Vibe 出图元数据中 `reference_information_extracted_multiple` 为空、仅强度可调（图片元数据版）；`.naiv4vibe` 文件版可同时调整两项。已用「平开学狐狸」免费参数实测：请求三字段均被官网回写，点数不扣。
+- 模型映射键：`v4-5full / v4-5curated / v4full / v4curated`（ANR model_vibe_map）。
+
+## 7. 分辨率分类（2026-08-08 起）
+
+| 类别 | 预设 |
+| --- | --- |
+| NORMAL | Portrait 832×1216（免费）、Landscape 1216×832、Square 1024×1024 |
+| LARGE | Portrait 1024×1536、Landscape 1536×1024、Normal Landscape 1472×1472 |
+| WALLPAPER | Portrait 1088×1920、Landscape 1920×1088 |
+| SMALL | Portrait 512×768（免费）、Landscape 768×512（免费）、Square 640×640（免费） |
+| CUSTOM | 任意宽高（64 的倍数，后端 `return_x64` 对齐） |
+
+前端：悬停弹出横向分类窗选择预设；分辨率旁双数字输入框直接改数即切换为 Custom。
