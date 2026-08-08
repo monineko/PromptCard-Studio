@@ -151,6 +151,8 @@ export function Gallery() {
   const pendingCard = useCardImagePicker((s) => s.pendingCard);
   const cancelPick = useCardImagePicker((s) => s.cancelPick);
   const libraryHomeTick = useNavStore((s) => s.libraryHomeTick);
+  const libraryTarget = useNavStore((s) => s.libraryTarget);
+  const consumeLibraryTarget = useNavStore((s) => s.consumeLibraryTarget);
   const [pickCandidate, setPickCandidate] = useState<LibraryImageItem | null>(null);
 
   const refresh = useCallback(async () => {
@@ -328,6 +330,29 @@ export function Gallery() {
     const y = el.getBoundingClientRect().top + window.scrollY - 96;
     window.scrollTo({ top: y, behavior: "smooth" });
   }, []);
+
+  // 从首页「去图库」跳转：进入指定分类（未评分）
+  useEffect(() => {
+    if (!libraryTarget) return;
+    if (category !== libraryTarget.category) {
+      void openCategory(libraryTarget.category as LibraryCategoryKey);
+    }
+  }, [libraryTarget, category, openCategory]);
+
+  // 分类加载完成后滚动到目标日期分组（没有则滚到第一个分组）
+  useEffect(() => {
+    if (!libraryTarget || !groups.length || loadingItems) return;
+    const targetKey =
+      libraryTarget.date && groups.some((g) => g.key === `${libraryTarget.category}:${libraryTarget.date}`)
+        ? `${libraryTarget.category}:${libraryTarget.date}`
+        : groups[0].key;
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(`group-${targetKey}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 400);
+    consumeLibraryTarget();
+    return () => window.clearTimeout(timer);
+  }, [libraryTarget, groups, loadingItems, consumeLibraryTarget]);
 
   // 滚动时检测当前查看位置，高亮对应时间索引
   useEffect(() => {

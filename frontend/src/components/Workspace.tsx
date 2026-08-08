@@ -15,6 +15,7 @@ import { api } from "../api";
 import { cn, categoryHue, normalizePromptTerms, serializeSections, splitWeightedPrompt } from "../lib";
 import { useStore } from "../store";
 import type { Block, Section } from "../types";
+import { FlipNavButton } from "./FlipNavButton";
 import { Button, CategoryBadge, ConfirmDialog, IconBtn, Modal } from "./UI";
 
 type DragState = {
@@ -342,26 +343,12 @@ export function Workspace() {
   const [newSectionName, setNewSectionName] = useState("");
   const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; blockId: string } | null>(null);
   const [promptDraft, setPromptDraft] = useState("");
-  const [bottomValue, setBottomValue] = useState("");
   const dragRef = useRef(drag);
   dragRef.current = drag;
 
   const openPromptEdit = (block: Extract<Block, { type: "prompt" }>, sectionId: string) => {
     setEditingPrompt({ sectionId, blockId: block.id });
     setPromptDraft(block.text);
-  };
-
-  const addBottomPrompt = () => {
-    const v = bottomValue.trim();
-    if (!v) return;
-    const s = useStore.getState();
-    const target = s.positive.find((sec) => sec.name === "提示词工作台") ?? s.positive[0];
-    if (!target) {
-      addToast("提示词工作台不存在", "err");
-      return;
-    }
-    addPrompt(target.id, v);
-    setBottomValue("");
   };
 
   const handleSplit = useCallback(
@@ -510,22 +497,28 @@ export function Workspace() {
         )}
       </div>
 
-      {/* 常驻输入框：始终显示在工作区底部，回车添加到当前区域 */}
-      <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--input)]/50 px-3 py-2 transition-colors focus-within:border-[var(--accent)]">
-        <Plus size={14} className="shrink-0 text-[var(--muted)]" />
-        <input
-          value={bottomValue}
-          onChange={(e) => setBottomValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") addBottomPrompt();
-            if (e.key === "Escape") setBottomValue("");
-          }}
-          placeholder="输入提示词，回车添加到提示词工作台"
-          className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--muted)]"
-        />
-        <Button size="sm" onClick={addBottomPrompt} disabled={!bottomValue.trim()}>
-          <Plus size={13} /> 添加
-        </Button>
+      {/* 底部快捷跳转：去生图 / 选择卡片（各占一半宽度） */}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <FlipNavButton
+            className="w-full"
+            front="去生图"
+            back="前往参数设置与生成区域"
+            onClick={() =>
+              document.getElementById("ai-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+          />
+        </div>
+        <div className="flex-1">
+          <FlipNavButton
+            className="w-full"
+            front="选择卡片"
+            back="选择已保存的卡片"
+            onClick={() =>
+              document.getElementById("prompt-cards")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+          />
+        </div>
       </div>
 
       <AnimatePresence>

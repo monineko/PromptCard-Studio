@@ -68,6 +68,11 @@ export const api = {
       `/api/cards/image?category=${encodeURIComponent(category)}&name=${encodeURIComponent(name)}`,
       { method: "DELETE" }
     ),
+  pinCard: (category: string, name: string) =>
+    request<{ ok: boolean }>("/api/cards/pin", {
+      method: "POST",
+      body: JSON.stringify({ category, name }),
+    }),
   deleteCard: (category: string, name: string) =>
     request(`/api/cards?category=${encodeURIComponent(category)}&name=${encodeURIComponent(name)}`, {
       method: "DELETE",

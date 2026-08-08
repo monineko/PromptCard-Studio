@@ -7,6 +7,7 @@ import {
   Download,
   Image as ImageIcon,
   Loader2,
+  PencilLine,
   RefreshCw,
   Settings2,
   Sparkles,
@@ -21,6 +22,7 @@ import { cn, extractRoleUnits, splitWorkspaceRole } from "../lib";
 import { useStore } from "../store";
 import { useBatchStore } from "../store/batch";
 import { useGenerateStore } from "../store/generate";
+import { useNavStore } from "../store/navStore";
 import type {
   GenerateMeta,
   GenerateParamsPayload,
@@ -445,6 +447,7 @@ export function GenerationPanel() {
   const result = useGenerateStore((s) => s.result);
   const setResult = useGenerateStore((s) => s.setResult);
   const batchRun = useBatchStore((s) => s.run);
+  const setLibraryTarget = useNavStore((s) => s.setLibraryTarget);
 
   const [meta, setMeta] = useState<GenerateMeta | null>(null);
   const [status, setStatus] = useState<GenerateStatus | null>(null);
@@ -577,6 +580,19 @@ export function GenerationPanel() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const goWorkspace = () => {
+    document.getElementById("prompt-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const openInLibrary = () => {
+    const d = new Date();
+    const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
+    setLibraryTarget({ category: "unrated", date: todayKey });
+    navigate("/library");
   };
 
   return (
@@ -865,6 +881,9 @@ export function GenerationPanel() {
           <Button size="sm" variant="ghost" onClick={() => navigate("/settings")}>
             <Settings2 size={13} /> 配置 Token
           </Button>
+          <Button size="sm" variant="ghost" onClick={openInLibrary} title="在图库-未评分中打开">
+            <ImageIcon size={13} /> 在图库中打开
+          </Button>
         </div>
 
         {/* 图片预览区 */}
@@ -895,19 +914,30 @@ export function GenerationPanel() {
           )}
         </div>
 
-        {/* 生成按钮 */}
-        <Button
-          size="md"
-          className="w-full rounded-xl py-4 text-lg"
-          onClick={() => void generate()}
-          disabled={generating || !!batchRun || !status?.configured || !posSplit.base.trim()}
-        >
-          <Wand2 size={20} />
-          生成图片
-          <span className={cn("text-xs", free ? "opacity-80" : "text-amber-300")}>
-            {generating ? "生成中…" : free ? "· 免费" : "· 消耗点数"}
-          </span>
-        </Button>
+        {/* 生成行：提示词 + 生成1张（各占一半宽度） */}
+        <div className="flex gap-2">
+          <Button
+            size="md"
+            className="flex-1 rounded-xl py-4 text-lg"
+            onClick={goWorkspace}
+            title="前往 Prompt 工作区修改提示词"
+          >
+            <PencilLine size={20} />
+            提示词
+          </Button>
+          <Button
+            size="md"
+            className="flex-1 rounded-xl py-4 text-lg"
+            onClick={() => void generate()}
+            disabled={generating || !!batchRun || !status?.configured || !posSplit.base.trim()}
+          >
+            <Wand2 size={20} />
+            生成1张
+            <span className={cn("text-xs", free ? "opacity-80" : "text-amber-300")}>
+              {generating ? "生成中…" : free ? "· 免费" : "· 消耗点数"}
+            </span>
+          </Button>
+        </div>
         {!status?.configured && (
           <p className="text-center text-[11px] text-[var(--muted)]">
             尚未配置 Token，点击上方"配置 Token"前往设置

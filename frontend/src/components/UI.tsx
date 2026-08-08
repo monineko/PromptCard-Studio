@@ -103,6 +103,7 @@ export function Modal({
   children,
   wide,
   zIndex,
+  maxW,
 }: {
   open: boolean;
   onClose: () => void;
@@ -110,6 +111,7 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
   zIndex?: number;
+  maxW?: string;
 }) {
   return createPortal(
     <AnimatePresence>
@@ -125,7 +127,7 @@ export function Modal({
           <motion.div
             className={cn(
               "glass max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-2xl p-5 shadow-2xl",
-              wide ? "max-w-2xl" : "max-w-md"
+              maxW ?? (wide ? "max-w-2xl" : "max-w-md")
             )}
             initial={{ scale: 0.86, y: 18, opacity: 0 }}
             animate={{ scale: 1, y: 0, opacity: 1 }}

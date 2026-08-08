@@ -1,14 +1,12 @@
-import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Download,
   FileUp,
   FolderPlus,
-  GripVertical,
   ImagePlus,
   Pencil,
+  Pin,
   Plus,
   Search,
   Trash2,
@@ -19,8 +17,11 @@ import { api } from "../api";
 import { cn, categoryHue, SYSTEM_SECTIONS } from "../lib";
 import { useStore } from "../store";
 import { useCardImagePicker } from "../store/cardImagePicker";
-import type { CardMeta, Category, Section } from "../types";
+import type { CardMeta, Category } from "../types";
 import { Button, CategoryBadge, ConfirmDialog, IconBtn, Modal } from "./UI";
+
+const SYSTEM_ORDER = ["角色", "动作", "画师串", "负面"];
+const PALETTE = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
 
 function download(url: string, name: string) {
   const a = document.createElement("a");
@@ -37,19 +38,20 @@ function downloadCsvTemplate() {
   download(URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" })), "卡片导入模板.csv");
 }
 
+/** 卡片：上方 80% 演示图，下方 20% 两行文字（名称 + 预览），左上角类型角标。 */
 function PokerCard({ category, card }: { category: string; card: CardMeta }) {
   const addCardBlock = useStore((s) => s.addCardBlock);
   const openDetail = useStore((s) => s.openDetail);
   const colorMap = useStore((s) => s.categoryColor);
   const positive = useStore((s) => s.positive);
   const negative = useStore((s) => s.negative);
-  const startPick = useCardImagePicker((s) => s.startPick);
-  const navigate = useNavigate();
   const hue = colorMap[category] ?? categoryHue(category);
   const added = useMemo(() => {
     const key = `${category}:${card.name}`;
-    const has = (sections: Section[]) =>
-      sections.some((sec) => sec.blocks.some((b) => b.type === "card" && `${b.category}:${b.name}` === key));
+    const has = (sections: { blocks: { type: string; category?: string; name?: string }[] }[]) =>
+      sections.some((sec) =>
+        sec.blocks.some((b) => b.type === "card" && `${b.category}:${b.name}` === key)
+      );
     return has(positive) || has(negative);
   }, [positive, negative, category, card.name]);
   return (
@@ -60,12 +62,12 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
       exit={{ opacity: 0, scale: 0.92 }}
       whileHover={{ y: -6, scale: 1.03 }}
       onClick={() => openDetail(category, card.name)}
-      className="card-shine group relative h-60 w-44 cursor-pointer overflow-hidden rounded-2xl border border-white/15 text-white shadow-lg transition-shadow hover:shadow-2xl"
+      className="card-shine group relative h-52 w-40 cursor-pointer overflow-hidden rounded-2xl border border-white/15 text-white shadow-lg transition-shadow hover:shadow-2xl"
       title={`${category}：${card.name} · 点击编辑`}
     >
-      {/* 上半部分：演示图片（占卡面大部分面积） */}
+      {/* 上方 80%：演示图片 */}
       <div
-        className="absolute inset-x-0 top-0 h-[90%]"
+        className="absolute inset-x-0 top-0 h-[80%]"
         style={{ background: `linear-gradient(145deg, hsl(${hue} 45% 38%), hsl(${hue} 60% 24%))` }}
       >
         {card.image ? (
@@ -86,27 +88,49 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
         )}
       </div>
 
-      {/* 下半部分：分类渐变颜色带 + 单行卡片名称 */}
+      {/* 左上角类型角标：占宽 1/3、高 10% */}
       <div
-        className="absolute inset-x-0 bottom-0 flex h-[10%] items-center justify-center px-2"
+        className="absolute left-0 top-0 z-20 flex h-[10%] w-1/3 items-center justify-center overflow-hidden rounded-br-xl"
+        style={{
+          background: `linear-gradient(120deg, hsl(${hue} 58% 42%), hsl(${hue} 70% 28%))`,
+          boxShadow: "inset 0 -1px 0 rgba(255,255,255,0.18)",
+        }}
+      >
+        <span className="w-full truncate px-1 text-center text-[9px] font-bold leading-none text-white/95 drop-shadow">
+          {category}
+        </span>
+      </div>
+
+      {/* 下方 20%：两行文字（名称 + 预览） */}
+      <div
+        className="absolute inset-x-0 bottom-0 flex h-[20%] flex-col items-center justify-center gap-0.5 px-1.5"
         style={{
           background: `linear-gradient(120deg, hsl(${hue} 58% 46%), hsl(${hue} 70% 26%))`,
           boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
         }}
       >
-        <div className="truncate text-xs font-bold leading-none drop-shadow">{card.name}</div>
+        <div className="w-full truncate text-center text-xs font-bold leading-tight drop-shadow">
+          {card.name}
+        </div>
+        <div className="w-full truncate text-center text-[9px] leading-tight text-white/75">
+          {card.preview}
+        </div>
       </div>
 
       <IconBtn
-        title={card.image ? "更换演示图" : "添加演示图"}
-        className="absolute left-1.5 top-1.5 z-20 hidden h-7 w-7 rounded-lg bg-black/40 text-white/90 backdrop-blur transition-colors hover:bg-black/60 hover:text-white group-hover:inline-flex"
-        onClick={(e) => {
+        title="置顶（移到卡包首位作为封面）"
+        className="absolute right-9 top-1.5 z-20 hidden h-7 w-7 rounded-lg bg-black/40 text-white/90 backdrop-blur transition-colors hover:bg-black/60 hover:text-white group-hover:inline-flex"
+        onClick={async (e) => {
           e.stopPropagation();
-          navigate("/library");
-          startPick(category, card.name);
+          try {
+            await api.pinCard(category, card.name);
+            useStore.getState().refreshCategories();
+          } catch (err) {
+            useStore.getState().addToast(`置顶操作失败: ${(err as Error).message}`, "err");
+          }
         }}
       >
-        <ImagePlus size={14} />
+        <Pin size={13} />
       </IconBtn>
       <IconBtn
         title="添加到当前区域"
@@ -141,189 +165,289 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
   );
 }
 
-function CategoryPack({ category }: { category: Category }) {
-  const expanded = useStore((s) => !!s.expanded[category.name]);
-  const toggle = useStore((s) => s.toggleExpanded);
+/** 卡堆单层：按内部卡片外观渲染（左上类型角标 + 图 + 下方两行信息），无演示图时为分类色卡片。 */
+function MiniStackCard({
+  card,
+  category,
+  hue,
+}: {
+  card?: CardMeta;
+  category: string;
+  hue: number;
+}) {
+  const url = card?.image ? api.libraryImageUrl(card.image) : undefined;
+  return (
+    <div
+      className="relative h-full w-full overflow-hidden rounded-xl border border-white/20 text-white"
+      style={{
+        background: `linear-gradient(145deg, hsl(${hue} 45% 38%), hsl(${hue} 60% 24%))`,
+      }}
+    >
+      {url && (
+        <img
+          src={url}
+          alt=""
+          draggable={false}
+          loading="lazy"
+          className="absolute inset-x-0 top-0 h-[80%] w-full object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+          }}
+        />
+      )}
+      <div
+        className="absolute left-0 top-0 z-10 flex h-[10%] w-1/3 items-center justify-center overflow-hidden rounded-br-lg"
+        style={{ background: `linear-gradient(120deg, hsl(${hue} 58% 42%), hsl(${hue} 70% 28%))` }}
+      >
+        <span className="w-full truncate px-0.5 text-center text-[7px] font-bold leading-none text-white/95">
+          {category}
+        </span>
+      </div>
+      <div
+        className="absolute inset-x-0 bottom-0 flex h-[20%] flex-col items-center justify-center gap-px px-1"
+        style={{
+          background: `linear-gradient(120deg, hsl(${hue} 58% 46%), hsl(${hue} 70% 26%))`,
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
+        }}
+      >
+        <div className="w-full truncate text-center text-[9px] font-bold leading-tight drop-shadow">
+          {card?.name ?? category}
+        </div>
+        <div className="w-full truncate text-center text-[7px] leading-tight text-white/70">
+          {card?.preview || "点击打开"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 分类卡堆：复用图库相册堆效果（底层两张散落 + 封面），封面为第一张卡片。 */
+function CategoryStack({
+  category,
+  index,
+  onOpen,
+}: {
+  category: Category;
+  index: number;
+  onOpen: () => void;
+}) {
+  const colorMap = useStore((s) => s.categoryColor);
+  const hue = colorMap[category.name] ?? categoryHue(category.name);
+  const coverCards = category.cards.slice(0, 3);
+  return (
+    <button
+      onClick={onOpen}
+      className="album-card group flex animate-fade-in-up flex-col items-center text-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+      style={{ animationDelay: `${90 + index * 70}ms` }}
+    >
+      <div className="relative aspect-[3/4] w-[68%]">
+        <div className="absolute inset-0 translate-x-3 translate-y-2 rotate-[6deg] overflow-hidden rounded-xl border-4 border-white shadow-lg transition-all duration-500 ease-out group-hover:translate-x-5 group-hover:rotate-[9deg] group-hover:brightness-110">
+          <MiniStackCard card={coverCards[2]} category={category.name} hue={hue} />
+        </div>
+        <div className="absolute inset-0 -translate-x-2.5 -translate-y-1 rotate-[-5deg] overflow-hidden rounded-xl border-4 border-white shadow-lg transition-all duration-500 ease-out group-hover:-translate-x-5 group-hover:rotate-[-8deg] group-hover:brightness-110">
+          <MiniStackCard card={coverCards[1]} category={category.name} hue={hue} />
+        </div>
+        <div className="relative z-10 h-full w-full overflow-hidden rounded-2xl border-4 border-white shadow-[0_16px_36px_-12px_rgba(0,0,0,0.5)] transition-all duration-500 ease-out group-hover:-translate-y-2 group-hover:scale-[1.025] group-hover:shadow-[0_26px_52px_-14px_rgba(0,0,0,0.6)]">
+          <MiniStackCard card={coverCards[0]} category={category.name} hue={hue} />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
+          <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/40 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-sm transition-colors duration-300 group-hover:bg-black/55">
+            {category.count} 张卡片
+          </span>
+          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-medium tracking-wide text-white opacity-0 backdrop-blur-[4px] transition-all duration-300 group-hover:opacity-100">
+            点击查看 →
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-3.5 w-full px-1">
+        <h3 className="flex items-center justify-center gap-1.5 text-base font-bold">
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ background: `hsl(${hue} 70% 55%)`, boxShadow: `0 0 8px hsl(${hue} 70% 55% / .6)` }}
+          />
+          <span className="truncate text-[var(--text)] transition-colors duration-300 group-hover:text-[var(--accent)]">
+            {category.name}
+          </span>
+        </h3>
+        <p className="mt-1.5 truncate text-xs text-[var(--muted)]">{category.count} 张卡片 · 点击打开卡包</p>
+      </div>
+    </button>
+  );
+}
+
+/** 卡包弹窗：磨砂玻璃，一行 5 张卡，弹窗内滚轮翻页，底部保留新建/编辑/删除。 */
+function PackModal({
+  category,
+  onClose,
+}: {
+  category: Category;
+  onClose: () => void;
+}) {
   const setNewCardCategory = useStore((s) => s.setNewCardCategory);
   const setShowNewCard = useStore((s) => s.setShowNewCard);
-  const renameCategory = useStore((s) => s.renameCategory);
   const deleteCategory = useStore((s) => s.deleteCategory);
-  const saveCategoryColor = useStore((s) => s.saveCategoryColor);
   const colorMap = useStore((s) => s.categoryColor);
-  const [renaming, setRenaming] = useState(false);
-  const [newName, setNewName] = useState(category.name);
-  const [newHue, setNewHue] = useState(colorMap[category.name] ?? categoryHue(category.name));
+  const [editOpen, setEditOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const hue = colorMap[category.name] ?? categoryHue(category.name);
   const systemCategory = SYSTEM_SECTIONS.includes(category.name as (typeof SYSTEM_SECTIONS)[number]);
-  const PALETTE = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--input)]/40">
-      <div
-        className="flex cursor-pointer items-center gap-3 px-4 py-3.5 transition-colors hover:bg-[var(--hover)]"
-        onClick={() => toggle(category.name)}
-      >
-        <span
-          className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow"
-          style={{ background: `hsl(${hue} 60% 42%)` }}
-        >
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+    <Modal
+      open
+      onClose={onClose}
+      maxW="max-w-5xl"
+      title={
+        <span className="flex items-center gap-2">
+          <span
+            className="h-2.5 w-2.5 rounded-full"
+            style={{ background: `hsl(${hue} 70% 55%)`, boxShadow: `0 0 8px hsl(${hue} 70% 55% / .6)` }}
+          />
+          <span>{category.name}</span>
+          <span className="text-xs font-normal text-[var(--muted)]">{category.count} 张卡片</span>
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold">{category.name}</div>
-          <div className="text-xs text-[var(--muted)]">{category.count} 张卡片</div>
-        </div>
-        <span
-          className="mr-1 rounded-full px-2 py-0.5 text-[10px]"
-          style={{ background: `hsl(${hue} 60% 42% / .15)`, color: `hsl(${hue} 70% 60%)` }}
+      }
+    >
+      <div className="scroll-thin grid max-h-[58vh] grid-cols-5 gap-3 overflow-y-auto pr-1">
+        {category.cards.length === 0 ? (
+          <div className="col-span-5 flex flex-col items-center gap-2 py-12 text-[var(--muted)]">
+            <span className="text-sm">这个分类还没有卡片</span>
+            <span className="text-xs">点击下方「新建卡片」创建第一张</span>
+          </div>
+        ) : (
+          category.cards.map((card) => (
+            <div key={card.name} className="flex justify-center">
+              <PokerCard category={category.name} card={card} />
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+        <Button
+          variant="danger"
+          size="sm"
+          disabled={systemCategory}
+          onClick={() => setConfirmDel(true)}
+          title={systemCategory ? "系统默认分类不可删除" : "删除该类别"}
         >
-          {category.name}
-        </span>
-        <IconBtn
-          title="在此分类新建卡片"
-          onClick={(e) => {
-            e.stopPropagation();
+          <Trash2 size={13} /> 删除该类别
+        </Button>
+        <span className="ml-auto" />
+        <Button
+          className="!px-6 !py-2.5 text-sm"
+          onClick={() => {
             setNewCardCategory(category.name);
             setShowNewCard(true);
           }}
         >
-          <Plus size={15} />
-        </IconBtn>
-        <IconBtn
-          title="编辑类别"
-          onClick={(e) => {
-            e.stopPropagation();
-            setNewName(category.name);
-            setNewHue(colorMap[category.name] ?? categoryHue(category.name));
-            setRenaming(true);
-          }}
-        >
-          <Pencil size={13} />
-        </IconBtn>
-        {!systemCategory && (
-          <IconBtn
-            danger
-            title="删除分类"
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirmDel(true);
-            }}
-          >
-            <Trash2 size={13} />
-          </IconBtn>
-        )}
+          <Plus size={15} /> 新建卡片
+        </Button>
+        <Button variant="ghost" className="!px-6 !py-2.5 text-sm" onClick={() => setEditOpen(true)}>
+          <Pencil size={15} /> 编辑类别
+        </Button>
       </div>
 
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="flex flex-wrap gap-3 px-4 pb-4 pt-1">
-              {category.cards.length === 0 ? (
-                <span className="py-4 text-xs text-[var(--muted)]">分类为空，点击右上角 + 新建卡片</span>
-              ) : (
-                category.cards.map((card) => (
-                  <PokerCard key={card.name} category={category.name} card={card} />
-                ))
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <Modal open={renaming} onClose={() => setRenaming(false)} title={`编辑类别「${category.name}」`}>
-        <label className="mb-1 block text-xs text-[var(--muted)]">名称</label>
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          disabled={systemCategory}
-          className="mb-3 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
-        />
-        {systemCategory && (
-          <p className="-mt-2 mb-3 text-[10px] text-[var(--muted)]">系统默认分类，名称不可修改（仅可调整颜色）</p>
-        )}
-        <label className="mb-1 block text-xs text-[var(--muted)]">颜色</label>
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {PALETTE.map((h) => (
-            <button
-              key={h}
-              onClick={() => setNewHue(h)}
-              className="h-7 w-7 rounded-lg transition-transform hover:scale-110"
-              style={{
-                background: `hsl(${h} 65% 48%)`,
-                outline: newHue === h ? `2px solid var(--text)` : "none",
-                outlineOffset: 2,
-              }}
-            />
-          ))}
-          <input
-            type="range"
-            min={0}
-            max={359}
-            value={newHue}
-            onChange={(e) => setNewHue(Number(e.target.value))}
-            className="ml-1 w-28 accent-[var(--accent)]"
-            title="微调色相"
-          />
-          <span
-            className="ml-1 h-6 w-6 rounded-lg"
-            style={{ background: `hsl(${newHue} 65% 48%)`, boxShadow: "0 0 8px hsl(0 0% 0% / .3)" }}
-          />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setRenaming(false)}>取消</Button>
-          <Button
-            onClick={async () => {
-              const target = newName.trim() || category.name;
-              const nameChanged = target !== category.name && !systemCategory;
-              if (nameChanged) {
-                const ok = await renameCategory(category.name, target);
-                if (!ok) return;
-              }
-              if (newHue !== (colorMap[category.name] ?? categoryHue(category.name))) {
-                await saveCategoryColor(target, newHue);
-              }
-              setRenaming(false);
-            }}
-          >
-            保存
-          </Button>
-        </div>
-      </Modal>
+      <CategoryEditModal category={category} open={editOpen} onClose={() => setEditOpen(false)} />
       <ConfirmDialog
         open={confirmDel}
         title="删除分类"
         message={`确定删除分类「${category.name}」及其中的 ${category.count} 张卡片吗？会进入回收站。`}
         danger
-        onConfirm={() => { deleteCategory(category.name); setConfirmDel(false); }}
+        onConfirm={() => {
+          deleteCategory(category.name);
+          setConfirmDel(false);
+          onClose();
+        }}
         onCancel={() => setConfirmDel(false)}
       />
-    </div>
+    </Modal>
   );
 }
 
-function CategoryPackItem({ category }: { category: Category }) {
-  const controls = useDragControls();
+function CategoryEditModal({
+  category,
+  open,
+  onClose,
+}: {
+  category: Category;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const renameCategory = useStore((s) => s.renameCategory);
+  const saveCategoryColor = useStore((s) => s.saveCategoryColor);
+  const colorMap = useStore((s) => s.categoryColor);
+  const [newName, setNewName] = useState(category.name);
+  const [newHue, setNewHue] = useState(colorMap[category.name] ?? categoryHue(category.name));
+  const systemCategory = SYSTEM_SECTIONS.includes(category.name as (typeof SYSTEM_SECTIONS)[number]);
+
+  useEffect(() => {
+    if (open) {
+      setNewName(category.name);
+      setNewHue(colorMap[category.name] ?? categoryHue(category.name));
+    }
+  }, [open, category.name, colorMap]);
+
   return (
-    <Reorder.Item value={category.name} dragListener={false} dragControls={controls} layout>
-      <div className="flex">
-        <div
-          className="mr-0 flex cursor-grab touch-none items-center rounded-l-2xl border border-r-0 border-[var(--border)] bg-[var(--input)]/40 px-1.5 text-[var(--muted)] transition-colors hover:text-[var(--text)] active:cursor-grabbing"
-          title="拖动排序分类"
-          onPointerDown={(e) => controls.start(e)}
-        >
-          <GripVertical size={16} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <CategoryPack category={category} />
-        </div>
+    <Modal open={open} onClose={onClose} title={`编辑类别「${category.name}」`}>
+      <label className="mb-1 block text-xs text-[var(--muted)]">名称</label>
+      <input
+        value={newName}
+        onChange={(e) => setNewName(e.target.value)}
+        disabled={systemCategory}
+        className="mb-3 w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+      />
+      {systemCategory && (
+        <p className="-mt-2 mb-3 text-[10px] text-[var(--muted)]">系统默认分类，名称不可修改（仅可调整颜色）</p>
+      )}
+      <label className="mb-1 block text-xs text-[var(--muted)]">颜色</label>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {PALETTE.map((h) => (
+          <button
+            key={h}
+            onClick={() => setNewHue(h)}
+            className="h-7 w-7 rounded-lg transition-transform hover:scale-110"
+            style={{
+              background: `hsl(${h} 65% 48%)`,
+              outline: newHue === h ? `2px solid var(--text)` : "none",
+              outlineOffset: 2,
+            }}
+          />
+        ))}
+        <input
+          type="range"
+          min={0}
+          max={359}
+          value={newHue}
+          onChange={(e) => setNewHue(Number(e.target.value))}
+          className="ml-1 w-28 accent-[var(--accent)]"
+          title="微调色相"
+        />
+        <span
+          className="ml-1 h-6 w-6 rounded-lg"
+          style={{ background: `hsl(${newHue} 65% 48%)`, boxShadow: "0 0 8px hsl(0 0% 0% / .3)" }}
+        />
       </div>
-    </Reorder.Item>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onClose}>取消</Button>
+        <Button
+          onClick={async () => {
+            const target = newName.trim() || category.name;
+            const nameChanged = target !== category.name && !systemCategory;
+            if (nameChanged) {
+              const ok = await renameCategory(category.name, target);
+              if (!ok) return;
+            }
+            if (newHue !== (colorMap[category.name] ?? categoryHue(category.name))) {
+              await saveCategoryColor(target, newHue);
+            }
+            onClose();
+          }}
+        >
+          保存
+        </Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -335,12 +459,15 @@ export function CardPanel() {
   const setNewCardCategory = useStore((s) => s.setNewCardCategory);
   const setShowNewCategory = useStore((s) => s.setShowNewCategory);
   const setShowImport = useStore((s) => s.setShowImport);
-  const reorderCategories = useStore((s) => s.reorderCategories);
+  const [openCatName, setOpenCatName] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
+  const ordered = useMemo(() => {
+    const system = SYSTEM_ORDER.map((n) => categories.find((c) => c.name === n)).filter(Boolean) as Category[];
+    const rest = categories.filter((c) => !SYSTEM_ORDER.includes(c.name));
+    const all = [...system, ...rest];
     const q = search.trim().toLowerCase();
-    if (!q) return categories;
-    return categories
+    if (!q) return all;
+    return all
       .map((c) => ({
         ...c,
         cards: c.cards.filter(
@@ -349,6 +476,8 @@ export function CardPanel() {
       }))
       .filter((c) => c.name.toLowerCase().includes(q) || c.cards.length > 0);
   }, [categories, search]);
+
+  const openCategory = openCatName ? categories.find((c) => c.name === openCatName) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -380,23 +509,20 @@ export function CardPanel() {
         </Button>
       </div>
 
-      {filtered.length === 0 ? (
+      {ordered.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--border)] py-10 text-[var(--muted)]">
           <span className="text-sm">没有找到卡片</span>
           <span className="text-xs">点击"新建卡片"开始，或通过导入添加</span>
         </div>
       ) : (
-        <Reorder.Group
-          axis="y"
-          values={filtered.map((c) => c.name)}
-          onReorder={reorderCategories}
-          className="flex flex-col gap-3"
-        >
-          {filtered.map((c) => (
-            <CategoryPackItem key={c.name} category={c} />
+        <div className="scroll-thin grid max-h-[720px] grid-cols-4 gap-x-3 gap-y-4 overflow-y-auto pr-1">
+          {ordered.map((c, i) => (
+            <CategoryStack key={c.name} category={c} index={i} onOpen={() => setOpenCatName(c.name)} />
           ))}
-        </Reorder.Group>
+        </div>
       )}
+
+      {openCategory && <PackModal category={openCategory} onClose={() => setOpenCatName(null)} />}
 
       <CardDetailModal />
       <NewCardModal />

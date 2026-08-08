@@ -201,3 +201,29 @@ textarea {
 .pulse-pink {
   animation: pulse-pink 1.8s ease-in-out infinite;
 }
+
+/* ---------- 3D 翻转展开卡片按钮 ---------- */
+.flip-btn {
+  perspective: 1000px;
+  height: 40px;
+  z-index: 0;
+  transition: height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.flip-btn:hover {
+  height: 64px;
+  z-index: 10;
+}
+.flip-btn-inner {
+  transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.flip-btn:hover .flip-btn-inner {
+  transform: rotateY(180deg);
+}
+.flip-btn-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-btn-back {
+  transform: rotateY(180deg);
+}

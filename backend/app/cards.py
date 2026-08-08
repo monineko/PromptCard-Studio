@@ -5,6 +5,7 @@ import os
 import random
 import re
 import shutil
+import time
 import zipfile
 from pathlib import Path
 
@@ -18,6 +19,8 @@ WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
 _sequential_state: dict[str, int] = {}
 
 CARD_IMAGES_FILE = WILDCARDS_DIR / ".card-images.json"
+CARD_META_FILE = WILDCARDS_DIR / ".card-meta.json"
+CARD_PINS_FILE = WILDCARDS_DIR / ".card-pins.json"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 
 
@@ -65,23 +68,77 @@ def _save_card_images(images: dict[str, str]) -> None:
     )
 
 
+def _load_card_meta() -> dict[str, float]:
+    """卡片创建时间映射：{"<分类>:<名称>": 创建时间戳}。"""
+    if not CARD_META_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CARD_META_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_card_meta(meta: dict[str, float]) -> None:
+    WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
+    CARD_META_FILE.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _touch_card_meta(category: str, name: str, ts: float | None = None) -> None:
+    meta = _load_card_meta()
+    key = f"{_safe_name(category)}:{_safe_name(name)}"
+    if key in meta:
+        return
+    meta[key] = ts if ts is not None else time.time()
+    _save_card_meta(meta)
+
+
+def _load_card_pins() -> dict[str, list[str]]:
+    """卡片顺序：{"<分类>": [卡片名称…]}，列表首位 = 最前（新卡/置顶都插入首位）。"""
+    if not CARD_PINS_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CARD_PINS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_card_pins(pins: dict[str, list[str]]) -> None:
+    WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
+    CARD_PINS_FILE.write_text(
+        json.dumps(pins, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def list_categories() -> list[dict]:
     result = []
     if not WILDCARDS_DIR.exists():
         return result
     images = _load_card_images()
+    meta = _load_card_meta()
+    pins = _load_card_pins()
     for folder in sorted(p for p in WILDCARDS_DIR.iterdir() if p.is_dir()):
         cards = []
+        cat_pins = pins.get(folder.name) or []
+        pin_index = {n: i for i, n in enumerate(cat_pins)}
         for file in sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".txt"):
             content = _read_text(file)
+            key = f"{folder.name}:{file.stem}"
+            created = meta.get(key) or file.stat().st_ctime
             cards.append(
                 {
                     "name": file.stem,
                     "preview": _preview(content),
                     "updated": file.stat().st_mtime,
-                    "image": images.get(f"{folder.name}:{file.stem}") or None,
+                    "created": created,
+                    "image": images.get(key) or None,
                 }
             )
+        # 顺序列表（新卡/置顶在最前）优先，未收录的卡片按创建时间倒序兜底
+        cards.sort(key=lambda c: (pin_index.get(c["name"], 10**9), -c["created"], c["name"]))
         result.append({"name": folder.name, "count": len(cards), "cards": cards})
     settings = load_settings()
     order = settings.get("category_order") or []
@@ -112,6 +169,15 @@ def create_card(category: str, name: str, content: str) -> dict:
     if path.exists():
         raise FileExistsError(f"卡片已存在: <{cat}:{card_name}>")
     path.write_text(content or "", encoding="utf-8")
+    _touch_card_meta(cat, card_name)
+    # 新添加的卡片自动放到分类第一位
+    pins = _load_card_pins()
+    cat_pins = list(pins.get(cat) or [])
+    if card_name in cat_pins:
+        cat_pins.remove(card_name)
+    cat_pins.insert(0, card_name)
+    pins[cat] = cat_pins
+    _save_card_pins(pins)
     return {"category": cat, "name": card_name, "content": content or ""}
 
 
@@ -142,6 +208,24 @@ def update_card(
     if old_key != new_key and old_key in images:
         images[new_key] = images.pop(old_key)
         _save_card_images(images)
+    meta = _load_card_meta()
+    if old_key != new_key:
+        if old_key in meta:
+            meta[new_key] = meta.pop(old_key)
+        else:
+            meta[new_key] = time.time()
+        _save_card_meta(meta)
+    # 置顶记录跟随卡片改名/移动分类
+    pins = _load_card_pins()
+    old_cat = _safe_name(category)
+    old_card = _safe_name(name)
+    cat_pins = list(pins.get(old_cat) or [])
+    if old_card in cat_pins:
+        cat_pins[cat_pins.index(old_card)] = dest_name
+        pins[dest_cat] = cat_pins
+        if dest_cat != old_cat:
+            pins.pop(old_cat, None)
+        _save_card_pins(pins)
     return {"category": dest_cat, "name": dest_name, "content": content or ""}
 
 
@@ -155,6 +239,20 @@ def delete_card(category: str, name: str) -> None:
     if key in images:
         images.pop(key)
         _save_card_images(images)
+    meta = _load_card_meta()
+    if key in meta:
+        meta.pop(key)
+        _save_card_meta(meta)
+    pins = _load_card_pins()
+    cat_pins = list(pins.get(_safe_name(category)) or [])
+    card_name = _safe_name(name)
+    if card_name in cat_pins:
+        cat_pins.remove(card_name)
+        if cat_pins:
+            pins[_safe_name(category)] = cat_pins
+        else:
+            pins.pop(_safe_name(category), None)
+        _save_card_pins(pins)
 
 
 def create_category(name: str) -> dict:
@@ -189,6 +287,21 @@ def rename_category(old_name: str, new_name: str) -> dict:
             changed = True
     if changed:
         _save_card_images(images)
+    meta = _load_card_meta()
+    prefix = f"{_safe_name(old_name)}:"
+    changed_meta = False
+    for key in list(meta):
+        if key.startswith(prefix):
+            meta[f"{dst.name}:{key[len(prefix):]}"] = meta.pop(key)
+            changed_meta = True
+    if changed_meta:
+        _save_card_meta(meta)
+    pins = _load_card_pins()
+    old_cat = _safe_name(old_name)
+    new_cat = dst.name
+    if old_cat in pins and new_cat != old_cat:
+        pins[new_cat] = pins.pop(old_cat)
+        _save_card_pins(pins)
     return {"name": dst.name}
 
 
@@ -210,6 +323,32 @@ def delete_category(name: str) -> None:
         for key in [k for k in images if k.startswith(prefix)]:
             images.pop(key)
         _save_card_images(images)
+    meta = _load_card_meta()
+    if any(k.startswith(prefix) for k in meta):
+        for key in [k for k in meta if k.startswith(prefix)]:
+            meta.pop(key)
+        _save_card_meta(meta)
+    pins = _load_card_pins()
+    if _safe_name(name) in pins:
+        del pins[_safe_name(name)]
+        _save_card_pins(pins)
+
+
+def pin_card_to_front(category: str, name: str) -> dict:
+    """把卡片抽出来放到分类第一位（作为封面），无额外状态。"""
+    cat = _safe_name(category)
+    card_name = _safe_name(name)
+    path = _card_path(cat, card_name)
+    if not path.exists():
+        raise FileNotFoundError(f"卡片不存在: <{cat}:{card_name}>")
+    pins = _load_card_pins()
+    cat_pins = list(pins.get(cat) or [])
+    if card_name in cat_pins:
+        cat_pins.remove(card_name)
+    cat_pins.insert(0, card_name)
+    pins[cat] = cat_pins
+    _save_card_pins(pins)
+    return {"ok": True}
 
 
 def list_cards_images() -> dict:

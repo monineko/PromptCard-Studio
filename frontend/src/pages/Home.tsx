@@ -1,35 +1,38 @@
-import { CardPanel } from "../components/CardPanel";
 import { BatchPanel } from "../components/BatchPanel";
+import { CardPanel } from "../components/CardPanel";
 import { GenerationPanel } from "../components/GenerationPanel";
+import { HomeNav } from "../components/HomeNav";
 import { Workspace } from "../components/Workspace";
 
 export function Home() {
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-4">
-      <section className="glass rounded-2xl p-4">
+      <section id="prompt-workspace" className="glass relative scroll-mt-20 rounded-2xl p-4">
         <h1 className="mb-3 text-base font-semibold">Prompt 工作区</h1>
         <Workspace />
       </section>
 
-      <section className="flex flex-col gap-4">
+      <section id="prompt-cards" className="flex scroll-mt-20 flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">添加 Wildcards</h2>
+          <h2 className="text-base font-semibold">Prompt 卡包</h2>
           <span className="text-xs text-[var(--muted)]">
-            点击卡片包展开；卡片添加后自动进入对应分区
+            点击卡包查看卡片；点击卡片可添加到工作区
           </span>
         </div>
         <CardPanel />
       </section>
 
-      <section className="glass rounded-2xl p-4">
+      <section id="ai-settings" className="glass relative scroll-mt-20 rounded-2xl p-4">
         <h2 className="mb-3 text-base font-semibold">参数设置</h2>
         <GenerationPanel />
       </section>
 
-      <section className="glass rounded-2xl p-4">
+      <section id="batch-generation" className="glass scroll-mt-20 rounded-2xl p-4">
         <h2 className="mb-3 text-base font-semibold">批量生成</h2>
         <BatchPanel />
       </section>
+
+      <HomeNav />
     </div>
   );
 }

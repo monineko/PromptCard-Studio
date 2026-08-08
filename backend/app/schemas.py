@@ -32,6 +32,11 @@ class CardImageIn(BaseModel):
     path: str
 
 
+class CardPinIn(BaseModel):
+    category: str = ""
+    name: str = ""
+
+
 class ExpandRequest(BaseModel):
     text: str
 

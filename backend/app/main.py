@@ -22,6 +22,7 @@ from .schemas import (
     BatchStartIn,
     CardImageIn,
     CardIn,
+    CardPinIn,
     CardUpdate,
     CategoryColor,
     CategoryOrder,
@@ -228,6 +229,14 @@ def remove_card_image(category: str, name: str):
         return cards_service.remove_card_image(category, name)
     except Exception as e:
         raise _as_http(e)
+
+
+@app.post("/api/cards/pin")
+def toggle_card_pin(body: CardPinIn):
+    try:
+        return cards_service.pin_card_to_front(body.category, body.name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
 
 
 # ---------- 工作区 ----------

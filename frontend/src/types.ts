@@ -10,7 +10,12 @@ export type Section = {
   blocks: Block[];
 };
 
-export type CardMeta = { name: string; preview: string; updated: number; image?: string | null };
+export type CardMeta = {
+  name: string;
+  preview: string;
+  updated: number;
+  image?: string | null;
+};
 export type Category = { name: string; count: number; cards: CardMeta[]; color?: number | null };
 
 export type ThemeState = {
