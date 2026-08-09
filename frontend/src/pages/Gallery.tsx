@@ -28,6 +28,7 @@ import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
 import { SendToWorkspaceModal } from "../components/gallery/SendToWorkspaceModal";
 import { ZoomableImage } from "../components/gallery/ZoomableImage";
+import { LoadingGate } from "../components/LoadingGate";
 import { useSidebarStore } from "../sidebarStore";
 import { useStore } from "../store";
 import { Button } from "../components/UI";
@@ -69,6 +70,8 @@ const CATEGORY_LABEL: Record<LibraryCategoryKey, string> = {
 
 type Group = { key: string; label: string; categoryLabel?: string; items: LibraryImageItem[] };
 type CoverEntry = { url: string; name: string; date: string };
+// 加载门最短展示时长：每次进入图库都播放动画，并给封面图片留出缓冲时间
+const ENTRY_GATE_MIN_MS = 800;
 
 function latestDate(list: CoverEntry[] | undefined): string | undefined {
   if (!list?.length) return undefined;
@@ -123,6 +126,9 @@ export function Gallery() {
   const [summary, setSummary] = useState<LibrarySummary | null>(null);
   const [covers, setCovers] = useState<Partial<Record<LibraryCategoryKey, CoverEntry[]>>>({});
   const [coverMap, setCoverMap] = useState<Partial<Record<LibraryCategoryKey, string>>>({});
+  const [backTwo, setBackTwo] = useState<Partial<Record<LibraryCategoryKey, string[]>>>({});
+  const [entryLoading, setEntryLoading] = useState(true);
+  const [entryProgress, setEntryProgress] = useState(0);
   const [category, setCategory] = useState<LibraryCategoryKey | null>(null);
   const [items, setItems] = useState<LibraryImageItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -154,6 +160,17 @@ export function Gallery() {
   const libraryTarget = useNavStore((s) => s.libraryTarget);
   const consumeLibraryTarget = useNavStore((s) => s.consumeLibraryTarget);
   const [pickCandidate, setPickCandidate] = useState<LibraryImageItem | null>(null);
+  const gateStartRef = useRef(Date.now());
+  const gateOpenedRef = useRef(false);
+  // 放行入口页：图片加载完成 + 最短展示时长都满足后再关闭加载门
+  const openEntry = useCallback(() => {
+    if (gateOpenedRef.current) return;
+    gateOpenedRef.current = true;
+    const remain = ENTRY_GATE_MIN_MS - (Date.now() - gateStartRef.current);
+    const doOpen = () => setEntryLoading(false);
+    if (remain > 0) window.setTimeout(doOpen, remain);
+    else doOpen();
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -161,8 +178,10 @@ export function Gallery() {
       setSummary(s);
     } catch (e) {
       addToast(`图库加载失败: ${(e as Error).message}`, "err");
+      // 数据拉取失败也不能卡在加载门：放行进入空态页面
+      openEntry();
     }
-  }, [addToast]);
+  }, [addToast, openEntry]);
 
   useEffect(() => {
     refresh();
@@ -202,11 +221,53 @@ export function Gallery() {
         else effective[key] = list[0].url;
       }
       setCoverMap(effective);
+      // 固定本次渲染的堆叠背景照片，并预加载全部即将显示的封面
+      const backTwoNext: Partial<Record<LibraryCategoryKey, string[]>> = {};
+      const preloadUrls: string[] = [];
+      for (const key of CATEGORY_ORDER) {
+        const list = map[key] ?? [];
+        if (!list.length) continue;
+        const cover = effective[key];
+        const pool = cover ? list.filter((c) => c.url !== cover) : list;
+        const picks = [...pool].sort(() => Math.random() - 0.5).slice(0, 2).map((c) => c.url);
+        backTwoNext[key] = picks;
+        preloadUrls.push(cover ?? list[0].url, ...picks);
+      }
+      setBackTwo(backTwoNext);
+      if (gateOpenedRef.current) return;
+      const urls = [...new Set(preloadUrls)].filter(Boolean);
+      if (!urls.length) {
+        setEntryProgress(1);
+        openEntry();
+        return;
+      }
+      let loaded = 0;
+      const total = urls.length;
+      // 兜底：个别图片长时间不触发 onload/onerror 时 12 秒后放行，避免卡死在加载门
+      const forceOpen = window.setTimeout(() => {
+        if (cancelled || gateOpenedRef.current) return;
+        openEntry();
+      }, 12000);
+      const finishOne = () => {
+        if (cancelled) return;
+        loaded += 1;
+        setEntryProgress(loaded / total);
+        if (loaded >= total) {
+          window.clearTimeout(forceOpen);
+          openEntry();
+        }
+      };
+      for (const u of urls) {
+        const img = new Image();
+        img.onload = finishOne;
+        img.onerror = finishOne;
+        img.src = u;
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [category, summary]);
+  }, [category, summary, openEntry]);
 
   // 离开图片库页面时恢复默认背景素材
   useEffect(() => {
@@ -281,18 +342,6 @@ export function Gallery() {
       setQuickPickBusy(false);
     }
   }, [addToast, category, quickPickBusy, refresh, selectedPaths]);
-
-  // 每个分类随机挑两张非封面图片作为堆叠卡片的背景照片（covers/coverMap 更新时重算）
-  const backTwoMap = useMemo(() => {
-    const m: Partial<Record<LibraryCategoryKey, string[]>> = {};
-    for (const key of CATEGORY_ORDER) {
-      const list = covers[key] ?? [];
-      const cover = coverMap[key];
-      const pool = cover ? list.filter((c) => c.url !== cover) : list;
-      m[key] = [...pool].sort(() => Math.random() - 0.5).slice(0, 2).map((c) => c.url);
-    }
-    return m;
-  }, [covers, coverMap]);
 
   const groups = useMemo(() => (category ? buildGroups(items, category) : []), [category, items]);
   const slides = useMemo(
@@ -604,7 +653,8 @@ export function Gallery() {
   // ---------- 分类入口页 ----------
   if (!category) {
     return (
-      <div className="animate-fade-in-up mx-auto w-full max-w-5xl px-4 py-6">
+      <LoadingGate loading={entryLoading} progress={entryProgress} label="翻箱倒柜ing~">
+        <div className="animate-fade-in-up mx-auto w-full max-w-5xl px-4 py-6">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-bold tracking-wide">图片库</h1>
@@ -673,7 +723,7 @@ export function Gallery() {
             const info = summary?.categories.find((c) => c.key === key);
             const list = covers[key] ?? [];
             const cover = coverMap[key];
-            const urls = [cover ?? list[0]?.url, ...(backTwoMap[key] ?? [])]
+            const urls = [cover ?? list[0]?.url, ...(backTwo[key] ?? [])]
               .filter((u): u is string => !!u)
               .slice(0, 3);
             return (
@@ -700,7 +750,8 @@ export function Gallery() {
             );
           })}
         </div>
-      </div>
+        </div>
+      </LoadingGate>
     );
   }
 
