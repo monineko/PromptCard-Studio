@@ -873,7 +873,7 @@ function ImportModal() {
         ? `，新建分类：${result.created_categories.join("、")}`
         : "";
       addToast(
-        `导入完成：新增 ${result.imported}，跳过 ${result.skipped}${result.errors?.length ? `，错误 ${result.errors.length}` : ""}${created}`
+        `导入完成：新增 ${result.imported}，跳过 ${result.skipped}${result.renamed ? `，重名加后缀 ${result.renamed} 个` : ""}${result.errors?.length ? `，错误 ${result.errors.length}` : ""}${created}`
       );
       setFile(null);
     } catch (e) {
@@ -891,9 +891,10 @@ function ImportModal() {
     <Modal open={open} onClose={() => setOpen(false)} title="导入卡片">
       <div className="space-y-3">
         <p className="text-xs leading-relaxed text-[var(--muted)]">
-          使用内置的「卡片导入模板.xlsx」（四列：分类 / 名称 / 提示词 / 图片可选）。
-          第 1 行表头、第 2 行示例会自动跳过，请从第 3 行开始填写；填写不存在的分类会自动创建；
-          图片列支持单元格内嵌图片或本地图片路径，导入后图片会复制进图库未评分目录并自动设为卡片演示图。
+          使用内置的「卡片导入模板.xlsx」，填写不存在的分类会自动创建；图片列支持单元格内嵌图片或本地图片路径，导入后图片会复制进图库。
+        </p>
+        <p className="text-xs font-medium" style={{ color: "#ffb6c1" }}>
+          模板内有同名 card 会创建新 card 并添加后缀（1）
         </p>
         <div className="flex gap-2">
           <input

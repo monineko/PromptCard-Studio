@@ -148,6 +148,8 @@ export type ImportResult = {
   errors: string[];
   /** 导入过程中自动创建的卡包分类 */
   created_categories?: string[];
+  /** 因同名而自动加后缀（1）新建的卡片数 */
+  renamed?: number;
 };
 
 export type MoveImagesResult = {

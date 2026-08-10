@@ -520,20 +520,33 @@ def _library_root_dir() -> Path:
     return root
 
 
+def _unique_card_name(category: str, name: str) -> str:
+    """同名卡片自动加后缀：名称 (1)、名称 (2)…，保证模板里的每一行都能导入。"""
+    if get_card(category, name) is None:
+        return name
+    n = 1
+    while True:
+        candidate = f"{name} ({n})"
+        if get_card(category, candidate) is None:
+            return candidate
+        n += 1
+
+
 def import_template_xlsx(file_bytes: bytes) -> dict:
     """从「卡片导入模板」.xlsx 导入卡片。
 
     列：分类 / 名称 / 提示词 / 图片（可选）。
-    - 第 1 行表头、第 2 行示例行自动跳过，从第 3 行开始读取；
-    - 分类不存在时自动创建卡包；中文名称/提示词均支持，重名卡片跳过；
-    - 图片列支持 WPS 单元格内嵌图片（DISPIMG）或本地图片路径，
+    - 仅第 1 行表头自动跳过，从第 2 行起均为数据行；
+    - 分类不存在时自动创建卡包；中文名称/提示词均支持；
+      与已有卡片同名时自动创建新卡片并加后缀（1）（2）…，不会跳过；
+    - 图片列支持 WPS 单元格内嵌图片（DISPIMG）、Excel/WPS 浮动图片或本地图片路径，
       图片会复制到图库未评分目录（library/<日期>/）并自动设为该卡片的演示图。
     """
     import xml.etree.ElementTree as ET
 
     if not file_bytes:
         raise ValueError("文件为空")
-    imported, skipped, errors = 0, 0, []
+    imported, skipped, errors, renamed_count = 0, 0, [], 0
 
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
         names = z.namelist()
@@ -561,8 +574,59 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
                     continue
                 rid = blip.attrib.get(f"{_REL_NS}embed", "")
                 media = rels.get(rid, "").replace("../", "xl/")
+                if media and not media.startswith("xl/"):
+                    media = "xl/" + media.lstrip("/")
                 if name_id and media in names:
                     cell_images[name_id] = z.read(media)
+
+        # 传统浮动图片（xl/drawings）：按锚点行/列关联到数据行
+        row_images: dict[int, bytes] = {}
+        drawing_rel_path = "xl/worksheets/_rels/sheet1.xml.rels"
+        if drawing_rel_path in names:
+            drels_root = ET.fromstring(z.read(drawing_rel_path))
+            drawing_target = ""
+            for rel in drels_root:
+                if "drawing" in rel.attrib.get("Type", ""):
+                    drawing_target = rel.attrib.get("Target", "")
+                    break
+            if drawing_target:
+                drawing_path = drawing_target.replace("../", "xl/")
+                if drawing_path and not drawing_path.startswith("xl/"):
+                    drawing_path = "xl/" + drawing_path.lstrip("/")
+                if drawing_path not in names:
+                    drawing_path = "xl/" + drawing_target.lstrip("/")
+                if drawing_path in names:
+                    d_rels_path = drawing_path.rsplit("/", 1)[0] + "/_rels/" + drawing_path.rsplit("/", 1)[1] + ".rels"
+                    media_map: dict[str, bytes] = {}
+                    if d_rels_path in names:
+                        dr_root = ET.fromstring(z.read(d_rels_path))
+                        for rel in dr_root:
+                            media = rel.attrib.get("Target", "").replace("../", "xl/")
+                            if media and not media.startswith("xl/"):
+                                media = "xl/" + media.lstrip("/")
+                            if media in names:
+                                media_map[rel.attrib.get("Id", "")] = z.read(media)
+                    draw_root = ET.fromstring(z.read(drawing_path))
+                    for anchor in draw_root.iter():
+                        tag = anchor.tag
+                        if not (tag.endswith("}twoCellAnchor") or tag.endswith("}oneCellAnchor")):
+                            continue
+                        frm = anchor.find(f"{_SPREADSHEET_DRAWING_NS}from")
+                        to = anchor.find(f"{_SPREADSHEET_DRAWING_NS}to")
+                        if frm is None:
+                            continue
+                        col0 = int(frm.findtext(f"{_SPREADSHEET_DRAWING_NS}col") or 0)
+                        row0 = int(frm.findtext(f"{_SPREADSHEET_DRAWING_NS}row") or 0)
+                        col1 = int(to.findtext(f"{_SPREADSHEET_DRAWING_NS}col") or col0) if to is not None else col0
+                        blip = anchor.find(f".//{_DRAWING_NS}blip")
+                        if blip is None:
+                            continue
+                        rid = blip.attrib.get(f"{_REL_NS}embed", "")
+                        if rid not in media_map:
+                            continue
+                        # 图片应放在「图片（可选）」列（D，0 基列号 3）
+                        if col0 <= 3 <= col1:
+                            row_images.setdefault(row0 + 1, media_map[rid])
 
         rows: list[tuple[int, dict[str, dict]]] = []
         sheet_root = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
@@ -598,8 +662,8 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
         return (row_cells.get(col) or {}).get("formula", "")
 
     for r, row_cells in rows:
-        if r <= 2:
-            continue  # 表头 + 示例行
+        if r <= 1:
+            continue  # 第 1 行表头
         category = _text(row_cells, "A")
         name = _text(row_cells, "B")
         content = _text(row_cells, "C")
@@ -621,17 +685,22 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
             if image_bytes is None:
                 errors.append(f"第 {r} 行：内嵌图片引用无效")
         else:
-            img_path = _text(row_cells, "D")
-            if img_path:
-                p = Path(img_path).expanduser()
-                if p.exists() and p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS:
-                    image_bytes = p.read_bytes()
-                    image_name = p.name
-                else:
-                    errors.append(f"第 {r} 行：图片路径无效或不是图片文件")
+            image_bytes = row_images.get(r)
+            if image_bytes is None:
+                img_path = _text(row_cells, "D")
+                if img_path:
+                    p = Path(img_path).expanduser()
+                    if p.exists() and p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS:
+                        image_bytes = p.read_bytes()
+                        image_name = p.name
+                    else:
+                        errors.append(f"第 {r} 行：图片路径无效或不是图片文件")
 
+        final_name = _unique_card_name(category, name)
+        if final_name != name:
+            renamed_count += 1
         try:
-            create_card(category, name, content)
+            create_card(category, final_name, content)
             imported += 1
         except FileExistsError:
             skipped += 1
@@ -648,7 +717,7 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 dest = dest_dir / f"{_safe_name(name)}_{uuid.uuid4().hex[:6]}{ext}"
                 dest.write_bytes(image_bytes)
-                set_card_image(category, name, dest.relative_to(lib_root).as_posix())
+                set_card_image(category, final_name, dest.relative_to(lib_root).as_posix())
             except Exception as e:
                 errors.append(f"第 {r} 行：图片保存失败 {e}")
 
@@ -658,4 +727,5 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
         "skipped": skipped,
         "errors": errors,
         "created_categories": sorted(after - before),
+        "renamed": renamed_count,
     }
