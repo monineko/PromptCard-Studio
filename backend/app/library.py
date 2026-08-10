@@ -136,8 +136,9 @@ def _image_size(file: Path) -> tuple[int, int]:
 def _category_of(parts: tuple[str, ...]) -> tuple[str, str]:
     """根据相对路径判断大分类与日期分组。返回 (category_key, date_group)。
 
-    新目录结构：<前缀>-<日期>/图片（如 Treasure-2026-08-06/a.png）；
-    兼容旧结构：<分类名>/<日期>/图片；其余顶层目录视为未评分/自定义。
+    当前目录结构：<前缀>/<前缀>-<日期>/图片（如 Treasure/Treasure-2026-08-06/a.png）；
+    兼容旧结构：根目录 <前缀>-<日期>/图片、<分类名>/<日期>/图片；
+    其余顶层目录视为未评分/自定义。
     """
     if not parts:
         return "unrated", ""
@@ -145,8 +146,12 @@ def _category_of(parts: tuple[str, ...]) -> tuple[str, str]:
     for key, prefixes in CATEGORY_PREFIXES.items():
         for prefix in prefixes:
             if head.lower() == prefix.lower():
-                date_group = parts[1] if len(parts) > 1 else ""
-                return key, date_group
+                if len(parts) > 1:
+                    second = parts[1]
+                    if second.lower().startswith(prefix.lower() + "-"):
+                        return key, second[len(prefix) + 1 :]
+                    return key, second
+                return key, ""
             if head.lower().startswith(prefix.lower() + "-"):
                 return key, head[len(prefix) + 1 :]
     # 不在任何已知分类目录下 -> 未评分；日期分组取一层父目录名（根目录为空）
@@ -412,12 +417,12 @@ def _send_to_trash(path: Path) -> tuple[str, Path | None]:
 
 
 def _target_folder(tag: str, today: str) -> Path:
-    """筛选/移动目标目录：library/<前缀>-<日期>。"""
+    """筛选/移动目标目录：library/<前缀>/<前缀>-<日期>（分类大文件夹内部按日期归档）。"""
     prefixes = CATEGORY_PREFIXES.get(tag)
     prefix = prefixes[0] if prefixes else None
     if not prefix:
         raise ValueError(f"未知目标分类: {tag}")
-    return _library_root() / f"{prefix}-{today}"
+    return _library_root() / prefix / f"{prefix}-{today}"
 
 
 def apply_review(moves: list[dict], recycle_reject: bool = True) -> dict:
