@@ -6,10 +6,12 @@ import random
 import re
 import shutil
 import time
+import uuid
 import zipfile
+from datetime import date
 from pathlib import Path
 
-from .config import WILDCARDS_DIR, load_settings, save_settings
+from .config import LIBRARY_DIR, PROJECT_ROOT, WILDCARDS_DIR, load_settings, save_settings
 from .library import resolve_image
 
 SYSTEM_CATEGORIES = {"角色", "动作", "画师串", "负面"}
@@ -35,6 +37,11 @@ CARD_IMAGES_FILE = WILDCARDS_DIR / ".card-images.json"
 CARD_META_FILE = WILDCARDS_DIR / ".card-meta.json"
 CARD_PINS_FILE = WILDCARDS_DIR / ".card-pins.json"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
+TEMPLATE_FILE = PROJECT_ROOT / "templates" / "卡片导入模板.xlsx"
+_SHEET_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_SPREADSHEET_DRAWING_NS = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
+_DRAWING_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
 def _safe_name(name: str) -> str:
@@ -498,71 +505,157 @@ def export_zip() -> bytes:
     return buffer.getvalue()
 
 
-def import_anr_directory(path_str: str) -> dict:
-    source = Path(path_str)
-    if not source.exists() or not source.is_dir():
-        raise FileNotFoundError(f"目录不存在: {path_str}")
-    imported, skipped = 0, 0
-    for folder in sorted(p for p in source.iterdir() if p.is_dir()):
-        for file in sorted(p for p in folder.iterdir() if p.suffix.lower() == ".txt"):
-            try:
-                create_card(folder.name, file.stem, _read_text(file))
-                imported += 1
-            except FileExistsError:
-                skipped += 1
-    for file in sorted(p for p in source.iterdir() if p.suffix.lower() == ".txt"):
-        try:
-            create_card("未分类", file.stem, _read_text(file))
-            imported += 1
-        except FileExistsError:
-            skipped += 1
-    return {"imported": imported, "skipped": skipped, "errors": []}
+def template_file() -> Path:
+    """内置的卡片导入模板（随仓库分发，前端可下载）。"""
+    return TEMPLATE_FILE
 
 
-def import_csv_file(file_bytes: bytes) -> dict:
-    text = file_bytes.decode("utf-8-sig")
-    reader = csv.reader(io.StringIO(text))
-    rows = list(reader)
-    if rows and rows[0] and rows[0][0].strip() in ("分类", "类别", "category"):
-        rows = rows[1:]
+def _library_root_dir() -> Path:
+    """图库根目录（与 library.py 解析逻辑一致，支持设置页自定义路径）。"""
+    settings = load_settings()
+    root = Path(settings.get("library_path") or "").expanduser()
+    if not root.is_absolute():
+        root = LIBRARY_DIR / root
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def import_template_xlsx(file_bytes: bytes) -> dict:
+    """从「卡片导入模板」.xlsx 导入卡片。
+
+    列：分类 / 名称 / 提示词 / 图片（可选）。
+    - 第 1 行表头、第 2 行示例行自动跳过，从第 3 行开始读取；
+    - 分类不存在时自动创建卡包；中文名称/提示词均支持，重名卡片跳过；
+    - 图片列支持 WPS 单元格内嵌图片（DISPIMG）或本地图片路径，
+      图片会复制到图库未评分目录（library/<日期>/）并自动设为该卡片的演示图。
+    """
+    import xml.etree.ElementTree as ET
+
+    if not file_bytes:
+        raise ValueError("文件为空")
     imported, skipped, errors = 0, 0, []
-    for idx, row in enumerate(rows, start=1):
-        if len(row) < 3:
-            errors.append(f"第 {idx} 行：列数不足")
+
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+        names = z.namelist()
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+            for si in root:
+                shared.append("".join(t.text or "" for t in si.iter(_SHEET_NS + "t")))
+
+        # WPS 单元格内嵌图片：cNvPr 的 name 即 DISPIMG 公式里的图片 ID
+        cell_images: dict[str, bytes] = {}
+        if "xl/cellimages.xml" in names and "xl/_rels/cellimages.xml.rels" in names:
+            rels: dict[str, str] = {}
+            rel_root = ET.fromstring(z.read("xl/_rels/cellimages.xml.rels"))
+            for rel in rel_root:
+                rels[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
+            ci_root = ET.fromstring(z.read("xl/cellimages.xml"))
+            for pic in ci_root.iter(_SPREADSHEET_DRAWING_NS + "pic"):
+                name_id = ""
+                for nv in pic.iter(_SPREADSHEET_DRAWING_NS + "cNvPr"):
+                    name_id = nv.attrib.get("name", "")
+                    break
+                blip = pic.find(f".//{_DRAWING_NS}blip")
+                if blip is None:
+                    continue
+                rid = blip.attrib.get(f"{_REL_NS}embed", "")
+                media = rels.get(rid, "").replace("../", "xl/")
+                if name_id and media in names:
+                    cell_images[name_id] = z.read(media)
+
+        rows: list[tuple[int, dict[str, dict]]] = []
+        sheet_root = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+        for row in sheet_root.iter(_SHEET_NS + "row"):
+            r = int(row.attrib.get("r", "0"))
+            cells: dict[str, dict] = {}
+            for c in row.iter(_SHEET_NS + "c"):
+                ref = c.attrib.get("r", "")
+                col = "".join(ch for ch in ref if ch.isalpha())
+                formula = c.find(_SHEET_NS + "f")
+                if formula is not None:
+                    cells[col] = {"formula": formula.text or ""}
+                    continue
+                v = c.find(_SHEET_NS + "v")
+                if v is None:
+                    continue
+                if c.attrib.get("t") == "s":
+                    try:
+                        cells[col] = {"text": shared[int(v.text)]}
+                    except (ValueError, IndexError):
+                        cells[col] = {"text": ""}
+                else:
+                    cells[col] = {"text": v.text or ""}
+            rows.append((r, cells))
+        rows.sort(key=lambda x: x[0])
+
+    before = {p.name for p in WILDCARDS_DIR.iterdir() if p.is_dir()} if WILDCARDS_DIR.exists() else set()
+
+    def _text(row_cells: dict[str, dict], col: str) -> str:
+        return (row_cells.get(col) or {}).get("text", "").strip()
+
+    def _formula(row_cells: dict[str, dict], col: str) -> str:
+        return (row_cells.get(col) or {}).get("formula", "")
+
+    for r, row_cells in rows:
+        if r <= 2:
+            continue  # 表头 + 示例行
+        category = _text(row_cells, "A")
+        name = _text(row_cells, "B")
+        content = _text(row_cells, "C")
+        if not category and not name and not content and not _formula(row_cells, "D"):
+            continue  # 空行
+        if not category:
+            errors.append(f"第 {r} 行：缺少分类")
             continue
-        category, name, content = row[0].strip(), row[1].strip(), ",".join(row[2:])
+        if not name:
+            errors.append(f"第 {r} 行：缺少名称")
+            continue
+
+        image_bytes: bytes | None = None
+        image_name = ""
+        formula = _formula(row_cells, "D")
+        m = re.search(r'DISPIMG\s*\(\s*"([^"]+)"', formula)
+        if m:
+            image_bytes = cell_images.get(m.group(1))
+            if image_bytes is None:
+                errors.append(f"第 {r} 行：内嵌图片引用无效")
+        else:
+            img_path = _text(row_cells, "D")
+            if img_path:
+                p = Path(img_path).expanduser()
+                if p.exists() and p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS:
+                    image_bytes = p.read_bytes()
+                    image_name = p.name
+                else:
+                    errors.append(f"第 {r} 行：图片路径无效或不是图片文件")
+
         try:
             create_card(category, name, content)
             imported += 1
         except FileExistsError:
             skipped += 1
+            continue
         except Exception as e:
-            errors.append(f"第 {idx} 行：{e}")
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+            errors.append(f"第 {r} 行：{e}")
+            continue
 
+        if image_bytes:
+            try:
+                ext = Path(image_name).suffix.lower() or ".png"
+                lib_root = _library_root_dir()
+                dest_dir = lib_root / date.today().isoformat()
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = dest_dir / f"{_safe_name(name)}_{uuid.uuid4().hex[:6]}{ext}"
+                dest.write_bytes(image_bytes)
+                set_card_image(category, name, dest.relative_to(lib_root).as_posix())
+            except Exception as e:
+                errors.append(f"第 {r} 行：图片保存失败 {e}")
 
-def import_json_file(file_bytes: bytes) -> dict:
-    data = json.loads(file_bytes.decode("utf-8"))
-    items = []
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                items.append(item)
-    elif isinstance(data, dict):
-        for category, cards in data.items():
-            if isinstance(cards, dict):
-                for name, content in cards.items():
-                    items.append({"category": category, "name": name, "content": content})
-    imported, skipped, errors = 0, 0, []
-    for idx, item in enumerate(items, start=1):
-        category = str(item.get("category", "")).strip()
-        name = str(item.get("name", "")).strip()
-        content = str(item.get("content", ""))
-        try:
-            create_card(category, name, content)
-            imported += 1
-        except FileExistsError:
-            skipped += 1
-        except Exception as e:
-            errors.append(f"第 {idx} 条：{e}")
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+    after = {p.name for p in WILDCARDS_DIR.iterdir() if p.is_dir()} if WILDCARDS_DIR.exists() else set()
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "created_categories": sorted(after - before),
+    }

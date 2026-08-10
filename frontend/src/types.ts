@@ -146,6 +146,8 @@ export type ImportResult = {
   imported: number;
   skipped: number;
   errors: string[];
+  /** 导入过程中自动创建的卡包分类 */
+  created_categories?: string[];
 };
 
 export type MoveImagesResult = {

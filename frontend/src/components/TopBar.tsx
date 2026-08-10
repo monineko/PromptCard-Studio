@@ -37,7 +37,7 @@ export function TopBar() {
           alt="项目图标"
           className="h-8 w-8 rounded-xl object-contain shadow-lg"
         />
-        <span className="text-sm font-semibold tracking-wide">Novelai Prompt Manager</span>
+        <span className="text-sm font-semibold tracking-wide">PromptCard Studio</span>
       </button>
 
       {/* 居中的导航标签：当前选中项带浅色滑块，切换时滑动 */}

@@ -32,12 +32,6 @@ function download(url: string, name: string) {
   document.body.removeChild(a);
 }
 
-function downloadCsvTemplate() {
-  const content =
-    "\uFEFF分类,名称,内容\n角色,示例角色,1girl, long_hair, blue_eyes\n动作,示例动作,standing, looking_at_viewer\n质量,示例质量,masterpiece, best quality\n";
-  download(URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" })), "卡片导入模板.csv");
-}
-
 /** 卡片：上方 80% 演示图，下方 20% 两行文字（名称 + 预览），左上角类型角标。 */
 function PokerCard({ category, card }: { category: string; card: CardMeta }) {
   const addCardBlock = useStore((s) => s.addCardBlock);
@@ -863,39 +857,25 @@ function ImportModal() {
   const setOpen = useStore((s) => s.setShowImport);
   const refresh = useStore((s) => s.refreshCategories);
   const addToast = useStore((s) => s.addToast);
-  const [tab, setTab] = useState<"csv" | "json" | "anr">("csv");
   const [file, setFile] = useState<File | null>(null);
-  const [anrPath, setAnrPath] = useState("");
   const [busy, setBusy] = useState(false);
 
   const doImport = async () => {
     if (!file) {
-      addToast("请先选择文件", "err");
+      addToast("请先选择模板文件", "err");
       return;
     }
     setBusy(true);
     try {
-      const result = await api.importFile(tab, file);
+      const result = await api.importFile(file);
       await refresh();
-      addToast(`导入完成：新增 ${result.imported}，跳过 ${result.skipped}${result.errors?.length ? `，错误 ${result.errors.length}` : ""}`);
+      const created = result.created_categories?.length
+        ? `，新建分类：${result.created_categories.join("、")}`
+        : "";
+      addToast(
+        `导入完成：新增 ${result.imported}，跳过 ${result.skipped}${result.errors?.length ? `，错误 ${result.errors.length}` : ""}${created}`
+      );
       setFile(null);
-    } catch (e) {
-      addToast(`导入失败: ${(e as Error).message}`, "err");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doAnr = async () => {
-    if (!anrPath.trim()) {
-      addToast("请填写 ANR wildcards 目录路径", "err");
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await api.importAnr(anrPath.trim());
-      await refresh();
-      addToast(`导入完成：新增 ${result.imported}，跳过 ${result.skipped}`);
     } catch (e) {
       addToast(`导入失败: ${(e as Error).message}`, "err");
     } finally {
@@ -904,85 +884,37 @@ function ImportModal() {
   };
 
   useEffect(() => {
-    if (open) {
-      setTab("csv");
-      setFile(null);
-      setAnrPath("");
-    }
+    if (open) setFile(null);
   }, [open]);
 
   return (
     <Modal open={open} onClose={() => setOpen(false)} title="导入卡片">
-      <div className="mb-3 flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--input)] p-1">
-        {(
-          [
-            ["csv", "CSV"],
-            ["json", "JSON"],
-            ["anr", "ANR 目录"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={cn(
-              "flex-1 rounded-lg px-3 py-1.5 text-sm transition-all",
-              tab === key ? "text-white" : "text-[var(--muted)]"
-            )}
-            style={tab === key ? { background: "var(--accent)" } : undefined}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "csv" && (
-        <div className="space-y-3">
-          <p className="text-xs leading-relaxed text-[var(--muted)]">
-            模板格式：三列 <code className="rounded bg-[var(--input)] px-1">分类,名称,内容</code>
-            ，第一行是表头。可以先下载模板填写。
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="file"
-              accept=".csv"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="w-full text-xs text-[var(--muted)] file:mr-2 file:rounded-lg file:border-0 file:bg-[var(--hover)] file:px-3 file:py-1.5 file:text-xs file:text-[var(--text)]"
-            />
-            <Button size="sm" variant="ghost" onClick={downloadCsvTemplate}>下载模板</Button>
-          </div>
-        </div>
-      )}
-      {tab === "json" && (
-        <div className="space-y-3">
-          <p className="text-xs leading-relaxed text-[var(--muted)]">
-            支持 JSON 数组 <code>{"[{\"category\",\"name\",\"content\"}]"}</code> 或对象{" "}
-            <code>{"{\"分类\": {\"名称\": \"内容\"}}"}</code>
-          </p>
+      <div className="space-y-3">
+        <p className="text-xs leading-relaxed text-[var(--muted)]">
+          使用内置的「卡片导入模板.xlsx」（四列：分类 / 名称 / 提示词 / 图片可选）。
+          第 1 行表头、第 2 行示例会自动跳过，请从第 3 行开始填写；填写不存在的分类会自动创建；
+          图片列支持单元格内嵌图片或本地图片路径，导入后图片会复制进图库未评分目录并自动设为卡片演示图。
+        </p>
+        <div className="flex gap-2">
           <input
             type="file"
-            accept=".json"
+            accept=".xlsx"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             className="w-full text-xs text-[var(--muted)] file:mr-2 file:rounded-lg file:border-0 file:bg-[var(--hover)] file:px-3 file:py-1.5 file:text-xs file:text-[var(--text)]"
           />
+          <a
+            href={api.importTemplateUrl()}
+            download
+            className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted)] transition-colors hover:text-[var(--text)]"
+          >
+            下载模板
+          </a>
         </div>
-      )}
-      {tab === "anr" && (
-        <div className="space-y-3">
-          <p className="text-xs leading-relaxed text-[var(--muted)]">
-            填入你现有 ANR 的 wildcards 目录绝对路径（文件夹=分类，txt=卡片），自动迁移，重名卡片会跳过。
-          </p>
-          <input
-            value={anrPath}
-            onChange={(e) => setAnrPath(e.target.value)}
-            placeholder="例如 D:\Auto-NovelAI-Refactor\wildcards"
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
-          />
-        </div>
-      )}
+      </div>
 
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" onClick={() => setOpen(false)}>关闭</Button>
-        <Button onClick={tab === "anr" ? doAnr : doImport} disabled={busy}>
+        <Button onClick={() => void doImport()} disabled={busy}>
           {busy ? "导入中…" : "导入"}
         </Button>
       </div>

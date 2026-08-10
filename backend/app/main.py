@@ -3,7 +3,7 @@ import threading
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +19,6 @@ from . import vibes as vibes_service
 from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
-    AnrImportIn,
     BatchStartIn,
     CardImageIn,
     CardIn,
@@ -49,7 +48,7 @@ from .schemas import (
 ensure_dirs()
 cards_service.ensure_default_categories()
 
-app = FastAPI(title="Novelai Prompt Manager", version="0.1.0")
+app = FastAPI(title="PromptCard Studio for NovelAI", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -183,22 +182,25 @@ def expand_text(body: ExpandRequest):
 
 
 @app.post("/api/cards/import")
-async def import_cards(kind: str = Form(...), file: UploadFile = File(...)):
+async def import_cards(file: UploadFile = File(...)):
     data = await file.read()
     try:
-        if kind == "csv":
-            return cards_service.import_csv_file(data)
-        if kind == "json":
-            return cards_service.import_json_file(data)
-        raise HTTPException(400, f"不支持的导入类型: {kind}")
+        return cards_service.import_template_xlsx(data)
     except Exception as e:
         raise _as_http(e)
 
 
-@app.post("/api/cards/import-anr")
-def import_anr(body: AnrImportIn):
+@app.get("/api/cards/import-template")
+def import_template_download():
     try:
-        return cards_service.import_anr_directory(body.path)
+        file = cards_service.template_file()
+        if not file.exists() or not file.is_file():
+            raise HTTPException(404, "导入模板不存在")
+        return FileResponse(
+            file,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=file.name,
+        )
     except Exception as e:
         raise _as_http(e)
 

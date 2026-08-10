@@ -1,4 +1,4 @@
-# NovelAI Prompt Manager
+# PromptCard Studio for NovelAI
 
 本地优先的 NovelAI 提示词管理与图片整理工具：卡片化的提示词工作区 + 图库整理 + NovelAI 生图（单张 / 批量）。
 

@@ -81,13 +81,12 @@ export const api = {
       method: "DELETE",
     }),
   expand: (text: string) => request<{ text: string }>("/api/cards/expand", { method: "POST", body: JSON.stringify({ text }) }),
-  importFile: (kind: string, file: File) => {
+  importFile: (file: File) => {
     const fd = new FormData();
-    fd.append("kind", kind);
     fd.append("file", file);
-    return fetch("/api/cards/import", { method: "POST", body: fd }).then((r) => r.json());
+    return request<ImportResult>("/api/cards/import", { method: "POST", body: fd });
   },
-  importAnr: (path: string) => request("/api/cards/import-anr", { method: "POST", body: JSON.stringify({ path }) }),
+  importTemplateUrl: () => "/api/cards/import-template",
   exportUrl: () => "/api/cards/export",
   workspace: () => request<WorkspaceData>("/api/workspace"),
   saveWorkspace: (positive: Section[], negative: Section[], back_note = "") =>

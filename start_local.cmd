@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ============================================
-echo   NovelAI Prompt Manager - Quick Start
+echo   PromptCard Studio for NovelAI - Quick Start
 echo ============================================
 
 if not exist ".venv\Scripts\python.exe" (
