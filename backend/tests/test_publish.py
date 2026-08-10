@@ -299,7 +299,12 @@ class PipelineTest(unittest.TestCase):
         f = state["files"][0]
         out = Path(state["output_dir"]) / f["output"]
         types = [c.decode() for c, _, _ in pub._iter_chunks(out.read_bytes())]
-        self.assertNotIn("tEXt", types)
+        # 抹除 = null 覆写：仅保留一条全 null 的 Comment 占位（NovelAI 官网读取为空）
+        self.assertEqual(types.count("tEXt"), 1)
+        meta = pub.extract_png_metadata(out)
+        raw = base64.b64decode(meta["tEXt"][0])
+        self.assertIn(b'"prompt": null', raw)
+        self.assertNotIn(b'"1girl"', raw)
         self.assertEqual(len(Path(f["output"]).stem), 8)  # 随机中性名
         # 原图与暂存区不受影响（元数据仍在）
         original = self.library / "Treasure" / "Treasure-2026-08-11" / "novelai_777.png"

@@ -856,20 +856,13 @@ def _validate_nodes(nodes: dict) -> dict:
     restore = bool(nodes.get("restore"))
     wipe = bool(nodes.get("wipe"))
     rename = bool(nodes.get("rename"))
-    overwrite_null = bool(nodes.get("overwrite_null"))
     if not (upscale or wipe or rename):
         raise ValueError("请至少勾选一个处理节点")
     if restore and not upscale:
         raise ValueError("恢复原数据只能在勾选超分降噪后使用（恢复的是超分抹掉的数据）")
     if restore and wipe:
         raise ValueError("恢复原数据与数据抹除互斥，请只保留一个")
-    return {
-        "upscale": upscale,
-        "restore": restore,
-        "wipe": wipe,
-        "rename": rename,
-        "overwrite_null": overwrite_null,
-    }
+    return {"upscale": upscale, "restore": restore, "wipe": wipe, "rename": rename}
 
 
 def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params: dict) -> dict:
@@ -993,19 +986,18 @@ def _run_worker(run_id: str) -> None:
                 if nodes["wipe"]:
                     _ensure_detached(current)  # 断开与图库/暂存区的硬链接再原地改写
                     if current.suffix.lower() == ".png":
-                        wipe_png_metadata(current, overwrite_null=bool(nodes.get("overwrite_null")))
-                    elif current.suffix.lower() in (".jpg", ".jpeg"):
-                        _wipe_jpeg_metadata(current)
-                    if nodes.get("overwrite_null") and current.suffix.lower() == ".png":
-                        # null 覆写模式：允许保留全 null 的 Comment 占位，并校验其内容
+                        # 统一使用 null 覆写：清除其余元数据，写入全 null 的 Comment 占位，
+                        # 兼容 NovelAI 官网等“按字段读取”的读取器（实测官网读到为空）
+                        wipe_png_metadata(current, overwrite_null=True)
                         meta = extract_png_metadata(current)
                         texts = [base64.b64decode(b) for b in meta.get("tEXt", [])]
                         if not any(b'"prompt": null' in t for t in texts):
-                            raise RuntimeError("null 覆写失败：未找到置空占位")
-                    else:
+                            raise RuntimeError("数据抹除失败：null 覆写未生效")
+                    elif current.suffix.lower() in (".jpg", ".jpeg"):
+                        _wipe_jpeg_metadata(current)
                         remaining = _metadata_chunk_types(current)
                         if remaining:
-                            raise RuntimeError(f"元数据清除失败（残留: {', '.join(remaining)}）")
+                            raise RuntimeError(f"数据抹除失败（残留: {', '.join(remaining)}）")
                     if not nodes["rename"]:
                         final_name = uuid.uuid4().hex[:8] + current.suffix.lower()
 

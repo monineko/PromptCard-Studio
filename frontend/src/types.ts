@@ -405,8 +405,6 @@ export type PublishNodes = {
   restore: boolean;
   wipe: boolean;
   rename: boolean;
-  /** 数据抹除时用全 null 占位覆写（兼容 NovelAI 官网等按字段读取的读取器） */
-  overwrite_null: boolean;
 };
 
 export type PublishRunFile = {

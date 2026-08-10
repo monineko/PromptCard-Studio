@@ -78,7 +78,7 @@ _Avoid_: 放大、超分
 _Avoid_: 数据恢复、还原信息
 
 **Batch Data Erasure (数据抹除)**:
-发布处理节点之一（可选）。清除 PNG 内部元数据块（tEXt/zTXt/iTXt/eXIf/tIME）与 JPEG 的 EXIF/XMP 段，像素内容不变，并自动校验清除结果；未勾选重命名时，文件名同时改为随机中性名，隐藏文件名里携带的提示词信息。
+发布处理节点之一（可选）。以全 null 占位覆写 PNG 元数据（清除其余块、仅保留全 null 的 Comment，NovelAI 官网等按字段读取的读取器会读到空）与 JPEG 的 EXIF/XMP 段，像素内容不变并自动校验；未勾选重命名时，文件名同时改为随机中性名，隐藏文件名里携带的提示词信息。
 _Avoid_: 批量清除信息、数据清洗
 
 **Rename Template (重命名规则)**:
