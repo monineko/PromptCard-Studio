@@ -67,6 +67,7 @@ export function Publish() {
     restore: false,
     wipe: false,
     rename: false,
+    overwrite_null: false,
   });
   const [params, setParams] = useState<Record<string, string | number | boolean>>({});
   const [parts, setParts] = useState<string[]>(["date", "random"]);
@@ -404,10 +405,32 @@ export function Publish() {
               </div>
             );
           })}
-          <p className="text-[11px] leading-relaxed text-[var(--muted)]">
-            超分会抹掉 PNG 元数据但文件名不变；想隐藏文件名里的提示词就勾选抹除或重命名。
-          </p>
-        </div>
+              <p className="text-[11px] leading-relaxed text-[var(--muted)]">
+                超分会抹掉 PNG 元数据但文件名不变；想隐藏文件名里的提示词就勾选抹除或重命名。
+              </p>
+              {nodes.wipe && (
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-[var(--hover)]/50 px-3 py-2 text-xs">
+                  <button
+                    onClick={() =>
+                      setNodes((prev) => ({ ...prev, overwrite_null: !prev.overwrite_null }))
+                    }
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                      nodes.overwrite_null
+                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                        : "border-[var(--muted)]/50"
+                    }`}
+                  >
+                    {nodes.overwrite_null && <Check size={11} />}
+                  </button>
+                  <span>
+                    用 null 覆写元数据（而非删除）
+                    <span className="text-[var(--muted)]">
+                      —— 兼容 NovelAI 官网等按字段读取的读取器
+                    </span>
+                  </span>
+                </label>
+              )}
+            </div>
       </div>
 
       {/* 超分引擎 */}

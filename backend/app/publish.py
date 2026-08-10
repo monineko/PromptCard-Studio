@@ -30,6 +30,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import urllib.parse
 import uuid
@@ -48,6 +49,13 @@ MANIFEST_DIR = Path(__file__).resolve().parent / "engines"
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 METADATA_CHUNK_TYPES = {b"tEXt", b"zTXt", b"iTXt", b"eXIf", b"tIME"}
+# 用 null 覆写时写入的占位 JSON（兼容按字段读取的元数据读取器，如 NovelAI 官网）
+NULL_METADATA_JSON = (
+    b'{"prompt": null, "uc": null, "negative_prompt": null, '
+    b'"v4_prompt": null, "v4_negative_prompt": null, '
+    b'"width": null, "height": null, "seed": null, '
+    b'"sampler": null, "steps": null, "scale": null}'
+)
 
 PARTS = ("date", "custom", "random")
 UPSCALE_TIMEOUT_SEC = 1800
@@ -55,6 +63,7 @@ UPSCALE_TIMEOUT_SEC = 1800
 _lock = threading.Lock()
 _active_run_id: str | None = None
 _install_running = False  # 下载中状态以进程内存为准，避免残留 install.json 造成“假下载”
+_install_state: dict = {"running": False, "progress": 0.0, "message": ""}
 
 
 # ---------- 通用工具 ----------
@@ -68,6 +77,21 @@ def _hardlink_or_copy(src: Path, dest: Path) -> None:
     except OSError:
         pass
     shutil.copy2(str(src), str(dest))
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    """写 JSON 状态文件：临时文件+原子替换；并发读句柄阻塞替换时重试，最终直接写兜底。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    for attempt in range(6):
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.05 * (attempt + 1))
+    path.write_text(payload, encoding="utf-8")
 
 
 def _ensure_detached(path: Path) -> Path:
@@ -96,10 +120,7 @@ def _load_staging_index() -> list[dict]:
 
 
 def _save_staging_index(items: list[dict]) -> None:
-    STAGING_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STAGING_INDEX.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, STAGING_INDEX)
+    _atomic_write_json(STAGING_INDEX, items)
 
 
 def _unique_staged_name(name: str, existing: set[str]) -> str:
@@ -281,13 +302,21 @@ def apply_png_metadata(file: Path, meta: dict[str, list[str]]) -> Path:
     return file
 
 
-def wipe_png_metadata(file: Path) -> Path:
+def wipe_png_metadata(file: Path, overwrite_null: bool = False) -> Path:
+    """抹除 PNG 内部元数据（tEXt/zTXt/iTXt/eXIf/tIME），像素不变。
+
+    overwrite_null=True 时改为写入一个全 null 的 Comment 占位，
+    用于兼容“按字段读取”的元数据读取器（如 NovelAI 官网）。
+    """
     file = Path(file)
     data = file.read_bytes()
     if not data.startswith(PNG_SIGNATURE):
         return file
     chunks = [(c, d, crc) for c, d, crc in _iter_chunks(data) if c not in METADATA_CHUNK_TYPES]
-    file.write_bytes(_rebuild(chunks))
+    insert = None
+    if overwrite_null:
+        insert = {b"tEXt": [b"Comment\x00" + NULL_METADATA_JSON]}
+    file.write_bytes(_rebuild(chunks, insert_before_idat=insert))
     return file
 
 
@@ -484,15 +513,6 @@ def _engine_params(engine_id: str) -> dict:
 def engine_status() -> dict:
     binary = _engine_binary()
     manifest = _active_manifest()
-    install_file = ENGINE_RUNTIME_DIR / "install.json"
-    installing, progress, message = _install_running, 0, ""
-    if install_file.exists():
-        try:
-            state = json.loads(install_file.read_text(encoding="utf-8"))
-            progress = float(state.get("progress") or 0)
-            message = str(state.get("message") or "")
-        except Exception:
-            pass
     settings = load_settings()
     return {
         "engines": [
@@ -508,9 +528,9 @@ def engine_status() -> dict:
         "engine_name": manifest["name"],
         "manifest": manifest,
         "installed": binary is not None,
-        "installing": installing,
-        "progress": round(progress, 2),
-        "message": message,
+        "installing": bool(_install_state.get("running")),
+        "progress": round(float(_install_state.get("progress") or 0), 2),
+        "message": str(_install_state.get("message") or ""),
         "binary": str(binary) if binary else None,
         "custom_path": (settings.get("publish") or {}).get("engine_path") or "",
         "params": _engine_params(manifest["id"]),
@@ -518,10 +538,9 @@ def engine_status() -> dict:
 
 
 def _write_install_state(state: dict) -> None:
-    ENGINE_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = ENGINE_RUNTIME_DIR / "install.json.tmp"
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, ENGINE_RUNTIME_DIR / "install.json")
+    """下载进度写入进程内存（不做文件 IO，避免与轮询读取竞争导致 WinError 5）。"""
+    global _install_state
+    _install_state = dict(state)
 
 
 def _safe_extract(zf: zipfile.ZipFile, target: Path) -> None:
@@ -820,15 +839,16 @@ def _load_run(run_id: str) -> dict:
     path = _run_file(run_id)
     if not path.exists():
         raise ValueError("发布任务不存在")
-    return json.loads(path.read_text(encoding="utf-8"))
+    for _ in range(3):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            time.sleep(0.05)
+    raise ValueError("发布任务状态暂时无法读取，请稍后刷新")
 
 
 def _save_run(state: dict) -> None:
-    path = _run_file(state["id"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    _atomic_write_json(_run_file(state["id"]), state)
 
 
 def _validate_nodes(nodes: dict) -> dict:
@@ -836,13 +856,20 @@ def _validate_nodes(nodes: dict) -> dict:
     restore = bool(nodes.get("restore"))
     wipe = bool(nodes.get("wipe"))
     rename = bool(nodes.get("rename"))
+    overwrite_null = bool(nodes.get("overwrite_null"))
     if not (upscale or wipe or rename):
         raise ValueError("请至少勾选一个处理节点")
     if restore and not upscale:
         raise ValueError("恢复原数据只能在勾选超分降噪后使用（恢复的是超分抹掉的数据）")
     if restore and wipe:
         raise ValueError("恢复原数据与数据抹除互斥，请只保留一个")
-    return {"upscale": upscale, "restore": restore, "wipe": wipe, "rename": rename}
+    return {
+        "upscale": upscale,
+        "restore": restore,
+        "wipe": wipe,
+        "rename": rename,
+        "overwrite_null": overwrite_null,
+    }
 
 
 def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params: dict) -> dict:
@@ -966,12 +993,19 @@ def _run_worker(run_id: str) -> None:
                 if nodes["wipe"]:
                     _ensure_detached(current)  # 断开与图库/暂存区的硬链接再原地改写
                     if current.suffix.lower() == ".png":
-                        wipe_png_metadata(current)
+                        wipe_png_metadata(current, overwrite_null=bool(nodes.get("overwrite_null")))
                     elif current.suffix.lower() in (".jpg", ".jpeg"):
                         _wipe_jpeg_metadata(current)
-                    remaining = _metadata_chunk_types(current)
-                    if remaining:
-                        raise RuntimeError(f"元数据清除失败（残留: {', '.join(remaining)}）")
+                    if nodes.get("overwrite_null") and current.suffix.lower() == ".png":
+                        # null 覆写模式：允许保留全 null 的 Comment 占位，并校验其内容
+                        meta = extract_png_metadata(current)
+                        texts = [base64.b64decode(b) for b in meta.get("tEXt", [])]
+                        if not any(b'"prompt": null' in t for t in texts):
+                            raise RuntimeError("null 覆写失败：未找到置空占位")
+                    else:
+                        remaining = _metadata_chunk_types(current)
+                        if remaining:
+                            raise RuntimeError(f"元数据清除失败（残留: {', '.join(remaining)}）")
                     if not nodes["rename"]:
                         final_name = uuid.uuid4().hex[:8] + current.suffix.lower()
 

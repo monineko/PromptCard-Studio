@@ -94,6 +94,19 @@ class PngMetaTest(unittest.TestCase):
         with Image.open(src) as im:
             self.assertEqual(im.size, (32, 32))
 
+    def test_wipe_overwrite_null(self):
+        tmp = Path(tempfile.mkdtemp(prefix="npm_pub_null_"))
+        src = tmp / "a.png"
+        src.write_bytes(make_png_with_meta())
+        pub.wipe_png_metadata(src, overwrite_null=True)
+        types = [c.decode() for c, _, _ in pub._iter_chunks(src.read_bytes())]
+        self.assertNotIn("eXIf", types)
+        self.assertEqual(types.count("tEXt"), 1)  # 仅保留一个 null 占位
+        meta = pub.extract_png_metadata(src)
+        raw = base64.b64decode(meta["tEXt"][0])
+        self.assertIn(b'"prompt": null', raw)
+        self.assertNotIn(b'"1girl"', raw)
+
 
 class DownloaderTest(unittest.TestCase):
     """本地 HTTP 服务器验证断点续传下载逻辑（不联网）。"""
