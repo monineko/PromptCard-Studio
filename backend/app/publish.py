@@ -496,11 +496,19 @@ def _engine_binary() -> Path | None:
     if not marker.exists():
         return None
     try:
-        info = json.loads(marker.read_text(encoding="utf-8"))
+        info = json.loads(marker.read_text(encoding="utf-8-sig"))
     except Exception:
         return None
     binary = Path(str(info.get("binary") or "")).expanduser()
-    return binary if binary.exists() else None
+    if binary.exists():
+        return binary
+    # 标记里的路径可能因目录调整失效：在引擎目录内按二进制名搜索兜底
+    binary_name = info.get("binary_name") or (manifest.get("install") or {}).get("binary") or ""
+    if binary_name:
+        for p in (ENGINE_RUNTIME_DIR / manifest["id"]).rglob("*"):
+            if p.is_file() and p.name.lower() == binary_name.lower():
+                return p
+    return None
 
 
 def _active_manifest() -> dict:
