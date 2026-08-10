@@ -1,12 +1,13 @@
 """M3 发布处理后端自测（可独立运行：python backend/tests/test_publish.py）。
 
-覆盖：PNG 元数据提取/抹除/回写、批量重命名、引擎命令行构造、
-完整流水线（超分+恢复+重命名 / 仅抹除）、节点约束校验、保存到图库与清理。
+覆盖：PNG 元数据提取/抹除/回写、批量重命名、暂存区（添加/列表/删除/清空）、
+引擎清单识别与命令行构造、完整流水线（超分+恢复+重命名 / 仅抹除）、
+节点约束校验、输出目录命名与保留、真实 HTTP 冒烟。
 使用临时目录与假引擎，不触碰真实用户数据、不联网。
 """
 
-import io
 import base64
+import io
 import json
 import shutil
 import sys
@@ -14,9 +15,9 @@ import tempfile
 import threading
 import time
 import unittest
-import urllib.request
 import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,23 @@ def make_png_with_meta() -> bytes:
     return pub._rebuild(
         chunks, insert_before_idat={b"tEXt": [b"Comment\x00{\"prompt\":\"1girl\",\"seed\":777}"]}
     )
+
+
+def set_up_temp_environment(cls) -> Path:
+    """把图库/暂存区/输出目录全部指到临时目录，避免触碰真实用户数据。"""
+    tmp = Path(tempfile.mkdtemp(prefix="npm_pub_"))
+    cls.tmp = tmp
+    cls.library = tmp / "library"
+    cat = cls.library / "Treasure" / "Treasure-2026-08-11"
+    cat.mkdir(parents=True)
+    (cat / "novelai_777.png").write_bytes(make_png_with_meta())
+    (cat / "second_888.png").write_bytes(make_png_with_meta())
+    lib.load_settings = lambda: {"library_path": str(cls.library)}  # type: ignore[method-assign]
+    pub.STAGING_DIR = tmp / "staging"
+    pub.STAGING_INDEX = pub.STAGING_DIR / "items.json"
+    pub.OUTPUTS_DIR = tmp / "outputs"
+    pub.PUBLISH_DIR = tmp / "runs"
+    return tmp
 
 
 class PngMetaTest(unittest.TestCase):
@@ -83,31 +101,74 @@ class RenameTest(unittest.TestCase):
         self.assertTrue(all(s.startswith("20260811_moni_") for s in samples))
 
 
-class EngineArgsTest(unittest.TestCase):
-    def test_args_with_and_without_models(self):
-        tmp = Path(tempfile.mkdtemp(prefix="npm_pub_eng_"))
-        exe = tmp / "engine" / "realesrgan-ncnn-vulkan.exe"
-        exe.parent.mkdir()
-        params = {"model": "realesr-animevideov3", "scale": 4, "tile": 0, "gpu": 0, "format": "png", "tta": True}
-        args = pub.build_engine_args(exe, params, tmp / "in.png", tmp / "out.png")
-        self.assertNotIn("-m", args)
-        self.assertIn("-x", args)
-        (exe.parent / "models").mkdir()
-        args = pub.build_engine_args(exe, params, tmp / "in.png", tmp / "out.png")
+class EngineTest(unittest.TestCase):
+    def test_manifest_detection_and_args(self):
+        w2x = Path(r"E:\NAI\插件\caffe超分插件\waifu2x-caffe\waifu2x-caffe.exe")
+        m = pub._manifest_for_binary(w2x)
+        self.assertEqual(m["id"], "waifu2x-caffe")
+        args = pub.build_engine_args(
+            m, w2x,
+            {"mode": "noise_scale", "noise_level": 2, "scale_ratio": 2, "process": "cpu",
+             "crop_size": 128, "batch_size": 8, "tta": True},
+            Path(r"C:\in.png"), Path(r"C:\out.png"),
+        )
         self.assertIn("-m", args)
-        self.assertEqual(args[1], str(exe.parent / "models"))
+        self.assertIn("noise_scale", args)
+        self.assertEqual(args[-2:], ["-t", "1"])
+
+        re = Path(r"C:\fake\realesrgan-ncnn-vulkan.exe")
+        m2 = pub._manifest_for_binary(re)
+        self.assertEqual(m2["id"], "realesrgan-ncnn-vulkan")
+        args2 = pub.build_engine_args(
+            m2, re,
+            {"model": "realesr-animevideov3", "scale": 4, "tile": 0, "gpu": 0, "format": "png", "tta": True},
+            Path(r"C:\in.png"), Path(r"C:\out.png"),
+        )
+        self.assertIn("-x", args2)
+        self.assertNotIn("-m", args2)  # 无 models 目录时跳过
+
+
+class StagingTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        set_up_temp_environment(cls)
+
+    def test_stage_list_remove_clear(self):
+        res = pub.stage_images(["Treasure/Treasure-2026-08-11/novelai_777.png"])
+        self.assertEqual(res["added"], 1)
+        self.assertEqual(res["count"], 1)
+        # 硬链接生效：与原图共享 inode
+        staged = pub.STAGING_DIR / "novelai_777.png"
+        self.assertTrue(staged.exists())
+        self.assertGreaterEqual(staged.stat().st_nlink, 2)
+
+        listing = pub.list_staging()
+        self.assertEqual(listing["count"], 1)
+        self.assertEqual(listing["items"][0]["name"], "novelai_777.png")
+
+        # 同名二次加入自动加后缀
+        res2 = pub.stage_images(["Treasure/Treasure-2026-08-11/novelai_777.png"])
+        self.assertEqual(res2["added"], 1)
+        self.assertTrue((pub.STAGING_DIR / "novelai_777 (1).png").exists())
+
+        removed = pub.remove_staged("novelai_777.png")
+        self.assertEqual(removed["count"], 1)
+        self.assertFalse((pub.STAGING_DIR / "novelai_777.png").exists())
+        self.assertTrue((pub.STAGING_DIR / "novelai_777 (1).png").exists())
+
+        cleared = pub.clear_staging()
+        self.assertEqual(cleared["removed"], 1)
+        self.assertEqual(pub.list_staging()["count"], 0)
 
 
 class PipelineTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = Path(tempfile.mkdtemp(prefix="npm_pub_run_"))
-        cls.library = cls.tmp / "library"
-        cat = cls.library / "Treasure" / "Treasure-2026-08-11"
-        cat.mkdir(parents=True)
-        (cat / "novelai_777.png").write_bytes(make_png_with_meta())
-        lib.load_settings = lambda: {"library_path": str(cls.library)}  # type: ignore[method-assign]
+        set_up_temp_environment(cls)
         pub._engine_binary = lambda: MOCK_ENGINE  # type: ignore[method-assign]
+        cls.staged = pub.stage_images(
+            ["Treasure/Treasure-2026-08-11/novelai_777.png"]
+        )
 
     def _wait(self, run_id: str) -> dict:
         for _ in range(100):
@@ -117,9 +178,9 @@ class PipelineTest(unittest.TestCase):
             time.sleep(0.1)
         self.fail("任务超时")
 
-    def test_upscale_restore_rename(self):
+    def test_upscale_restore_rename_output_dir(self):
         res = pub.start_run(
-            ["Treasure/Treasure-2026-08-11/novelai_777.png"],
+            ["novelai_777.png"],
             {"upscale": True, "restore": True, "wipe": False, "rename": True},
             {"parts": ["date", "custom", "random"], "custom": "moni"},
             {"model": "realesr-animevideov3", "scale": 4, "tile": 0, "gpu": 0, "format": "png", "tta": False},
@@ -128,25 +189,33 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(state["status"], "completed")
         f = state["files"][0]
         self.assertEqual(f["status"], "done")
-        out = pub._run_dir(res["id"]) / "output" / f["output"]
+        out = Path(state["output_dir"]) / f["output"]
         types = [c.decode() for c, _, _ in pub._iter_chunks(out.read_bytes())]
         self.assertIn("tEXt", types)  # 恢复原数据生效
         self.assertTrue(f["output"].startswith("20260811_moni_"))
+        # 输出目录命名：时间戳-随机，且在 outputs/ 下；清理运行后输出仍保留
+        self.assertEqual(Path(state["output_dir"]).parent, pub.OUTPUTS_DIR)
+        folder_name = Path(state["output_dir"]).name
+        self.assertRegex(folder_name, r"^\d{8}-\d{6}-[0-9a-f]{4}$")
         pub.delete_run(res["id"])
+        self.assertTrue(Path(state["output_dir"]).exists())
 
     def test_wipe_only_neutral_name(self):
         res = pub.start_run(
-            ["Treasure/Treasure-2026-08-11/novelai_777.png"],
+            ["novelai_777.png"],
             {"upscale": False, "restore": False, "wipe": True, "rename": False},
             {},
             {},
         )
         state = self._wait(res["id"])
         f = state["files"][0]
-        out = pub._run_dir(res["id"]) / "output" / f["output"]
+        out = Path(state["output_dir"]) / f["output"]
         types = [c.decode() for c, _, _ in pub._iter_chunks(out.read_bytes())]
         self.assertNotIn("tEXt", types)
         self.assertEqual(len(Path(f["output"]).stem), 8)  # 随机中性名
+        # 原图与暂存区不受影响（元数据仍在）
+        original = self.library / "Treasure" / "Treasure-2026-08-11" / "novelai_777.png"
+        self.assertIn("tEXt", pub.extract_png_metadata(original))
         pub.delete_run(res["id"])
 
     def test_node_validation(self):
@@ -157,44 +226,20 @@ class PipelineTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             pub._validate_nodes({"upscale": False, "restore": False, "wipe": False, "rename": False})
 
-    def test_save_to_library(self):
-        res = pub.start_run(
-            ["Treasure/Treasure-2026-08-11/novelai_777.png"],
-            {"upscale": False, "restore": False, "wipe": True, "rename": True},
-            {"parts": ["date", "random"]},
-            {},
-        )
-        state = self._wait(res["id"])
-        app_config.LIBRARY_DIR = self.library  # type: ignore[attr-defined]
-        saved = pub.save_outputs_to_library(res["id"])
-        self.assertEqual(len(saved["saved"]), 1)
-        self.assertTrue((self.library / saved["saved"][0]["path"]).exists())
-        self.assertIsNotNone(state["files"][0]["output"])
-        pub.delete_run(res["id"])
-
 
 class PublishHttpSmokeTest(unittest.TestCase):
-    """真实 HTTP 层冒烟：临时 uvicorn + 假引擎，走一遍发布处理完整接口。"""
+    """真实 HTTP 层冒烟：临时 uvicorn + 假引擎，覆盖暂存区与仅抹除场景。"""
 
     PORT = 11552
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = Path(tempfile.mkdtemp(prefix="npm_pub_http_"))
-        cls.library = cls.tmp / "library"
-        cat = cls.library / "Treasure" / "Treasure-2026-08-11"
-        cat.mkdir(parents=True)
-        (cat / "web_777.png").write_bytes(make_png_with_meta())
+        set_up_temp_environment(cls)
+        pub._engine_binary = lambda: MOCK_ENGINE  # type: ignore[method-assign]
 
         import uvicorn
 
-        from app import config as cfg
-        from app import library as lib_module
         from app.main import app
-
-        lib_module.load_settings = lambda: {"library_path": str(cls.library)}  # type: ignore[method-assign]
-        cfg.LIBRARY_DIR = cls.library  # type: ignore[attr-defined]
-        pub._engine_binary = lambda: MOCK_ENGINE  # type: ignore[method-assign]
 
         config = uvicorn.Config(app, host="127.0.0.1", port=cls.PORT, log_level="warning")
         cls.server = uvicorn.Server(config)
@@ -225,21 +270,29 @@ class PublishHttpSmokeTest(unittest.TestCase):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.PORT}{path}") as resp:
             return resp.read()
 
-    def test_publish_flow(self):
+    def test_staging_and_wipe_only_flow(self):
         engine = json.loads(self._get("/api/publish/engine"))
-        self.assertTrue(engine["installed"])
-        self.assertEqual(engine["manifest"]["id"], "realesrgan-ncnn-vulkan")
+        self.assertIn("waifu2x-caffe", [e["id"] for e in engine["engines"]])
 
-        preview = self._post("/api/publish/rename-preview", {"rename": {"parts": ["date", "custom", "random"], "custom": "moni"}})
-        self.assertTrue(preview["samples"][0].startswith("20260811_moni_"))
+        staged = self._post(
+            "/api/publish/staging",
+            {"paths": ["Treasure/Treasure-2026-08-11/novelai_777.png"]},
+        )
+        self.assertEqual(staged["added"], 1)
+        listing = json.loads(self._get("/api/publish/staging"))
+        self.assertEqual(listing["count"], 1)
+        name = listing["items"][0]["name"]
+        image = self._get(f"/api/publish/staging/file?name={urllib.parse.quote(name)}")
+        self.assertTrue(image.startswith(b"\x89PNG"))
 
+        # 仅勾选抹除数据（用户报告的 Method Not Allowed 场景）
         started = self._post(
             "/api/publish/run",
             {
-                "paths": ["Treasure/Treasure-2026-08-11/web_777.png"],
-                "nodes": {"upscale": True, "restore": True, "wipe": False, "rename": True},
-                "rename": {"parts": ["date", "custom", "random"], "custom": "moni"},
-                "engine_params": {"model": "realesr-animevideov3", "scale": 4, "tile": 0, "gpu": 0, "format": "png", "tta": False},
+                "staged": [name],
+                "nodes": {"upscale": False, "restore": False, "wipe": True, "rename": False},
+                "rename": {},
+                "engine_params": {},
             },
         )
         run_id = started["id"]
@@ -250,15 +303,8 @@ class PublishHttpSmokeTest(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertEqual(state["status"], "completed")
-        output = state["files"][0]["output"]
-        self.assertTrue(output.startswith("20260811_moni_"))
-
-        image = self._get(f"/api/publish/run/{run_id}/file?name={urllib.parse.quote(output)}")
-        self.assertTrue(image.startswith(b"\x89PNG"))
-
-        saved = self._post(f"/api/publish/run/{run_id}/save-to-library", {})
-        self.assertEqual(len(saved["saved"]), 1)
-        self.assertTrue((self.library / saved["saved"][0]["path"]).exists())
+        self.assertEqual(state["done"], 1)
+        self.assertIsNotNone(state["files"][0]["output"])
 
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.PORT}/api/publish/run/{run_id}",
@@ -266,8 +312,6 @@ class PublishHttpSmokeTest(unittest.TestCase):
         )
         with urllib.request.urlopen(req) as resp:
             self.assertEqual(resp.status, 200)
-        with self.assertRaises(urllib.error.HTTPError):
-            self._get(f"/api/publish/run/{run_id}")
 
 
 if __name__ == "__main__":

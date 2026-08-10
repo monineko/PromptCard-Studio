@@ -1,21 +1,22 @@
-"""发布处理（M3）：可勾选节点工作流。
+"""发布处理（M3）：独立暂存区 + 可勾选节点工作流。
 
-节点与执行顺序（固定，前端按此展示与约束）：
+流程：
+1. 图库快捷选取 →「发布处理」：图片以硬链接复制进独立暂存区 publish_staging/
+   （同卷秒级，硬链接失败自动退回普通复制），与图库互不影响。
+2. /publish 页面浏览暂存区：可预览、删除不想要的图片、继续「添加图片」回到图库。
+3. 勾选节点后「开始处理」：从暂存区硬链接到本次运行输入（原地写操作前自动断开链接），
+   输出保存到 outputs/<时间戳>-<随机>/，每次处理独立文件夹，图库与暂存区原图都不受影响。
+4. 完成后可「打开输出文件」直接查看本次输出的文件夹。
 
+节点与固定顺序（设计推理见 docs/ROADMAP.md §M3）：
     超分降噪 → 恢复原数据 → 数据抹除 → 批量重命名
+- 超分：引擎输出抹掉 PNG 元数据，文件名不变。
+- 恢复原数据：仅勾选超分后可用，超分前提取 PNG 元数据、超分后写回；与抹除互斥。
+- 数据抹除：清除 PNG 内部元数据；未勾选重命名时文件名改为随机中性名（隐藏名字里的提示词）。
+- 批量重命名：最后执行；日期（可选）_ 自定义段（可选）_ 随机数字段（6 位），三部分可拖动换序。
 
-设计依据（与用户确认的效果推理）：
-- 超分降噪：引擎输出会抹掉 PNG 内部元数据，但图片文件名保持不变；
-  NovelAI 图片文件名本身携带提示词信息，用户可能想隐藏，因此由「数据抹除/批量重命名」处理名字。
-- 恢复原数据：仅在勾选超分时可勾选；实现为「超分前提取 PNG 元数据 → 超分后写回」，
-  所以它在流水线中紧跟超分节点。与「数据抹除」互斥：抹除会清掉恢复回来的数据。
-- 数据抹除：清除 PNG 内部元数据；未勾选重命名时，文件名同时改为随机中性名（隐藏名字里的提示词）。
-- 批量重命名：最后执行，保证最终文件名是用户配置的结果。
-  命名 = 日期（可选）_ 自定义段（可选）_ 随机数字段，顺序由用户拖动三部分决定，
-  随机数字段避免同日多次输出重名；默认「日期_随机数字段」。
-
-处理在独立暂存区（publish_runs/<run_id>/）进行，图库原图完全不受影响；
-处理完成后用户可选择「保存到图库」把结果复制回未评分目录。
+超分引擎插件化：内置 Real-ESRGAN（ncnn-Vulkan，可自动下载）与 waifu2x-caffe（本地路径），
+按可执行文件名自动识别引擎，参数面板按对应引擎清单渲染。
 """
 
 import base64
@@ -37,28 +38,181 @@ from pathlib import Path
 
 from .config import PROJECT_ROOT, load_settings, save_settings
 
-PUBLISH_DIR = PROJECT_ROOT / "publish_runs"
+PUBLISH_DIR = PROJECT_ROOT / "publish_runs"        # 运行内部暂存（input/meta/.tmp），可清理
+STAGING_DIR = PROJECT_ROOT / "publish_staging"     # 用户发布暂存区（与图库隔离）
+STAGING_INDEX = STAGING_DIR / "items.json"
+OUTPUTS_DIR = PROJECT_ROOT / "outputs"             # 处理结果输出（按时间-随机命名独立文件夹）
 ENGINE_RUNTIME_DIR = PROJECT_ROOT / "engines" / "runtime"
 MANIFEST_DIR = Path(__file__).resolve().parent / "engines"
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-# 被识别为「元数据」的 PNG 块：NovelAI 的提示词/参数、Exif、时间戳
 METADATA_CHUNK_TYPES = {b"tEXt", b"zTXt", b"iTXt", b"eXIf", b"tIME"}
 
 PARTS = ("date", "custom", "random")
-PARTS_LABELS = {"date": "日期", "custom": "自定义段", "random": "随机数字段"}
-
 UPSCALE_TIMEOUT_SEC = 1800
 
 _lock = threading.Lock()
 _active_run_id: str | None = None
 
 
+# ---------- 通用工具 ----------
+
+
+def _hardlink_or_copy(src: Path, dest: Path) -> None:
+    """优先硬链接（同卷秒级、不占额外空间）；失败退回普通复制。"""
+    try:
+        os.link(str(src), str(dest))
+        return
+    except OSError:
+        pass
+    shutil.copy2(str(src), str(dest))
+
+
+def _ensure_detached(path: Path) -> Path:
+    """原地写操作前断开与图库的硬链接，避免污染原图。"""
+    try:
+        if path.stat().st_nlink > 1:
+            tmp = path.with_name(path.name + f".{uuid.uuid4().hex[:6]}.tmp")
+            shutil.copy2(str(path), str(tmp))
+            os.replace(str(tmp), str(path))
+    except OSError:
+        pass
+    return path
+
+
+# ---------- 发布暂存区 ----------
+
+
+def _load_staging_index() -> list[dict]:
+    if not STAGING_INDEX.exists():
+        return []
+    try:
+        data = json.loads(STAGING_INDEX.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_staging_index(items: list[dict]) -> None:
+    STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STAGING_INDEX.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, STAGING_INDEX)
+
+
+def _unique_staged_name(name: str, existing: set[str]) -> str:
+    if name not in existing:
+        return name
+    stem, suffix = os.path.splitext(name)
+    n = 1
+    while f"{stem} ({n}){suffix}" in existing:
+        n += 1
+    return f"{stem} ({n}){suffix}"
+
+
+def stage_images(paths: list[str]) -> dict:
+    """图库勾选 → 复制（硬链接）进发布暂存区，与图库互不影响。"""
+    from .library import resolve_image
+
+    paths = [p for p in (paths or []) if p]
+    if not paths:
+        raise ValueError("请先选择要处理的图片")
+    STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    items = _load_staging_index()
+    existing = {i["name"] for i in items}
+    added, skipped = 0, 0
+    errors: list[str] = []
+    for rel in paths:
+        try:
+            src = resolve_image(rel)
+        except ValueError as e:
+            skipped += 1
+            errors.append(f"{rel}: {e}")
+            continue
+        if not src.exists() or not src.is_file():
+            skipped += 1
+            errors.append(f"{rel}: 文件不存在")
+            continue
+        name = _unique_staged_name(src.name, existing)
+        dest = STAGING_DIR / name
+        try:
+            _hardlink_or_copy(src, dest)
+        except OSError as e:
+            skipped += 1
+            errors.append(f"{src.name}: {e}")
+            continue
+        items.append(
+            {
+                "name": name,
+                "library_path": rel,
+                "added_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        existing.add(name)
+        added += 1
+    _save_staging_index(items)
+    return {"added": added, "skipped": skipped, "errors": errors, "count": len(items)}
+
+
+def list_staging() -> dict:
+    items = _load_staging_index()
+    result = []
+    for i in items:
+        f = STAGING_DIR / i["name"]
+        if not f.exists():
+            continue
+        try:
+            stat = f.stat()
+        except OSError:
+            continue
+        result.append(
+            {
+                **i,
+                "size": stat.st_size,
+                "mtime": int(stat.st_mtime * 1000),
+            }
+        )
+    return {"items": result, "count": len(result)}
+
+
+def remove_staged(name: str) -> dict:
+    if not name or os.path.basename(name) != name:
+        raise ValueError("非法文件名")
+    items = _load_staging_index()
+    items = [i for i in items if i["name"] != name]
+    _save_staging_index(items)
+    try:
+        (STAGING_DIR / name).unlink(missing_ok=True)
+    except OSError:
+        pass
+    return {"ok": True, "count": len(items)}
+
+
+def clear_staging() -> dict:
+    removed = len(_load_staging_index())
+    for f in STAGING_DIR.glob("*"):
+        if f.is_file() and f.name != "items.json":
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    _save_staging_index([])
+    return {"ok": True, "removed": removed}
+
+
+def resolve_staged_file(name: str) -> Path:
+    if not name or os.path.basename(name) != name:
+        raise ValueError("非法文件名")
+    file = (STAGING_DIR / name).resolve()
+    if not file.is_relative_to(STAGING_DIR.resolve()) or not file.exists():
+        raise FileNotFoundError("暂存文件不存在")
+    return file
+
+
 # ---------- PNG 元数据（纯标准库，逐块处理，像素不变） ----------
 
 
 def _iter_chunks(data: bytes):
-    """遍历 PNG 块，产出 (chunk_type, chunk_data, crc_bytes)。"""
     if not data.startswith(PNG_SIGNATURE):
         raise ValueError("不是有效的 PNG 文件")
     pos = len(PNG_SIGNATURE)
@@ -81,7 +235,6 @@ def _chunk(ctype: bytes, cdata: bytes) -> bytes:
 
 
 def _rebuild(chunks, insert_before_idat: dict[bytes, list[bytes]] | None = None) -> bytes:
-    """重建 PNG：可删除/插入元数据块（在第一个 IDAT 前插入）。"""
     out = bytearray(PNG_SIGNATURE)
     inserted = False
     for ctype, cdata, _crc in chunks:
@@ -99,7 +252,6 @@ def _rebuild(chunks, insert_before_idat: dict[bytes, list[bytes]] | None = None)
 
 
 def extract_png_metadata(file: Path) -> dict[str, list[str]]:
-    """提取 PNG 元数据块：{块类型: [base64 数据, ...]}。非 PNG 返回空。"""
     file = Path(file)
     data = file.read_bytes()
     if not data.startswith(PNG_SIGNATURE):
@@ -114,7 +266,6 @@ def extract_png_metadata(file: Path) -> dict[str, list[str]]:
 
 
 def apply_png_metadata(file: Path, meta: dict[str, list[str]]) -> Path:
-    """把提取的元数据写回 PNG（先清除目标内同名块再插入）。"""
     file = Path(file)
     data = file.read_bytes()
     if not data.startswith(PNG_SIGNATURE) or not meta:
@@ -129,7 +280,6 @@ def apply_png_metadata(file: Path, meta: dict[str, list[str]]) -> Path:
 
 
 def wipe_png_metadata(file: Path) -> Path:
-    """抹除 PNG 内部元数据（tEXt/zTXt/iTXt/eXIf/tIME），像素不变。"""
     file = Path(file)
     data = file.read_bytes()
     if not data.startswith(PNG_SIGNATURE):
@@ -143,13 +293,11 @@ def wipe_png_metadata(file: Path) -> Path:
 
 
 def _safe_custom(text: str) -> str:
-    """清洗自定义命名段：去 Windows 非法字符，保留中文等。"""
     text = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", str(text or "")).strip(" _")
     return text[:60]
 
 
 def build_rename_name(rename: dict, today: date, random_digits: str) -> str:
-    """按用户顺序拼接命名段，段间用下划线连接。"""
     parts = rename.get("parts") or ["date", "random"]
     custom = _safe_custom(rename.get("custom") or "")
     pieces = []
@@ -172,7 +320,6 @@ def _random_digits(length: int = 6) -> str:
 
 
 def rename_samples(rename: dict) -> list[str]:
-    """重命名实时预览样例（随机段用固定样例数字展示）。"""
     today = date.today()
     return [
         build_rename_name(rename, today, "482913"),
@@ -191,24 +338,44 @@ def _unique_output_name(folder: Path, stem: str, suffix: str) -> str:
     return candidate.name
 
 
-# ---------- 超分引擎插件（仅支持一个引擎） ----------
+# ---------- 超分引擎插件（多引擎清单，按文件名识别） ----------
 
 
-def _manifest() -> dict:
-    path = MANIFEST_DIR / "realesrgan-ncnn-vulkan.json"
-    if not path.exists():
+def _all_manifests() -> list[dict]:
+    manifests = []
+    for f in sorted(MANIFEST_DIR.glob("*.json")):
+        try:
+            manifests.append(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    if not manifests:
         raise RuntimeError("超分引擎清单缺失，无法使用超分功能")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return manifests
+
+
+def _default_manifest() -> dict:
+    for m in _all_manifests():
+        if m.get("id") == "realesrgan-ncnn-vulkan":
+            return m
+    return _all_manifests()[0]
+
+
+def _manifest_for_binary(binary: Path) -> dict | None:
+    name = binary.name.lower()
+    for m in _all_manifests():
+        for match in m.get("match_binary") or []:
+            if match.lower() in name:
+                return m
+    return None
 
 
 def _engine_binary() -> Path | None:
-    """优先自定义路径；否则返回已安装的引擎二进制。"""
     settings = load_settings()
     custom = (settings.get("publish") or {}).get("engine_path") or ""
     if custom:
         p = Path(custom).expanduser()
         return p if p.exists() else None
-    manifest = _manifest()
+    manifest = _default_manifest()
     marker = ENGINE_RUNTIME_DIR / manifest["id"] / "installed.json"
     if not marker.exists():
         return None
@@ -220,12 +387,31 @@ def _engine_binary() -> Path | None:
     return binary if binary.exists() else None
 
 
-def _engine_state() -> dict:
-    manifest = _manifest()
+def _active_manifest() -> dict:
+    binary = _engine_binary()
+    if binary is not None:
+        matched = _manifest_for_binary(binary)
+        if matched is not None:
+            return matched
+    return _default_manifest()
+
+
+def _engine_params(engine_id: str) -> dict:
+    manifest = next((m for m in _all_manifests() if m.get("id") == engine_id), {})
+    defaults = {
+        p["key"]: p.get("default")
+        for p in manifest.get("params", [])
+        if p.get("type") in ("select", "number", "bool")
+    }
+    saved = (load_settings().get("publish") or {}).get("engine_params") or {}
+    return {**defaults, **(saved.get(engine_id) or {})}
+
+
+def engine_status() -> dict:
+    binary = _engine_binary()
+    manifest = _active_manifest()
     install_file = ENGINE_RUNTIME_DIR / "install.json"
-    installing = False
-    progress = 0
-    message = ""
+    installing, progress, message = False, 0, ""
     if install_file.exists():
         try:
             state = json.loads(install_file.read_text(encoding="utf-8"))
@@ -234,9 +420,19 @@ def _engine_state() -> dict:
             message = str(state.get("message") or "")
         except Exception:
             pass
-    binary = _engine_binary()
     settings = load_settings()
     return {
+        "engines": [
+            {
+                "id": m.get("id"),
+                "name": m.get("name"),
+                "version": m.get("version"),
+                "downloadable": bool(m.get("install")),
+            }
+            for m in _all_manifests()
+        ],
+        "engine": manifest["id"],
+        "engine_name": manifest["name"],
         "manifest": manifest,
         "installed": binary is not None,
         "installing": installing,
@@ -244,12 +440,8 @@ def _engine_state() -> dict:
         "message": message,
         "binary": str(binary) if binary else None,
         "custom_path": (settings.get("publish") or {}).get("engine_path") or "",
-        "params": (settings.get("publish") or {}).get("engine_params") or {},
+        "params": _engine_params(manifest["id"]),
     }
-
-
-def engine_status() -> dict:
-    return _engine_state()
 
 
 def _write_install_state(state: dict) -> None:
@@ -265,7 +457,7 @@ def _safe_extract(zf: zipfile.ZipFile, target: Path) -> None:
         name = info.filename.replace("\\", "/")
         dest = (target / name).resolve()
         if not dest.is_relative_to(base):
-            continue  # 防 zip 路径穿越
+            continue
         if info.is_dir():
             dest.mkdir(parents=True, exist_ok=True)
         else:
@@ -274,8 +466,14 @@ def _safe_extract(zf: zipfile.ZipFile, target: Path) -> None:
                 shutil.copyfileobj(src, out)
 
 
-def _install_engine_worker() -> None:
-    manifest = _manifest()
+def _find_binary(root: Path, name: str) -> Path | None:
+    for p in root.rglob("*"):
+        if p.is_file() and p.name.lower() == name.lower():
+            return p
+    return None
+
+
+def _install_engine_worker(manifest: dict) -> None:
     target_dir = ENGINE_RUNTIME_DIR / manifest["id"] / str(manifest.get("version") or "latest")
     zip_path = ENGINE_RUNTIME_DIR / f"{manifest['id']}.zip"
     try:
@@ -332,20 +530,18 @@ def _install_engine_worker() -> None:
             pass
 
 
-def _find_binary(root: Path, name: str) -> Path | None:
-    for p in root.rglob("*"):
-        if p.is_file() and p.name.lower() == name.lower():
-            return p
-    return None
-
-
 def install_engine() -> dict:
-    state = _engine_state()
+    state = engine_status()
     if state["installing"]:
         raise ValueError("引擎正在下载中，请稍候")
     if state["installed"]:
-        return {"ok": True, "installed": True, "message": "引擎已安装"}
-    thread = threading.Thread(target=_install_engine_worker, daemon=True)
+        return {"ok": True, "installed": True, "message": "引擎已就绪"}
+    manifest = _active_manifest()
+    if not manifest.get("install"):
+        raise ValueError(f"{manifest['name']} 不支持自动下载，请指定本地引擎路径")
+    # 先同步写入安装状态，再启动后台线程，前端轮询立刻可见进度
+    _write_install_state({"running": True, "progress": 0.0, "message": "准备下载…"})
+    thread = threading.Thread(target=_install_engine_worker, args=(manifest,), daemon=True)
     thread.start()
     return {"ok": True, "installing": True, "message": "开始下载超分引擎"}
 
@@ -356,30 +552,31 @@ def set_engine_local_path(path: str) -> dict:
         p = Path(path).expanduser()
         if not p.exists() or not p.is_file():
             raise ValueError("本地引擎路径不存在")
-    save_settings({"publish": {**(load_settings().get("publish") or {}), "engine_path": path}})
-    return {"ok": True, "custom_path": path}
+        matched = _manifest_for_binary(p)
+        if matched is None:
+            raise ValueError("无法识别引擎类型：文件名需包含 realesrgan 或 waifu2x")
+    settings = load_settings()
+    save_settings({"publish": {**(settings.get("publish") or {}), "engine_path": path}})
+    manifest = _active_manifest()
+    return {"ok": True, "engine": manifest["id"], "engine_name": manifest["name"]}
 
 
-def save_engine_params(params: dict) -> dict:
-    saved = _default_engine_params()
-    if isinstance(params, dict):
-        saved.update({k: v for k, v in params.items() if v is not None})
-    save_settings({"publish": {**(load_settings().get("publish") or {}), "engine_params": saved}})
-    return {"ok": True, "params": saved}
+def save_engine_params(engine: str, params: dict) -> dict:
+    engine = (engine or _active_manifest()["id"]).strip()
+    if engine not in {m["id"] for m in _all_manifests()}:
+        raise ValueError("未知引擎")
+    defaults = _engine_params(engine)
+    merged = {**defaults, **({k: v for k, v in (params or {}).items() if v is not None})}
+    settings = load_settings()
+    publish = settings.get("publish") or {}
+    engine_params = dict(publish.get("engine_params") or {})
+    engine_params[engine] = merged
+    save_settings({"publish": {**publish, "engine_params": engine_params}})
+    return {"ok": True, "engine": engine, "params": merged}
 
 
-def _default_engine_params() -> dict:
-    manifest = _manifest()
-    return {
-        p["key"]: p.get("default")
-        for p in manifest.get("params", [])
-        if p.get("type") in ("select", "number", "bool")
-    }
-
-
-def build_engine_args(binary: Path, params: dict, input_path: Path, output_path: Path) -> list[str]:
+def build_engine_args(manifest: dict, binary: Path, params: dict, input_path: Path, output_path: Path) -> list[str]:
     """按引擎清单生成命令行参数；不存在的占位（如 models 目录）自动跳过。"""
-    manifest = _manifest()
     values = {**params, "input": str(input_path), "output": str(output_path)}
     models_dir = binary.parent / "models"
     values["models_dir"] = str(models_dir) if models_dir.is_dir() else None
@@ -397,7 +594,6 @@ def build_engine_args(binary: Path, params: dict, input_path: Path, output_path:
             args.append(str(value))
             i += 1
             continue
-        # 普通参数：若下一个是占位符且值为空（如无 models 目录），整对跳过
         if (
             i + 1 < len(tokens)
             and tokens[i + 1].startswith("{")
@@ -409,29 +605,61 @@ def build_engine_args(binary: Path, params: dict, input_path: Path, output_path:
                 continue
         args.append(token)
         i += 1
-    for flag_key, flag in (manifest["cli"].get("flags") or {}).items():
+    for flag_key, flag_tokens in (manifest["cli"].get("flags") or {}).items():
         if bool(values.get(flag_key)):
-            args.append(str(flag))
+            args.extend(str(t) for t in flag_tokens)
     return args
 
 
 def _run_engine(binary: Path, params: dict, input_path: Path, output_path: Path) -> None:
     if not binary.exists():
-        raise RuntimeError("超分引擎未安装，请先在参数面板下载或指定本地路径")
+        raise RuntimeError("超分引擎不可用，请先下载或指定本地路径")
+    manifest = _manifest_for_binary(binary) or _default_manifest()
+    # waifu2x-caffe 等引擎把 -o 当作输出文件夹，跑完后自动取出结果文件
+    out_arg = output_path
+    temp_out_dir: Path | None = None
+    if (manifest.get("cli") or {}).get("output_is_dir"):
+        temp_out_dir = output_path.parent / f"{output_path.name}.d"
+        temp_out_dir.mkdir(parents=True, exist_ok=True)
+        out_arg = temp_out_dir
+    args = build_engine_args(manifest, binary, params, input_path, out_arg)
     if str(binary).lower().endswith(".py"):
-        cmd = [sys.executable, str(binary)] + build_engine_args(binary, params, input_path, output_path)
+        cmd = [sys.executable, str(binary)] + args
     else:
-        cmd = [str(binary)] + build_engine_args(binary, params, input_path, output_path)
-    proc = subprocess.run(
-        cmd,
-        cwd=str(binary.parent),
-        capture_output=True,
-        text=True,
-        timeout=UPSCALE_TIMEOUT_SEC,
-    )
-    if proc.returncode != 0 or not output_path.exists():
-        detail = (proc.stderr or proc.stdout or "").strip()[-800:]
-        raise RuntimeError(f"超分引擎执行失败: {detail}")
+        cmd = [str(binary)] + args
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(binary.parent),
+            capture_output=True,
+            text=True,
+            timeout=UPSCALE_TIMEOUT_SEC,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()[-800:]
+            raise RuntimeError(f"超分引擎执行失败: {detail}")
+        if temp_out_dir is not None:
+            produced = _find_produced_image(temp_out_dir, input_path)
+            if produced is None:
+                raise RuntimeError("超分引擎执行结束但未找到输出图片")
+            shutil.move(str(produced), str(output_path))
+        elif not output_path.exists():
+            raise RuntimeError("超分引擎执行结束但未生成输出文件")
+    finally:
+        if temp_out_dir is not None:
+            shutil.rmtree(temp_out_dir, ignore_errors=True)
+
+
+def _find_produced_image(out_dir: Path, input_path: Path) -> Path | None:
+    """在输出文件夹里定位引擎生成的结果图（优先与输入同名，否则取最新图片）。"""
+    ext = {p.suffix.lower() for p in [input_path]}
+    candidates = [p for p in out_dir.rglob("*") if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp")]
+    if not candidates:
+        return None
+    same_stem = [p for p in candidates if p.stem == input_path.stem]
+    if same_stem:
+        return max(same_stem, key=lambda p: p.stat().st_mtime_ns)
+    return max(candidates, key=lambda p: p.stat().st_mtime_ns)
 
 
 # ---------- 发布处理运行 ----------
@@ -474,20 +702,18 @@ def _validate_nodes(nodes: dict) -> dict:
     return {"upscale": upscale, "restore": restore, "wipe": wipe, "rename": rename}
 
 
-def start_run(paths: list[str], nodes: dict, rename: dict, engine_params: dict) -> dict:
+def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params: dict) -> dict:
     global _active_run_id
     with _lock:
         if _active_run_id is not None:
             raise ValueError("已有发布任务在运行，请先等待完成")
 
-    from .library import resolve_image
-
     nodes = _validate_nodes(nodes)
-    paths = [p for p in (paths or []) if p]
-    if not paths:
-        raise ValueError("请先选择要处理的图片")
+    staged_names = [n for n in (staged_names or []) if n]
+    if not staged_names:
+        raise ValueError("暂存区没有要处理的图片")
     if nodes["upscale"] and _engine_binary() is None:
-        raise ValueError("超分引擎未安装：请在发布面板先下载引擎或指定本地路径")
+        raise ValueError("超分引擎未安装：请在发布页面先下载引擎或指定本地路径")
 
     rename = rename or {}
     rename_parts = [p for p in (rename.get("parts") or ["date", "random"]) if p in PARTS]
@@ -498,35 +724,35 @@ def start_run(paths: list[str], nodes: dict, rename: dict, engine_params: dict) 
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     base = _run_dir(run_id)
     input_dir = base / "input"
-    output_dir = base / "output"
     meta_dir = base / "meta"
     tmp_dir = base / ".tmp"
-    for d in (input_dir, output_dir, meta_dir, tmp_dir):
+    for d in (input_dir, meta_dir, tmp_dir):
         d.mkdir(parents=True, exist_ok=True)
 
+    # 输出目录：outputs/<时间戳>-<随机>/，每次处理独立文件夹
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = OUTPUTS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     files = []
-    for rel in paths:
-        try:
-            src = resolve_image(rel)
-        except ValueError as e:
+    existing = set()
+    for name in staged_names:
+        src = STAGING_DIR / name
+        if not src.is_file():
             continue
-        if not src.exists() or not src.is_file():
-            continue
-        stem, suffix = os.path.splitext(src.name)
-        staged = input_dir / _unique_output_name(input_dir, stem, suffix)
-        shutil.copy2(str(src), str(staged))
+        staged_copy = input_dir / _unique_staged_name(name, existing)
+        existing.add(staged_copy.name)
+        _hardlink_or_copy(src, staged_copy)
         files.append(
             {
-                "input": rel,
-                "staged": staged.name,
+                "staged": name,
                 "output": None,
                 "status": "pending",
                 "message": "",
             }
         )
     if not files:
-        shutil.rmtree(base, ignore_errors=True)
-        raise ValueError("选中的图片都无效或不存在")
+        raise ValueError("暂存区中的图片都无效或不存在")
 
     state = {
         "id": run_id,
@@ -537,7 +763,7 @@ def start_run(paths: list[str], nodes: dict, rename: dict, engine_params: dict) 
         "rename": rename,
         "engine_params": engine_params or {},
         "files": files,
-        "output_dir": str(output_dir),
+        "output_dir": str(out_dir),
         "total": len(files),
         "done": 0,
         "failed": 0,
@@ -547,7 +773,7 @@ def start_run(paths: list[str], nodes: dict, rename: dict, engine_params: dict) 
         _active_run_id = run_id
     thread = threading.Thread(target=_run_worker, args=(run_id,), daemon=True)
     thread.start()
-    return {"id": run_id, "total": len(files)}
+    return {"id": run_id, "total": len(files), "output_dir": str(out_dir)}
 
 
 def _run_worker(run_id: str) -> None:
@@ -556,12 +782,12 @@ def _run_worker(run_id: str) -> None:
         state = _load_run(run_id)
         base = _run_dir(run_id)
         input_dir = base / "input"
-        output_dir = base / "output"
         meta_dir = base / "meta"
         tmp_dir = base / ".tmp"
+        out_dir = Path(state["output_dir"])
         nodes = state["nodes"]
         rename = state["rename"]
-        engine_params = {**(_default_engine_params()), **(state.get("engine_params") or {})}
+        engine_params = {**(state.get("engine_params") or {})}
         today = date.today()
         binary = _engine_binary()
 
@@ -595,6 +821,7 @@ def _run_worker(run_id: str) -> None:
                 final_name = current.name
                 if nodes["wipe"]:
                     if current.suffix.lower() == ".png":
+                        _ensure_detached(current)  # 断开与图库/暂存区的硬链接再原地改写
                         wipe_png_metadata(current)
                     if not nodes["rename"]:
                         final_name = uuid.uuid4().hex[:8] + current.suffix.lower()
@@ -603,11 +830,11 @@ def _run_worker(run_id: str) -> None:
                 if nodes["rename"]:
                     digits = _random_digits((rename or {}).get("random_length"))
                     stem = build_rename_name(rename, today, digits)
-                    final_name = _unique_output_name(output_dir, stem, current.suffix.lower())
+                    final_name = _unique_output_name(out_dir, stem, current.suffix.lower())
                 else:
-                    final_name = _unique_output_name(output_dir, os.path.splitext(final_name)[0], current.suffix.lower())
+                    final_name = _unique_output_name(out_dir, os.path.splitext(final_name)[0], current.suffix.lower())
 
-                dest = output_dir / final_name
+                dest = out_dir / final_name
                 shutil.move(str(current), str(dest))
                 f["output"] = final_name
                 f["status"] = "done"
@@ -642,41 +869,21 @@ def run_status(run_id: str) -> dict:
     return state
 
 
-def save_outputs_to_library(run_id: str) -> dict:
-    """把处理结果复制回图库未评分目录（library/<日期>/），原暂存文件保留。"""
-    from .config import LIBRARY_DIR
-    from .library import _unique_dest
-
-    state = _load_run(run_id)
-    output_dir = _run_dir(run_id) / "output"
-    dest_folder = LIBRARY_DIR / date.today().isoformat()
-    dest_folder.mkdir(parents=True, exist_ok=True)
-    saved = []
-    for f in state["files"]:
-        if f.get("status") != "done" or not f.get("output"):
-            continue
-        src = output_dir / f["output"]
-        if not src.exists():
-            continue
-        dest = _unique_dest(dest_folder, src.name)
-        shutil.copy2(str(src), str(dest))
-        saved.append({"name": src.name, "path": dest.relative_to(LIBRARY_DIR).as_posix()})
-    return {"ok": True, "saved": saved, "folder": dest_folder.as_posix()}
-
-
 def resolve_output_file(run_id: str, name: str) -> Path:
-    """解析暂存区输出文件（仅允许输出目录内、单层文件名）。"""
+    """解析本次运行输出目录里的文件（仅允许单层文件名）。"""
     if not name or os.path.basename(name) != name:
         raise ValueError("非法文件名")
-    output_dir = _run_dir(run_id) / "output"
+    state = _load_run(run_id)
+    output_dir = Path(state["output_dir"]).resolve()
     file = (output_dir / name).resolve()
-    if not file.is_relative_to(output_dir.resolve()) or not file.exists():
+    if not file.is_relative_to(output_dir) or not file.exists():
         raise FileNotFoundError("输出文件不存在")
     return file
 
 
 def open_output_folder(run_id: str) -> dict:
-    output_dir = _run_dir(run_id) / "output"
+    state = _load_run(run_id)
+    output_dir = Path(state["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
         if os.name == "nt":
@@ -689,6 +896,7 @@ def open_output_folder(run_id: str) -> dict:
 
 
 def delete_run(run_id: str) -> dict:
+    """清理本次运行的内部暂存（input/meta/.tmp）；outputs 输出文件夹保留给用户。"""
     base = _run_dir(run_id).resolve()
     if not base.is_relative_to(PUBLISH_DIR.resolve()):
         raise ValueError("非法任务目录")

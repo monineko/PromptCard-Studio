@@ -4,6 +4,7 @@
   "version": "0.2.5.0",
   "homepage": "https://github.com/xinntao/Real-ESRGAN",
   "license": "BSD-3-Clause",
+  "match_binary": ["realesrgan"],
   "note": "当前唯一内置超分引擎；不同引擎参数差异较大，后续新增引擎时单独提供清单与参数面板。",
   "install": {
     "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
@@ -84,6 +85,6 @@
       "-i", "{input}",
       "-o", "{output}"
     ],
-    "flags": { "tta": "-x" }
+    "flags": { "tta": ["-x"] }
   }
 }

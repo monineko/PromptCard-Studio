@@ -138,7 +138,7 @@ export function QuickPickPopup({
               onClick={onPublish}
               className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-85 disabled:opacity-40"
               style={{ background: "var(--accent)" }}
-              title="对选中的图片执行超分降噪 / 数据抹除 / 批量重命名"
+              title="把选中的图片复制一份到发布暂存区（图库原图不动），再去「发布处理」页面调整参数"
             >
               <Sparkles size={15} /> 发布处理
             </button>

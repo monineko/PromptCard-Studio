@@ -1,0 +1,95 @@
+{
+  "id": "waifu2x-caffe",
+  "name": "waifu2x-caffe",
+  "version": "local",
+  "homepage": "https://github.com/lltcggie/waifu2x-caffe",
+  "license": "MIT",
+  "match_binary": ["waifu2x"],
+  "note": "本地引擎（无内置下载）：指定 waifu2x-caffe.exe 路径即可使用，需自带 models 与运行库。",
+  "install": null,
+  "params": [
+    {
+      "key": "mode",
+      "label": "处理模式",
+      "type": "select",
+      "options": [
+        { "value": "noise_scale", "label": "降噪+放大（默认）" },
+        { "value": "noise", "label": "仅降噪" },
+        { "value": "scale", "label": "仅放大" },
+        { "value": "auto_scale", "label": "自动放大" }
+      ],
+      "default": "noise_scale"
+    },
+    {
+      "key": "noise_level",
+      "label": "降噪等级",
+      "type": "select",
+      "options": [
+        { "value": 0, "label": "0（不降噪）" },
+        { "value": 1, "label": "1" },
+        { "value": 2, "label": "2（默认）" },
+        { "value": 3, "label": "3" }
+      ],
+      "default": 2
+    },
+    {
+      "key": "scale_ratio",
+      "label": "放大倍数",
+      "type": "select",
+      "options": [
+        { "value": 1, "label": "1x（仅降噪时）" },
+        { "value": 2, "label": "2x（默认）" }
+      ],
+      "default": 2
+    },
+    {
+      "key": "process",
+      "label": "计算设备",
+      "type": "select",
+      "options": [
+        { "value": "gpu", "label": "GPU（默认）" },
+        { "value": "cpu", "label": "CPU（慢）" }
+      ],
+      "default": "gpu"
+    },
+    {
+      "key": "crop_size",
+      "label": "分块大小",
+      "type": "number",
+      "min": 0,
+      "max": 4096,
+      "step": 32,
+      "default": 128,
+      "hint": "显存不足或报错时调小（如 64）"
+    },
+    {
+      "key": "batch_size",
+      "label": "批大小",
+      "type": "number",
+      "min": 1,
+      "max": 64,
+      "step": 1,
+      "default": 8
+    },
+    {
+      "key": "tta",
+      "label": "TTA 模式（质量更高，速度约慢 8 倍）",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "cli": {
+    "output_is_dir": true,
+    "args": [
+      "-i", "{input}",
+      "-o", "{output}",
+      "-m", "{mode}",
+      "-n", "{noise_level}",
+      "-s", "{scale_ratio}",
+      "-c", "{crop_size}",
+      "-b", "{batch_size}",
+      "-p", "{process}"
+    ],
+    "flags": { "tta": ["-t", "1"] }
+  }
+}

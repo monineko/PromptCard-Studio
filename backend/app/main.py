@@ -42,6 +42,7 @@ from .schemas import (
     PublishEngineParamsIn,
     PublishRenamePreviewIn,
     PublishRunIn,
+    PublishStageIn,
     ReviewApplyIn,
     ReviewUndoIn,
     SetCoverIn,
@@ -656,7 +657,7 @@ def publish_engine_local_path(body: PublishEngineLocalPathIn):
 @app.post("/api/publish/engine/params")
 def publish_engine_params(body: PublishEngineParamsIn):
     try:
-        return publish_service.save_engine_params(body.params)
+        return publish_service.save_engine_params(body.engine, body.params)
     except Exception as e:
         raise _as_http(e)
 
@@ -673,7 +674,7 @@ def publish_rename_preview(body: PublishRenamePreviewIn):
 def publish_run(body: PublishRunIn):
     try:
         return publish_service.start_run(
-            body.paths,
+            body.staged,
             body.nodes or {},
             body.rename or {},
             body.engine_params or {},
@@ -690,16 +691,6 @@ def publish_run_status(run_id: str):
         return publish_service.run_status(run_id)
     except ValueError as e:
         raise _as_http(e, 404)
-
-
-@app.post("/api/publish/run/{run_id}/save-to-library")
-def publish_run_save(run_id: str):
-    try:
-        return publish_service.save_outputs_to_library(run_id)
-    except ValueError as e:
-        raise _as_http(e, 404)
-    except Exception as e:
-        raise _as_http(e)
 
 
 @app.post("/api/publish/run/{run_id}/open-folder")
@@ -731,6 +722,45 @@ def publish_run_delete(run_id: str):
         return publish_service.delete_run(run_id)
     except ValueError as e:
         raise _as_http(e, 400)
+
+
+@app.get("/api/publish/staging")
+def publish_staging_list():
+    return publish_service.list_staging()
+
+
+@app.post("/api/publish/staging")
+def publish_staging_add(body: PublishStageIn):
+    try:
+        return publish_service.stage_images(body.paths)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.delete("/api/publish/staging")
+def publish_staging_remove(name: str):
+    try:
+        return publish_service.remove_staged(name)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/publish/staging/clear")
+def publish_staging_clear():
+    return publish_service.clear_staging()
+
+
+@app.get("/api/publish/staging/file")
+def publish_staging_file(name: str):
+    try:
+        file = publish_service.resolve_staged_file(name)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    return FileResponse(file)
 
 
 # ---------- 静态前端 ----------

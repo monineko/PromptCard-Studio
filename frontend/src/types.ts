@@ -379,7 +379,17 @@ export type PublishEngineManifest = {
   params: PublishEngineParam[];
 };
 
+export type PublishEngineInfo = {
+  id: string;
+  name: string;
+  version: string;
+  downloadable: boolean;
+};
+
 export type PublishEngineStatus = {
+  engines: PublishEngineInfo[];
+  engine: string;
+  engine_name: string;
   manifest: PublishEngineManifest;
   installed: boolean;
   installing: boolean;
@@ -398,11 +408,18 @@ export type PublishNodes = {
 };
 
 export type PublishRunFile = {
-  input: string;
   staged: string;
   output: string | null;
   status: "pending" | "running" | "done" | "failed";
   message: string;
+};
+
+export type PublishStagedItem = {
+  name: string;
+  library_path: string;
+  added_at: string;
+  size: number;
+  mtime: number;
 };
 
 export type PublishRunStatus = {

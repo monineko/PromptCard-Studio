@@ -145,13 +145,18 @@ class VibeImportIn(BaseModel):
 
 
 class PublishRunIn(BaseModel):
-    paths: list[str] = []
+    staged: list[str] = []
     nodes: dict = {}
     rename: dict = {}
     engine_params: dict = {}
 
 
+class PublishStageIn(BaseModel):
+    paths: list[str] = []
+
+
 class PublishEngineParamsIn(BaseModel):
+    engine: str = ""
     params: dict = {}
 
 

@@ -13,6 +13,8 @@ workspace.json
 config.json
 batch_runs/
 publish_runs/
+publish_staging/
+outputs/
 engines/runtime/
 .trash/
 dictionary/custom.json

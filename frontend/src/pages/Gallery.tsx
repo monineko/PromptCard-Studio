@@ -24,7 +24,6 @@ import { api } from "../api";
 import { AlbumStackCard } from "../components/gallery/AlbumStackCard";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
-import { PublishPanel } from "../components/gallery/PublishPanel";
 import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
 import { SendToWorkspaceModal } from "../components/gallery/SendToWorkspaceModal";
@@ -140,7 +139,6 @@ export function Gallery() {
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [quickPick, setQuickPick] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [quickPickBusy, setQuickPickBusy] = useState(false);
   const [pngInfo, setPngInfo] = useState<PngInfoResult | null>(null);
@@ -495,17 +493,26 @@ export function Gallery() {
     setQuickPickBusy(false);
   }, []);
 
-  const closePublish = useCallback(() => {
-    setPublishOpen(false);
+  const handlePublishStage = useCallback(async () => {
+    const paths = [...selectedPaths];
+    if (!paths.length || quickPickBusy) return;
+    setQuickPickBusy(true);
+    try {
+      const result = await api.publishStage(paths);
+      if (result.added > 0) {
+        addToast(
+          `已加入发布暂存区 ${result.added} 张（共 ${result.count} 张）—— 可从左侧「发布处理」进入`
+        );
+      } else {
+        addToast(result.skipped ? `没有可加入的图片（跳过 ${result.skipped} 张）` : "没有可加入的图片", "err");
+      }
+    } catch (e) {
+      addToast(`加入发布暂存区失败: ${(e as Error).message}`, "err");
+    } finally {
+      setQuickPickBusy(false);
+    }
     closeQuickPick();
-  }, [closeQuickPick]);
-
-  const handlePublishSaved = useCallback(async () => {
-    setPublishOpen(false);
-    closeQuickPick();
-    await refresh();
-    if (category) await openCategory(category);
-  }, [category, closeQuickPick, openCategory, refresh]);
+  }, [addToast, closeQuickPick, quickPickBusy, selectedPaths]);
 
   const toggleSelect = useCallback((item: LibraryImageItem) => {
     setSelectedPaths((prev) => {
@@ -990,16 +997,8 @@ export function Gallery() {
           onMove={handleQuickMove}
           onDelete={handleQuickDelete}
           onSetCover={handleSetCover}
-          onPublish={() => setPublishOpen(true)}
+          onPublish={handlePublishStage}
           onClose={closeQuickPick}
-        />
-      )}
-
-      {publishOpen && (
-        <PublishPanel
-          paths={[...selectedPaths]}
-          onClose={closePublish}
-          onSaved={handlePublishSaved}
         />
       )}
 

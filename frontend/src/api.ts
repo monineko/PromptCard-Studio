@@ -12,6 +12,7 @@ import type {
   PngInfoResult,
   PublishEngineStatus,
   PublishNodes,
+  PublishStagedItem,
   PublishRunStatus,
   ReviewApplyResult,
   Section,
@@ -231,10 +232,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  publishEngineParams: (params: Record<string, string | number | boolean>) =>
-    request<{ ok: boolean; params: Record<string, string | number | boolean> }>(
+  publishEngineParams: (engine: string, params: Record<string, string | number | boolean>) =>
+    request<{ ok: boolean; engine: string; params: Record<string, string | number | boolean> }>(
       "/api/publish/engine/params",
-      { method: "POST", body: JSON.stringify({ params }) }
+      { method: "POST", body: JSON.stringify({ engine, params }) }
     ),
   publishRenamePreview: (rename: { parts: string[]; custom?: string; random_length?: number }) =>
     request<{ samples: string[] }>("/api/publish/rename-preview", {
@@ -242,7 +243,7 @@ export const api = {
       body: JSON.stringify({ rename }),
     }),
   publishRun: (payload: {
-    paths: string[];
+    staged: string[];
     nodes: PublishNodes;
     rename: { parts: string[]; custom?: string; random_length?: number };
     engine_params: Record<string, string | number | boolean>;
@@ -252,17 +253,26 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   publishRunStatus: (id: string) => request<PublishRunStatus>(`/api/publish/run/${id}`),
-  publishRunSave: (id: string) =>
-    request<{ ok: boolean; saved: { name: string; path: string }[]; folder: string }>(
-      `/api/publish/run/${id}/save-to-library`,
-      { method: "POST" }
-    ),
   publishRunOpen: (id: string) =>
     request<{ ok: boolean; path: string }>(`/api/publish/run/${id}/open-folder`, { method: "POST" }),
   publishRunFileUrl: (id: string, name: string) =>
     `/api/publish/run/${id}/file?name=${encodeURIComponent(name)}`,
   publishRunDelete: (id: string) =>
     request<{ ok: boolean }>(`/api/publish/run/${id}`, { method: "DELETE" }),
+  publishStage: (paths: string[]) =>
+    request<{ added: number; skipped: number; count: number; errors: string[] }>(
+      "/api/publish/staging",
+      { method: "POST", body: JSON.stringify({ paths }) }
+    ),
+  publishStaging: () => request<{ items: PublishStagedItem[]; count: number }>("/api/publish/staging"),
+  publishStagingFileUrl: (name: string) =>
+    `/api/publish/staging/file?name=${encodeURIComponent(name)}`,
+  publishStagedDelete: (name: string) =>
+    request<{ ok: boolean; count: number }>(`/api/publish/staging?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  publishStagingClear: () =>
+    request<{ ok: boolean; removed: number }>("/api/publish/staging/clear", { method: "POST" }),
 };
 
 export function uid(): string {
