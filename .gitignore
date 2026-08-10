@@ -15,9 +15,14 @@ batch_runs/
 publish_runs/
 publish_staging/
 outputs/
-engines/runtime/
+backend/app/engines/runtime/
 .trash/
 dictionary/custom.json
+
+# 开发过程产物（仅本地保留，不入库）
+docs/
+tools/
+CONTEXT.md
 
 # 系统文件
 .DS_Store

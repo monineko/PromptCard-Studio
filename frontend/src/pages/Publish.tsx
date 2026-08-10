@@ -38,6 +38,8 @@ const PART_META: { key: string; label: string; desc: string }[] = [
   { key: "random", label: "随机数字段", desc: "6 位随机数，避免重名" },
 ];
 
+const DEFAULT_RENAME = { parts: ["date", "random"] as string[], custom: "" };
+
 function localPreview(parts: string[], custom: string): string[] {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   return ["482913", "482914", "482915"].map((r) => {
@@ -69,8 +71,8 @@ export function Publish() {
     rename: false,
   });
   const [params, setParams] = useState<Record<string, string | number | boolean>>({});
-  const [parts, setParts] = useState<string[]>(["date", "random"]);
-  const [custom, setCustom] = useState("");
+  const [parts, setParts] = useState<string[]>([...DEFAULT_RENAME.parts]);
+  const [custom, setCustom] = useState(DEFAULT_RENAME.custom);
   const [customPath, setCustomPath] = useState("");
   const [savingPath, setSavingPath] = useState(false);
   const [savingParams, setSavingParams] = useState(false);

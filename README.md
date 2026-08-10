@@ -50,11 +50,9 @@ npm run build      # 产物输出 frontend/dist，由后端托管
 
 ```
 backend/    FastAPI 后端（路由/卡片/工作区/词典/生图/批量/图库/Vibe/PNG 发送/发布处理）
+  └ app/assets/   卡片导入模板（xlsx）
+  └ app/engines/  超分引擎清单（*.json）与运行时下载目录（runtime/，gitignore）
 frontend/   React 18 + TypeScript + Vite + Tailwind v4 + Zustand + framer-motion
-templates/  卡片导入模板（xlsx）
-engines/    超分引擎清单（backend/app/engines/）与运行时下载目录（engines/runtime/）
-docs/       开发过程文档（ROADMAP、接口规范、ADR；不随发布分发）
-tools/      开发辅助脚本
 ```
 
 以下目录为运行期生成的用户数据，已加入 `.gitignore`，不会进入仓库：

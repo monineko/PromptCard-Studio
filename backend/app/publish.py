@@ -44,7 +44,7 @@ PUBLISH_DIR = PROJECT_ROOT / "publish_runs"        # 运行内部暂存（input/
 STAGING_DIR = PROJECT_ROOT / "publish_staging"     # 用户发布暂存区（与图库隔离）
 STAGING_INDEX = STAGING_DIR / "items.json"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"             # 处理结果输出（按时间-随机命名独立文件夹）
-ENGINE_RUNTIME_DIR = PROJECT_ROOT / "engines" / "runtime"
+ENGINE_RUNTIME_DIR = Path(__file__).resolve().parent / "engines" / "runtime"
 MANIFEST_DIR = Path(__file__).resolve().parent / "engines"
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -59,6 +59,8 @@ NULL_METADATA_JSON = (
 
 PARTS = ("date", "custom", "random")
 UPSCALE_TIMEOUT_SEC = 1800
+DEFAULT_RENAME = {"parts": ["date", "random"], "custom": ""}
+RUN_STATUS_LABELS = {"pending": "等待", "running": "处理中", "done": "完成", "failed": "失败"}
 
 _lock = threading.Lock()
 _active_run_id: str | None = None
@@ -77,6 +79,17 @@ def _hardlink_or_copy(src: Path, dest: Path) -> None:
     except OSError:
         pass
     shutil.copy2(str(src), str(dest))
+
+
+def _new_run_file(staged: str, staged_copy: str) -> dict:
+    """发布任务的文件条目构造器（Data Clumps：统一字段，避免各处分写）。"""
+    return {
+        "staged": staged,
+        "staged_copy": staged_copy,
+        "output": None,
+        "status": "pending",
+        "message": "",
+    }
 
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -401,7 +414,7 @@ def _safe_custom(text: str) -> str:
 
 
 def build_rename_name(rename: dict, today: date, random_digits: str) -> str:
-    parts = rename.get("parts") or ["date", "random"]
+    parts = rename.get("parts") or DEFAULT_RENAME["parts"]
     custom = _safe_custom(rename.get("custom") or "")
     pieces = []
     for part in parts:
@@ -500,6 +513,11 @@ def _active_manifest() -> dict:
 
 
 def _engine_params(engine_id: str) -> dict:
+    return _merged_engine_params(engine_id)
+
+
+def _merged_engine_params(engine_id: str, override: dict | None = None) -> dict:
+    """引擎参数默认值 + 已保存值 + 本次覆写的合并（Data Clumps：统一合并逻辑）。"""
     manifest = next((m for m in _all_manifests() if m.get("id") == engine_id), {})
     defaults = {
         p["key"]: p.get("default")
@@ -507,7 +525,10 @@ def _engine_params(engine_id: str) -> dict:
         if p.get("type") in ("select", "number", "bool")
     }
     saved = (load_settings().get("publish") or {}).get("engine_params") or {}
-    return {**defaults, **(saved.get(engine_id) or {})}
+    merged = {**defaults, **(saved.get(engine_id) or {})}
+    if override:
+        merged.update({k: v for k, v in override.items() if v is not None})
+    return merged
 
 
 def engine_status() -> dict:
@@ -727,8 +748,7 @@ def save_engine_params(engine: str, params: dict) -> dict:
     engine = (engine or _active_manifest()["id"]).strip()
     if engine not in {m["id"] for m in _all_manifests()}:
         raise ValueError("未知引擎")
-    defaults = _engine_params(engine)
-    merged = {**defaults, **({k: v for k, v in (params or {}).items() if v is not None})}
+    merged = _merged_engine_params(engine, params or {})
     settings = load_settings()
     publish = settings.get("publish") or {}
     engine_params = dict(publish.get("engine_params") or {})
@@ -879,7 +899,7 @@ def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params:
         raise ValueError("超分引擎未安装：请在发布页面先下载引擎或指定本地路径")
 
     rename = rename or {}
-    rename_parts = [p for p in (rename.get("parts") or ["date", "random"]) if p in PARTS]
+    rename_parts = [p for p in (rename.get("parts") or DEFAULT_RENAME["parts"]) if p in PARTS]
     if not rename_parts:
         raise ValueError("重命名至少需要一个命名段")
     rename = {**rename, "parts": rename_parts}
@@ -906,15 +926,7 @@ def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params:
         staged_copy = input_dir / _unique_staged_name(name, existing)
         existing.add(staged_copy.name)
         _hardlink_or_copy(src, staged_copy)
-        files.append(
-            {
-                "staged": name,
-                "staged_copy": staged_copy.name,
-                "output": None,
-                "status": "pending",
-                "message": "",
-            }
-        )
+        files.append(_new_run_file(name, staged_copy.name))
     if not files:
         raise ValueError("暂存区中的图片都无效或不存在")
 

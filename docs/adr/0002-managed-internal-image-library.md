@@ -1,3 +1,0 @@
-# Managed internal image library
-
-The image library manages a fixed folder inside the project. Importing an image copies it into the library; classification moves files between the score folders (Treasure / Fine / Reject / Favorites) and creates a date subfolder for the screening day inside the chosen score folder. Score tags are transient session state: they exist only while a review session is open, are applied as file moves when the session ends, and are then discarded — there is no persistent tag store in v1. The library root is configurable in settings. External-folder references are explicitly out of scope for v1. This keeps user data tidy and backup-friendly, since the filesystem alone is the source of truth.
