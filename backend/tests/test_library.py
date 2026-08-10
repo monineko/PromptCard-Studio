@@ -107,9 +107,9 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertEqual(len(result["skipped"]), 0)
 
         today = lib.date.today().isoformat()
-        self.assertTrue((self.tmp / f"Fine-{today}" / "t.png").exists())
-        self.assertTrue((self.tmp / f"like-{today}" / "f.png").exists())
-        self.assertTrue((self.tmp / f"Reject-{today}" / "r.png").exists())
+        self.assertTrue((self.tmp / "Fine" / f"Fine-{today}" / "t.png").exists())
+        self.assertTrue((self.tmp / "like" / f"like-{today}" / "f.png").exists())
+        self.assertTrue((self.tmp / "Reject" / f"Reject-{today}" / "r.png").exists())
         self.assertFalse((self.tmp / "Reject" / "2026-08-01" / "r.png").exists())
 
         undo = lib.undo_review(result["undo_token"])
@@ -118,15 +118,15 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertTrue((self.tmp / "Treasure" / "2026-08-01" / "t.png").exists())
         self.assertTrue((self.tmp / "Fine" / "2026-08-02" / "f.png").exists())
         self.assertTrue((self.tmp / "Reject" / "2026-08-01" / "r.png").exists())
-        self.assertFalse((self.tmp / f"Fine-{today}" / "t.png").exists())
+        self.assertFalse((self.tmp / "Fine" / f"Fine-{today}" / "t.png").exists())
 
     def test_07_reapply_same_target_skipped(self):
         src = self.tmp / "Treasure" / "2026-08-01" / "t.png"
         result = lib.apply_review([{"path": "Treasure/2026-08-01/t.png", "tag": "fine"}])
         today = lib.date.today().isoformat()
-        dest = self.tmp / f"Fine-{today}" / "t.png"
+        dest = self.tmp / "Fine" / f"Fine-{today}" / "t.png"
         self.assertTrue(dest.exists())
-        second = lib.apply_review([{"path": f"Fine-{today}/t.png", "tag": "fine"}])
+        second = lib.apply_review([{"path": f"Fine/Fine-{today}/t.png", "tag": "fine"}])
         self.assertEqual(len(second["applied"]), 0)
         self.assertEqual(len(second["skipped"]), 1)
         lib.undo_review(result["undo_token"])
@@ -180,10 +180,10 @@ class LibraryServiceTest(unittest.TestCase):
         result = lib.move_images(["mv1.png"], "treasure")
         self.assertEqual(len(result["applied"]), 1)
         today = lib.date.today().isoformat()
-        dest = self.tmp / f"Treasure-{today}" / "mv1.png"
+        dest = self.tmp / "Treasure" / f"Treasure-{today}" / "mv1.png"
         self.assertTrue(dest.exists())
         # 移回未评分
-        back = lib.move_images([f"Treasure-{today}/mv1.png"], "unrated")
+        back = lib.move_images([f"Treasure/Treasure-{today}/mv1.png"], "unrated")
         self.assertTrue((self.tmp / "mv1.png").exists())
         self.assertEqual(len(back["applied"]), 1)
         undo = lib.undo_review(back["undo_token"])

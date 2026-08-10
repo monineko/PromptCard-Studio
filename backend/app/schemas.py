@@ -142,3 +142,22 @@ class VibeImportIn(BaseModel):
     strength: float = 0.7
     information_extracted: float | None = None
     model: str = ""
+
+
+class PublishRunIn(BaseModel):
+    paths: list[str] = []
+    nodes: dict = {}
+    rename: dict = {}
+    engine_params: dict = {}
+
+
+class PublishEngineParamsIn(BaseModel):
+    params: dict = {}
+
+
+class PublishEngineLocalPathIn(BaseModel):
+    path: str = ""
+
+
+class PublishRenamePreviewIn(BaseModel):
+    rename: dict = {}

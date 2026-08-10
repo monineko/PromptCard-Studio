@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { to: "/", label: "提示词工作区", icon: Home },
   { to: "/library", label: "图片库", icon: Images },
   { to: "/settings", label: "设置", icon: SettingsIcon },
-  { to: "/publish", label: "发布处理", icon: Rocket, soon: true },
+  { to: "/publish", label: "发布处理", icon: Rocket },
 ];
 
 /**
@@ -91,11 +91,6 @@ export function AppSidebar() {
               >
                 <item.icon size={15} />
                 <span className="truncate">{item.label}</span>
-                {item.soon && (
-                  <span className="ml-auto rounded bg-[var(--hover)] px-1 text-[10px] text-[var(--muted)]">
-                    M3
-                  </span>
-                )}
               </NavLink>
             ))}
           </nav>

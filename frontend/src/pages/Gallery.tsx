@@ -24,6 +24,7 @@ import { api } from "../api";
 import { AlbumStackCard } from "../components/gallery/AlbumStackCard";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
+import { PublishPanel } from "../components/gallery/PublishPanel";
 import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
 import { SendToWorkspaceModal } from "../components/gallery/SendToWorkspaceModal";
@@ -139,6 +140,7 @@ export function Gallery() {
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [quickPick, setQuickPick] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [quickPickBusy, setQuickPickBusy] = useState(false);
   const [pngInfo, setPngInfo] = useState<PngInfoResult | null>(null);
@@ -492,6 +494,18 @@ export function Gallery() {
     setSelectedPaths(new Set());
     setQuickPickBusy(false);
   }, []);
+
+  const closePublish = useCallback(() => {
+    setPublishOpen(false);
+    closeQuickPick();
+  }, [closeQuickPick]);
+
+  const handlePublishSaved = useCallback(async () => {
+    setPublishOpen(false);
+    closeQuickPick();
+    await refresh();
+    if (category) await openCategory(category);
+  }, [category, closeQuickPick, openCategory, refresh]);
 
   const toggleSelect = useCallback((item: LibraryImageItem) => {
     setSelectedPaths((prev) => {
@@ -976,7 +990,16 @@ export function Gallery() {
           onMove={handleQuickMove}
           onDelete={handleQuickDelete}
           onSetCover={handleSetCover}
+          onPublish={() => setPublishOpen(true)}
           onClose={closeQuickPick}
+        />
+      )}
+
+      {publishOpen && (
+        <PublishPanel
+          paths={[...selectedPaths]}
+          onClose={closePublish}
+          onSaved={handlePublishSaved}
         />
       )}
 

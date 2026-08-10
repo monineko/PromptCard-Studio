@@ -353,3 +353,68 @@ export type PngSendResult = {
   params: Partial<GenerateParamsPayload>;
   vibes: PngSendVibe[];
 };
+
+export type PublishEngineParamOption = {
+  value: string | number;
+  label: string;
+};
+
+export type PublishEngineParam = {
+  key: string;
+  label: string;
+  type: "select" | "number" | "bool";
+  options?: PublishEngineParamOption[];
+  default?: string | number | boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  hint?: string;
+};
+
+export type PublishEngineManifest = {
+  id: string;
+  name: string;
+  version: string;
+  homepage: string;
+  params: PublishEngineParam[];
+};
+
+export type PublishEngineStatus = {
+  manifest: PublishEngineManifest;
+  installed: boolean;
+  installing: boolean;
+  progress: number;
+  message: string;
+  binary: string | null;
+  custom_path: string;
+  params: Record<string, string | number | boolean>;
+};
+
+export type PublishNodes = {
+  upscale: boolean;
+  restore: boolean;
+  wipe: boolean;
+  rename: boolean;
+};
+
+export type PublishRunFile = {
+  input: string;
+  staged: string;
+  output: string | null;
+  status: "pending" | "running" | "done" | "failed";
+  message: string;
+};
+
+export type PublishRunStatus = {
+  id: string;
+  status: "running" | "completed" | "failed";
+  nodes: PublishNodes;
+  rename: { parts: string[]; custom?: string; random_length?: number };
+  files: PublishRunFile[];
+  output_dir: string;
+  total: number;
+  done: number;
+  failed: number;
+  active: boolean;
+  message: string;
+};

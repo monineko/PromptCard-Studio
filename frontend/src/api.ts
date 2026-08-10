@@ -10,6 +10,9 @@ import type {
   LibrarySummary,
   MoveImagesResult,
   PngInfoResult,
+  PublishEngineStatus,
+  PublishNodes,
+  PublishRunStatus,
   ReviewApplyResult,
   Section,
   Settings,
@@ -218,6 +221,48 @@ export const api = {
   },
   systemShutdown: () =>
     request<{ ok: boolean; message: string }>("/api/system/shutdown", { method: "POST" }),
+  publishEngine: () => request<PublishEngineStatus>("/api/publish/engine"),
+  publishEngineInstall: () =>
+    request<{ ok: boolean; installing: boolean; message: string }>("/api/publish/engine/install", {
+      method: "POST",
+    }),
+  publishEngineLocalPath: (path: string) =>
+    request<{ ok: boolean; custom_path: string }>("/api/publish/engine/local-path", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  publishEngineParams: (params: Record<string, string | number | boolean>) =>
+    request<{ ok: boolean; params: Record<string, string | number | boolean> }>(
+      "/api/publish/engine/params",
+      { method: "POST", body: JSON.stringify({ params }) }
+    ),
+  publishRenamePreview: (rename: { parts: string[]; custom?: string; random_length?: number }) =>
+    request<{ samples: string[] }>("/api/publish/rename-preview", {
+      method: "POST",
+      body: JSON.stringify({ rename }),
+    }),
+  publishRun: (payload: {
+    paths: string[];
+    nodes: PublishNodes;
+    rename: { parts: string[]; custom?: string; random_length?: number };
+    engine_params: Record<string, string | number | boolean>;
+  }) =>
+    request<{ id: string; total: number }>("/api/publish/run", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  publishRunStatus: (id: string) => request<PublishRunStatus>(`/api/publish/run/${id}`),
+  publishRunSave: (id: string) =>
+    request<{ ok: boolean; saved: { name: string; path: string }[]; folder: string }>(
+      `/api/publish/run/${id}/save-to-library`,
+      { method: "POST" }
+    ),
+  publishRunOpen: (id: string) =>
+    request<{ ok: boolean; path: string }>(`/api/publish/run/${id}/open-folder`, { method: "POST" }),
+  publishRunFileUrl: (id: string, name: string) =>
+    `/api/publish/run/${id}/file?name=${encodeURIComponent(name)}`,
+  publishRunDelete: (id: string) =>
+    request<{ ok: boolean }>(`/api/publish/run/${id}`, { method: "DELETE" }),
 };
 
 export function uid(): string {

@@ -14,6 +14,7 @@ from . import backgrounds as backgrounds_service
 from . import dictionary as dictionary_service
 from . import novelai as novelai_service
 from . import png_send as png_send_service
+from . import publish as publish_service
 from . import library as library_service
 from . import vibes as vibes_service
 from . import workspace as workspace_service
@@ -37,6 +38,10 @@ from .schemas import (
     VibeImportIn,
     ImportPathIn,
     MoveImagesIn,
+    PublishEngineLocalPathIn,
+    PublishEngineParamsIn,
+    PublishRenamePreviewIn,
+    PublishRunIn,
     ReviewApplyIn,
     ReviewUndoIn,
     SetCoverIn,
@@ -618,6 +623,112 @@ def library_set_cover(body: SetCoverIn):
 def library_remove_cover(category: str):
     try:
         return library_service.remove_cover(category)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+# ---------- 发布处理 ----------
+
+
+@app.get("/api/publish/engine")
+def publish_engine_status():
+    return publish_service.engine_status()
+
+
+@app.post("/api/publish/engine/install")
+def publish_engine_install():
+    try:
+        return publish_service.install_engine()
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except Exception as e:
+        raise _as_http(e, 502)
+
+
+@app.post("/api/publish/engine/local-path")
+def publish_engine_local_path(body: PublishEngineLocalPathIn):
+    try:
+        return publish_service.set_engine_local_path(body.path)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/publish/engine/params")
+def publish_engine_params(body: PublishEngineParamsIn):
+    try:
+        return publish_service.save_engine_params(body.params)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/publish/rename-preview")
+def publish_rename_preview(body: PublishRenamePreviewIn):
+    try:
+        return {"samples": publish_service.rename_samples(body.rename)}
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/publish/run")
+def publish_run(body: PublishRunIn):
+    try:
+        return publish_service.start_run(
+            body.paths,
+            body.nodes or {},
+            body.rename or {},
+            body.engine_params or {},
+        )
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except RuntimeError as e:
+        raise _as_http(e, 502)
+
+
+@app.get("/api/publish/run/{run_id}")
+def publish_run_status(run_id: str):
+    try:
+        return publish_service.run_status(run_id)
+    except ValueError as e:
+        raise _as_http(e, 404)
+
+
+@app.post("/api/publish/run/{run_id}/save-to-library")
+def publish_run_save(run_id: str):
+    try:
+        return publish_service.save_outputs_to_library(run_id)
+    except ValueError as e:
+        raise _as_http(e, 404)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/publish/run/{run_id}/open-folder")
+def publish_run_open(run_id: str):
+    try:
+        return publish_service.open_output_folder(run_id)
+    except ValueError as e:
+        raise _as_http(e, 404)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.get("/api/publish/run/{run_id}/file")
+def publish_run_file(run_id: str, name: str):
+    try:
+        file = publish_service.resolve_output_file(run_id, name)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    if not file.exists():
+        raise HTTPException(404, "输出文件不存在")
+    return FileResponse(file)
+
+
+@app.delete("/api/publish/run/{run_id}")
+def publish_run_delete(run_id: str):
+    try:
+        return publish_service.delete_run(run_id)
     except ValueError as e:
         raise _as_http(e, 400)
 

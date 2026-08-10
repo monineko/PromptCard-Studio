@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { HashRouter, Route, Routes, useLocation } from "react-router-dom";
+import { HashRouter, Link, Route, Routes, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { Images, Rocket } from "lucide-react";
 import { api } from "./api";
 import { DEFAULT_BACKDROPS } from "./assets/backgrounds";
 import { AmbientBackground } from "./components/ambient/AmbientBackground";
@@ -11,7 +12,6 @@ import { TopBar } from "./components/TopBar";
 import { cn } from "./lib";
 import { Gallery } from "./pages/Gallery";
 import { Home } from "./pages/Home";
-import { Placeholder } from "./pages/Placeholder";
 import { Settings } from "./pages/Settings";
 import { useSidebarStore } from "./sidebarStore";
 import { useStore } from "./store";
@@ -101,11 +101,29 @@ function Shell() {
                   <Route
                     path="/publish"
                     element={
-                      <Placeholder
-                        module="publish"
-                        title="发布处理"
-                        desc="M3 模块：从图库勾选图片进入发布暂存区，批量执行超分降噪、数据抹除、批量重命名。"
-                      />
+                      <div className="flex h-full items-center justify-center p-8">
+                        <div className="glass max-w-md rounded-2xl p-8 text-center">
+                          <div
+                            className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg"
+                            style={{ background: "var(--accent)" }}
+                          >
+                            <Rocket size={24} />
+                          </div>
+                          <h2 className="mb-2 text-lg font-semibold">发布处理</h2>
+                          <p className="text-sm leading-relaxed text-[var(--muted)]">
+                            在图片库中勾选图片，点击「快捷选取 → 发布处理」，
+                            即可批量执行超分降噪、恢复原数据、数据抹除与批量重命名。
+                            处理在独立暂存区进行，图库原图不受影响。
+                          </p>
+                          <Link
+                            to="/library"
+                            className="mt-5 inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-85"
+                            style={{ background: "var(--accent)" }}
+                          >
+                            <Images size={16} /> 去图库选择图片
+                          </Link>
+                        </div>
+                      </div>
                     }
                   />
                 </Routes>

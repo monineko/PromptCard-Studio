@@ -12,6 +12,8 @@ vibes/
 workspace.json
 config.json
 batch_runs/
+publish_runs/
+engines/runtime/
 .trash/
 dictionary/custom.json
 

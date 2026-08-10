@@ -1,0 +1,89 @@
+{
+  "id": "realesrgan-ncnn-vulkan",
+  "name": "Real-ESRGAN（ncnn-Vulkan）",
+  "version": "0.2.5.0",
+  "homepage": "https://github.com/xinntao/Real-ESRGAN",
+  "license": "BSD-3-Clause",
+  "note": "当前唯一内置超分引擎；不同引擎参数差异较大，后续新增引擎时单独提供清单与参数面板。",
+  "install": {
+    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
+    "sha256": null,
+    "binary": "realesrgan-ncnn-vulkan.exe"
+  },
+  "params": [
+    {
+      "key": "model",
+      "label": "模型",
+      "type": "select",
+      "options": [
+        { "value": "realesr-animevideov3", "label": "realesr-animevideov3（动漫首选，含降噪）" },
+        { "value": "realesrgan-x4plus-anime", "label": "realesrgan-x4plus-anime（动漫 4x）" },
+        { "value": "realesrgan-x4plus", "label": "realesrgan-x4plus（通用 4x）" },
+        { "value": "realesrnet-x4plus", "label": "realesrnet-x4plus（轻量）" },
+        { "value": "realesrgan-x2plus", "label": "realesrgan-x2plus（2x 细节增强）" }
+      ],
+      "default": "realesr-animevideov3"
+    },
+    {
+      "key": "scale",
+      "label": "放大倍数",
+      "type": "select",
+      "options": [
+        { "value": 2, "label": "2x" },
+        { "value": 3, "label": "3x" },
+        { "value": 4, "label": "4x（默认）" }
+      ],
+      "default": 4
+    },
+    {
+      "key": "tile",
+      "label": "分块大小（0=自动）",
+      "type": "number",
+      "min": 0,
+      "max": 4096,
+      "step": 32,
+      "default": 0,
+      "hint": "显存不足或报错时调小（如 256/128）"
+    },
+    {
+      "key": "gpu",
+      "label": "计算设备",
+      "type": "select",
+      "options": [
+        { "value": 0, "label": "GPU 0（默认）" },
+        { "value": -1, "label": "CPU（慢）" }
+      ],
+      "default": 0
+    },
+    {
+      "key": "tta",
+      "label": "TTA 模式（质量更高，速度约慢 8 倍）",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "format",
+      "label": "输出格式",
+      "type": "select",
+      "options": [
+        { "value": "png", "label": "PNG（无损）" },
+        { "value": "jpg", "label": "JPG（体积小）" }
+      ],
+      "default": "png",
+      "hint": "勾选「恢复原数据」时强制输出 PNG"
+    }
+  ],
+  "cli": {
+    "args": [
+      "-m", "{models_dir}",
+      "-n", "{model}",
+      "-s", "{scale}",
+      "-t", "{tile}",
+      "-g", "{gpu}",
+      "-f", "{format}",
+      "-i", "{input}",
+      "-o", "{output}"
+    ],
+    "flags": { "tta": "-x" }
+  }
+}

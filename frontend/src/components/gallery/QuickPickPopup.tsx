@@ -1,4 +1,4 @@
-import { ArrowLeft, CheckSquare, FolderInput, Images, Loader2, Trash2, X } from "lucide-react";
+import { ArrowLeft, CheckSquare, FolderInput, Images, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -40,6 +40,7 @@ export function QuickPickPopup({
   onMove,
   onDelete,
   onSetCover,
+  onPublish,
   onClose,
 }: {
   count: number;
@@ -50,6 +51,7 @@ export function QuickPickPopup({
   onMove: (target: string) => void;
   onDelete: () => void;
   onSetCover: () => void;
+  onPublish: () => void;
   onClose: () => void;
 }) {
   const [pos, setPos] = useState(loadPos);
@@ -133,9 +135,17 @@ export function QuickPickPopup({
           <div className="space-y-1.5">
             <button
               disabled={!count || busy}
-              onClick={() => setPickingTarget(true)}
+              onClick={onPublish}
               className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-85 disabled:opacity-40"
               style={{ background: "var(--accent)" }}
+              title="对选中的图片执行超分降噪 / 数据抹除 / 批量重命名"
+            >
+              <Sparkles size={15} /> 发布处理
+            </button>
+            <button
+              disabled={!count || busy}
+              onClick={() => setPickingTarget(true)}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)]/40 px-3 py-2.5 text-sm font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10 disabled:opacity-40"
             >
               <FolderInput size={15} /> 移动到…
             </button>
