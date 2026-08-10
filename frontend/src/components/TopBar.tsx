@@ -17,7 +17,7 @@ export function TopBar() {
   const links = [
     { to: "/", label: "提示词工作区" },
     { to: "/library", label: "图片库" },
-    { to: "/publish", label: "发布处理", soon: true },
+    { to: "/publish", label: "发布处理" },
     { to: "/settings", label: "设置" },
   ];
 
@@ -71,11 +71,6 @@ export function TopBar() {
                 )}
                 <span className="relative z-10 flex items-center gap-1">
                   {l.label}
-                  {l.soon && (
-                    <span className="rounded bg-[var(--hover)] px-1 text-[10px] text-[var(--muted)]">
-                      M3
-                    </span>
-                  )}
                 </span>
               </>
             )}
