@@ -20,7 +20,7 @@ DEFAULT_SETTINGS = {
     "library_path": "",
     "recycle_reject": True,        # 筛选结束时 Reject 图片移入回收站（False = 永久删除）
     "format_input": True,        # 复制时是否做格式规范化
-    "port": 11451,
+    "port": 14419,               # 首选端口；启动脚本在被占用时自动顺延
     "multi_character": True,     # 多角色：角色分区逐块作为独立角色；关闭后并入正面提示词
     "show_chinese": True,        # 显示中文翻译（词典标注）；关闭后块上不显示，备注不受影响
     "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）

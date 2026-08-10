@@ -17,5 +17,9 @@ if [ ! -f frontend/dist/index.html ]; then
   (cd frontend && npm install -s && npm run build)
 fi
 
-echo "[4/4] 启动服务: http://127.0.0.1:11451"
-python3 -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 11451
+echo "[4/4] 启动服务（端口 14419，被占用时自动顺延）..."
+PORT=14419
+while lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; do
+  PORT=$((PORT+1))
+done
+python3 -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port $PORT

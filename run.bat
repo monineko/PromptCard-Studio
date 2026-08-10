@@ -20,8 +20,7 @@ if not exist frontend\dist\index.html (
   cd ..
 )
 
-echo [4/4] 启动服务: http://127.0.0.1:11451
-start "" "http://127.0.0.1:11451"
-python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 11451
+echo [4/4] 启动服务（端口 14419，被占用时自动顺延）...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_local.ps1"
 
 pause

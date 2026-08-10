@@ -500,7 +500,9 @@ export function Settings() {
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-xs text-[var(--muted)]">服务端口：{settings.port}（修改需重启）</span>
+          <span className="text-xs text-[var(--muted)]">
+            首选端口：{settings.port}（被占用时启动脚本自动顺延）
+          </span>
           <Button
             onClick={() =>
               saveSettings({

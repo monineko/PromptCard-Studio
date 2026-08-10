@@ -1,9 +1,10 @@
 import os
+import re
 import threading
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -56,12 +57,22 @@ cards_service.ensure_default_categories()
 
 app = FastAPI(title="PromptCard Studio for NovelAI", version="0.1.0")
 
+# 本地 Web 应用：只允许本机来源（127.0.0.1 / localhost 任意端口，含前端开发服务器），
+# 防止外部网页跨域读取本地数据或触发关闭等操作
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_LOCAL_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$", re.IGNORECASE)
+
+
+def _is_local_origin(headers) -> bool:
+    """校验请求来源：无 Origin/Referer（curl、本地进程）视为本机；否则必须是本机来源。"""
+    origin = headers.get("origin") or headers.get("referer") or ""
+    return not origin or bool(_LOCAL_ORIGIN_RE.match(origin))
 
 
 def _as_http(e: Exception, status: int = 400) -> HTTPException:
@@ -74,7 +85,9 @@ def _shutdown_now() -> None:
 
 
 @app.post("/api/system/shutdown")
-def system_shutdown():
+def system_shutdown(request: Request):
+    if not _is_local_origin(request.headers):
+        raise HTTPException(403, "拒绝来自外部来源的关闭请求")
     threading.Timer(0.5, _shutdown_now).start()
     return {"ok": True, "message": "本地服务正在关闭，可关闭本页面；再次使用时重新运行启动脚本"}
 
