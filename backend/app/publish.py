@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import urllib.request
+import urllib.parse
 import uuid
 import zipfile
 from datetime import date, datetime
@@ -53,6 +54,7 @@ UPSCALE_TIMEOUT_SEC = 1800
 
 _lock = threading.Lock()
 _active_run_id: str | None = None
+_install_running = False  # 下载中状态以进程内存为准，避免残留 install.json 造成“假下载”
 
 
 # ---------- 通用工具 ----------
@@ -289,6 +291,78 @@ def wipe_png_metadata(file: Path) -> Path:
     return file
 
 
+def _wipe_jpeg_metadata(file: Path) -> Path:
+    """抹除 JPEG 的 EXIF/XMP 段（APP1/APP2），像素不变；SOS 之后的熵编码数据原样保留。"""
+    file = Path(file)
+    data = file.read_bytes()
+    if data[:2] != b"\xff\xd8":
+        return file
+    sos = data.find(b"\xff\xda")
+    if sos == -1:
+        return file  # 结构异常的 JPEG 不动，避免损坏
+    (seg_len,) = struct.unpack(">H", data[sos + 2 : sos + 4])
+    seg_end = sos + 2 + seg_len
+    header = data[:seg_end]
+    out = bytearray(header[:2])  # SOI
+    pos = 2
+    while pos < seg_end:
+        if data[pos] != 0xFF:
+            break
+        marker = data[pos + 1]
+        if marker == 0xD9:
+            break
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            out += data[pos : pos + 2]
+            pos += 2
+            continue
+        if pos + 4 > seg_end:
+            break
+        (length,) = struct.unpack(">H", data[pos + 2 : pos + 4])
+        if length < 2:
+            break
+        # APP1(EXIF/XMP)、APP2(ICC/XMP) 属于元数据段，丢弃
+        if marker not in (0xE1, 0xE2):
+            out += data[pos : pos + 2 + length]
+        pos += 2 + length
+    tail = data[seg_end:]
+    if tail.endswith(b"\xff\xd9"):
+        tail = tail[:-2]
+    file.write_bytes(bytes(out) + tail + b"\xff\xd9")
+    return file
+
+
+def _metadata_chunk_types(file: Path) -> list[str]:
+    """检查文件残留的元数据块类型（PNG tEXt/zTXt/iTXt/eXIf/tIME；JPEG APP1/APP2）。"""
+    file = Path(file)
+    data = file.read_bytes()
+    if data.startswith(PNG_SIGNATURE):
+        return [
+            c.decode("ascii", "replace")
+            for c, _, _ in _iter_chunks(data)
+            if c in METADATA_CHUNK_TYPES
+        ]
+    if data[:2] == b"\xff\xd8":
+        sos = data.find(b"\xff\xda")
+        head = data[: sos + 2 + struct.unpack(">H", data[sos + 2 : sos + 4])[0]] if sos != -1 else data
+        found = []
+        pos = 2
+        while pos + 4 <= len(head):
+            if head[pos] != 0xFF:
+                break
+            marker = head[pos + 1]
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7 or marker == 0xD9:
+                pos += 2
+                continue
+            (length,) = struct.unpack(">H", head[pos + 2 : pos + 4])
+            if length < 2:
+                break
+            if marker in (0xE1, 0xE2):
+                found.append({0xE1: "APP1(EXIF/XMP)", 0xE2: "APP2(ICC/XMP)"}[marker])
+            pos += 2 + length
+        return found
+    return []
+
+
 # ---------- 批量重命名 ----------
 
 
@@ -411,11 +485,10 @@ def engine_status() -> dict:
     binary = _engine_binary()
     manifest = _active_manifest()
     install_file = ENGINE_RUNTIME_DIR / "install.json"
-    installing, progress, message = False, 0, ""
+    installing, progress, message = _install_running, 0, ""
     if install_file.exists():
         try:
             state = json.loads(install_file.read_text(encoding="utf-8"))
-            installing = bool(state.get("running"))
             progress = float(state.get("progress") or 0)
             message = str(state.get("message") or "")
         except Exception:
@@ -473,46 +546,113 @@ def _find_binary(root: Path, name: str) -> Path | None:
     return None
 
 
+def _resolve_download(url: str) -> tuple[str, int]:
+    """跟随重定向拿到最终下载地址与总大小（HEAD 不可用时退化为 0）。"""
+    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "PromptCard-Studio/0.1"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        return resp.geturl(), total
+
+
+def _http_download(url: str, dest: Path, total: int, on_progress) -> None:
+    """可断点续传的单次下载；传输停滞/超时抛异常，由调用方重试。"""
+    import http.client
+
+    parsed = urllib.parse.urlsplit(url)
+    path = parsed.path + (("?" + parsed.query) if parsed.query else "")
+    existing = dest.stat().st_size if dest.exists() else 0
+    headers = {"User-Agent": "PromptCard-Studio/0.1", "Accept-Encoding": "identity"}
+    if existing:
+        headers["Range"] = f"bytes={existing}-"
+    conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=30)
+    try:
+        conn.request("GET", path, headers=headers)
+        resp = conn.getresponse()
+        try:
+            if resp.status == 206:
+                mode = "ab"
+            elif resp.status == 200:
+                mode = "wb"
+                existing = 0
+            else:
+                raise RuntimeError(f"下载失败 HTTP {resp.status}")
+            with open(dest, mode) as f:
+                while True:
+                    chunk = resp.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    existing += len(chunk)
+                    on_progress(existing, total)
+        finally:
+            resp.close()
+    finally:
+        conn.close()
+
+
 def _install_engine_worker(manifest: dict) -> None:
+    global _install_running
+    DOWNLOAD_RETRIES = 3
     target_dir = ENGINE_RUNTIME_DIR / manifest["id"] / str(manifest.get("version") or "latest")
-    zip_path = ENGINE_RUNTIME_DIR / f"{manifest['id']}.zip"
+    part_path = ENGINE_RUNTIME_DIR / f"{manifest['id']}.part"
+    install = manifest.get("install") or {}
+    urls = install.get("urls") or ([install["url"]] if install.get("url") else [])
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         _write_install_state({"running": True, "progress": 0, "message": "开始下载…"})
 
-        url = manifest["install"]["url"]
-        req = urllib.request.Request(url, headers={"User-Agent": "PromptCard-Studio/0.1"})
-        with urllib.request.urlopen(req, timeout=120) as resp, open(zip_path, "wb") as out:
-            total = int(resp.headers.get("Content-Length") or 0)
-            downloaded = 0
-            while True:
-                chunk = resp.read(1 << 16)
-                if not chunk:
+        downloaded_ok = False
+        last_error: Exception | None = None
+        for source_index, url in enumerate(urls, start=1):
+            part_path.unlink(missing_ok=True)  # 换源时从头开始，避免不同源内容不一致
+            final_url, total = url, 0
+            try:
+                final_url, total = _resolve_download(url)
+            except Exception as e:
+                last_error = e
+            for attempt in range(1, DOWNLOAD_RETRIES + 1):
+                try:
+                    def on_progress(done: int, size: int, _si=source_index, _a=attempt, _total=total):
+                        progress = done / size if size else 0
+                        msg = f"下载中（源 {_si}/{len(urls)}·第 {_a} 次）{done // 1024} KB"
+                        if size:
+                            msg += f" / {size // 1024} KB"
+                        _write_install_state({"running": True, "progress": progress, "message": msg})
+
+                    _http_download(final_url, part_path, total, on_progress)
+                    downloaded_ok = True
                     break
-                out.write(chunk)
-                downloaded += len(chunk)
-                if total:
+                except Exception as e:
+                    last_error = e
                     _write_install_state(
                         {
                             "running": True,
-                            "progress": downloaded / total,
-                            "message": f"正在下载 {downloaded // 1024} KB / {total // 1024} KB",
+                            "progress": 0,
+                            "message": f"下载中断（源 {source_index}/{len(urls)}·第 {attempt} 次），自动重试…",
                         }
                     )
+            if downloaded_ok:
+                break
+        if not downloaded_ok:
+            raise RuntimeError(f"引擎下载失败（已尝试全部下载源）: {last_error}")
 
-        expected = manifest["install"].get("sha256")
+        expected = install.get("sha256")
         if expected:
             import hashlib
 
-            digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+            digest = hashlib.sha256(part_path.read_bytes()).hexdigest()
             if digest.lower() != str(expected).lower():
                 raise RuntimeError("下载文件校验失败，请重试或改用本地引擎路径")
 
         _write_install_state({"running": True, "progress": 1.0, "message": "正在解压…"})
-        with zipfile.ZipFile(zip_path) as zf:
+        with zipfile.ZipFile(part_path) as zf:
+            bad = zf.testzip()
+            if bad is not None:
+                raise RuntimeError(f"下载的压缩包损坏: {bad}")
             _safe_extract(zf, target_dir)
 
-        binary = _find_binary(target_dir, manifest["install"]["binary"])
+        binary = _find_binary(target_dir, install.get("binary") or "")
         if binary is None:
             raise RuntimeError("解压后未找到引擎程序，请改用本地引擎路径")
         marker = ENGINE_RUNTIME_DIR / manifest["id"] / "installed.json"
@@ -524,13 +664,15 @@ def _install_engine_worker(manifest: dict) -> None:
     except Exception as e:
         _write_install_state({"running": False, "progress": 0, "message": f"安装失败: {e}"})
     finally:
+        _install_running = False
         try:
-            zip_path.unlink(missing_ok=True)
+            part_path.unlink(missing_ok=True)
         except OSError:
             pass
 
 
 def install_engine() -> dict:
+    global _install_running
     state = engine_status()
     if state["installing"]:
         raise ValueError("引擎正在下载中，请稍候")
@@ -541,6 +683,7 @@ def install_engine() -> dict:
         raise ValueError(f"{manifest['name']} 不支持自动下载，请指定本地引擎路径")
     # 先同步写入安装状态，再启动后台线程，前端轮询立刻可见进度
     _write_install_state({"running": True, "progress": 0.0, "message": "准备下载…"})
+    _install_running = True
     thread = threading.Thread(target=_install_engine_worker, args=(manifest,), daemon=True)
     thread.start()
     return {"ok": True, "installing": True, "message": "开始下载超分引擎"}
@@ -746,6 +889,7 @@ def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params:
         files.append(
             {
                 "staged": name,
+                "staged_copy": staged_copy.name,
                 "output": None,
                 "status": "pending",
                 "message": "",
@@ -794,7 +938,7 @@ def _run_worker(run_id: str) -> None:
         for index, f in enumerate(state["files"]):
             f["status"] = "running"
             _save_run(state)
-            staged = input_dir / f["staged"]
+            staged = input_dir / (f.get("staged_copy") or f["staged"])
             try:
                 ext = staged.suffix.lower()
                 current = staged
@@ -820,9 +964,14 @@ def _run_worker(run_id: str) -> None:
                 # 2) 数据抹除（PNG 内部元数据 + 未重命名时的文件名）
                 final_name = current.name
                 if nodes["wipe"]:
+                    _ensure_detached(current)  # 断开与图库/暂存区的硬链接再原地改写
                     if current.suffix.lower() == ".png":
-                        _ensure_detached(current)  # 断开与图库/暂存区的硬链接再原地改写
                         wipe_png_metadata(current)
+                    elif current.suffix.lower() in (".jpg", ".jpeg"):
+                        _wipe_jpeg_metadata(current)
+                    remaining = _metadata_chunk_types(current)
+                    if remaining:
+                        raise RuntimeError(f"元数据清除失败（残留: {', '.join(remaining)}）")
                     if not nodes["rename"]:
                         final_name = uuid.uuid4().hex[:8] + current.suffix.lower()
 
@@ -832,6 +981,9 @@ def _run_worker(run_id: str) -> None:
                     stem = build_rename_name(rename, today, digits)
                     final_name = _unique_output_name(out_dir, stem, current.suffix.lower())
                 else:
+                    if not nodes["wipe"]:
+                        # 未重命名且未中性化时，用暂存原名（不暴露超分的临时文件名）
+                        final_name = os.path.splitext(f["staged"])[0] + current.suffix.lower()
                     final_name = _unique_output_name(out_dir, os.path.splitext(final_name)[0], current.suffix.lower())
 
                 dest = out_dir / final_name

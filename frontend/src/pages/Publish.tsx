@@ -464,6 +464,23 @@ export function Publish() {
               <span className="min-w-0 flex-1 truncate" title={engine.binary ?? undefined}>
                 {engine.custom_path ? `本地路径：${engine.custom_path}` : engine.binary}
               </span>
+              {engine.custom_path && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.publishEngineLocalPath("");
+                      addToast("已清除本地引擎路径，可改用内置引擎");
+                      await refreshEngine();
+                    } catch (e) {
+                      addToast(`清除失败: ${(e as Error).message}`, "err");
+                    }
+                  }}
+                  className="shrink-0 rounded bg-[var(--hover)] px-2 py-0.5 text-[11px] text-[var(--accent)] hover:underline"
+                  title="清除后回到内置引擎（Real-ESRGAN），可重新下载"
+                >
+                  清除本地路径
+                </button>
+              )}
             </div>
           )}
           <div className="flex gap-2">

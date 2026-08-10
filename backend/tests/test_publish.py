@@ -7,6 +7,8 @@
 """
 
 import base64
+import functools
+import http.server
 import io
 import json
 import shutil
@@ -77,6 +79,79 @@ class PngMetaTest(unittest.TestCase):
         self.assertIn("tEXt", types)
         raw = base64.b64decode(pub.extract_png_metadata(wiped)["tEXt"][0])
         self.assertIn(b'"seed":777', raw)
+
+    def test_wipe_jpeg_exif(self):
+        tmp = Path(tempfile.mkdtemp(prefix="npm_pub_jpeg_"))
+        src = tmp / "a.jpg"
+        img = Image.new("RGB", (32, 32), (10, 200, 90))
+        exif = Image.Exif()
+        exif[0x010F] = "TestCam"
+        img.save(src, "JPEG", exif=exif.tobytes())
+        self.assertIn("APP1(EXIF/XMP)", pub._metadata_chunk_types(src))
+
+        pub._wipe_jpeg_metadata(src)
+        self.assertEqual(pub._metadata_chunk_types(src), [])
+        with Image.open(src) as im:
+            self.assertEqual(im.size, (32, 32))
+
+
+class DownloaderTest(unittest.TestCase):
+    """本地 HTTP 服务器验证断点续传下载逻辑（不联网）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.payload = bytes(range(256)) * 512  # 128 KB
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = cls.payload
+                rng = self.headers.get("Range")
+                if rng and rng.startswith("bytes="):
+                    start = int(rng.split("=")[1].split("-")[0])
+                    chunk = body[start:]
+                    self.send_response(206)
+                    self.send_header("Content-Length", str(len(chunk)))
+                    self.send_header("Content-Range", f"bytes {start}-{len(body)-1}/{len(body)}")
+                    self.end_headers()
+                    self.wfile.write(chunk)
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        cls.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.payload = cls.payload
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join(timeout=5)
+
+    def _url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/engine.zip"
+
+    def test_full_download(self):
+        tmp = Path(tempfile.mkdtemp(prefix="npm_pub_dl_"))
+        dest = tmp / "engine.zip"
+        progress = []
+        pub._http_download(self._url(), dest, len(self.payload), lambda d, t: progress.append((d, t)))
+        self.assertEqual(dest.read_bytes(), self.payload)
+        self.assertTrue(progress)
+
+    def test_resume_download(self):
+        tmp = Path(tempfile.mkdtemp(prefix="npm_pub_dl_"))
+        dest = tmp / "engine.zip"
+        half = len(self.payload) // 2
+        dest.write_bytes(self.payload[:half])
+        pub._http_download(self._url(), dest, len(self.payload), lambda d, t: None)
+        self.assertEqual(dest.read_bytes(), self.payload)
 
 
 class RenameTest(unittest.TestCase):

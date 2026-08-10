@@ -7,8 +7,12 @@
   "match_binary": ["realesrgan"],
   "note": "当前唯一内置超分引擎；不同引擎参数差异较大，后续新增引擎时单独提供清单与参数面板。",
   "install": {
-    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
-    "sha256": null,
+    "urls": [
+      "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
+      "https://gh-proxy.com/https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
+      "https://ghfast.top/https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
+    ],
+    "sha256": "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d",
     "binary": "realesrgan-ncnn-vulkan.exe"
   },
   "params": [
