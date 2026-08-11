@@ -7,7 +7,6 @@ frontend/node_modules/
 # 用户数据（不提交仓库）
 wildcards/
 library/
-backgrounds/
 vibes/
 workspace.json
 config.json

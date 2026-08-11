@@ -4,7 +4,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WILDCARDS_DIR = PROJECT_ROOT / "wildcards"
 LIBRARY_DIR = PROJECT_ROOT / "library"
-BACKGROUNDS_DIR = PROJECT_ROOT / "backgrounds"
+BACKGROUNDS_DIR = PROJECT_ROOT / "frontend" / "src" / "assets" / "backgrounds"
 VIBES_DIR = PROJECT_ROOT / "vibes"
 DICTIONARY_DIR = PROJECT_ROOT / "dictionary"
 CONFIG_FILE = PROJECT_ROOT / "config.json"
