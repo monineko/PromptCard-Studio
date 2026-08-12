@@ -137,16 +137,19 @@ export function BatchPanel() {
 
   const dimensions = useMemo<BatchDimension[]>(
     () =>
-      dimSections.map((s) => ({
-        name: s.name,
-        cards: s.blocks
-          .filter((b): b is CardBlock => b.type === "card")
-          .map((b) => ({
-            category: b.category,
-            name: b.name,
-            coefficient: Math.max(1, Math.round(cardCoeffs[b.id] ?? 1)),
-          })),
-      })),
+      dimSections
+        .map((s) => ({
+          name: s.name,
+          cards: s.blocks
+            .filter((b): b is CardBlock => b.type === "card")
+            .map((b) => ({
+              category: b.category,
+              name: b.name,
+              coefficient: Math.max(1, Math.round(cardCoeffs[b.id] ?? 1)),
+            })),
+        }))
+        // 空维度不参与组合：单分区有卡片也能批量，且不会把总张数乘成 0
+        .filter((d) => d.cards.length > 0),
     [dimSections, cardCoeffs]
   );
 
@@ -154,7 +157,15 @@ export function BatchPanel() {
     () => dimensions.map((d) => d.cards.reduce((n, c) => n + c.coefficient, 0)),
     [dimensions]
   );
-  const total = useMemo(() => dimEffective.reduce((n, v) => n * v, 1), [dimEffective]);
+  const total = useMemo(
+    () =>
+      dimEffective.length > 0
+        ? dimEffective.reduce((n, v) => n * v, 1)
+        : basePositive.trim() || negativeText.trim()
+          ? 1
+          : 0,
+    [dimEffective, basePositive, negativeText]
+  );
 
   const looseInDims = useMemo(
     () => dimSections.filter((s) => s.blocks.some((b) => b.type === "prompt")),
@@ -179,8 +190,8 @@ export function BatchPanel() {
       setMoveDialog(looseInDims.map((s) => ({ name: s.name, count: s.blocks.filter((b) => b.type === "prompt").length })));
       return;
     }
-    if (dimensions.length === 0 || total <= 0) {
-      addToast("组合为空：请先在工作区为组合分区添加卡片", "err");
+    if (total <= 0) {
+      addToast("没有可生成的内容：请先在工作区添加提示词或卡片", "err");
       return;
     }
     setConfirmOpen(true);
@@ -276,7 +287,6 @@ export function BatchPanel() {
           customModes={customModes}
           dimSections={dimSections}
           dimensions={dimensions}
-          dimEffective={dimEffective}
           total={total}
           sharedSections={sharedSections}
           negativeCount={negative.reduce((n, s) => n + s.blocks.length, 0)}
@@ -446,7 +456,6 @@ function ConfigPanel({
   customModes,
   dimSections,
   dimensions,
-  dimEffective,
   total,
   sharedSections,
   baseCount,
@@ -469,7 +478,6 @@ function ConfigPanel({
   customModes: Record<string, "dim" | "shared">;
   dimSections: Section[];
   dimensions: BatchDimension[];
-  dimEffective: number[];
   total: number;
   sharedSections: Section[];
   baseCount: number;
@@ -503,8 +511,9 @@ function ConfigPanel({
 
       {/* 组合维度 */}
       <div className="space-y-2">
-        {editableDims.map(({ section, spec }, i) => {
+        {editableDims.map(({ section, spec }) => {
           const cardBlocks = section.blocks.filter((b) => b.type === "card") as CardBlock[];
+          const effective = spec.cards.reduce((n, c) => n + c.coefficient, 0);
           const uniform = spec.cards.every((c) => c.coefficient === spec.cards[0]?.coefficient)
             ? spec.cards[0]?.coefficient
             : null;
@@ -513,7 +522,7 @@ function ConfigPanel({
               <div className="mb-1.5 flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium">{section.name}</span>
                 <span className="text-[10px] text-[var(--muted)]">
-                  {spec.cards.length} 张卡 · 有效 {dimEffective[i]}（张数 ×{dimEffective[i]}）
+                  {spec.cards.length} 张卡 · 有效 {effective}（张数 ×{effective}）
                 </span>
                 <span className="ml-auto flex items-center gap-1 text-[10px] text-[var(--muted)]">
                   统一系数
@@ -532,7 +541,7 @@ function ConfigPanel({
                 </span>
               </div>
               {cardBlocks.length === 0 ? (
-                <p className="text-[10px] text-amber-400">该分区没有卡片，无法参与组合</p>
+                <p className="text-[10px] text-amber-400">该分区没有卡片，不参与组合（不增加张数）</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {cardBlocks.map((b) => (
@@ -561,6 +570,13 @@ function ConfigPanel({
           );
         })}
       </div>
+
+      {/* 无组合卡片时：按全局正面提示词生成 */}
+      {dimensions.length === 0 && (
+        <p className="mt-1.5 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-1.5 text-[10px] text-[var(--muted)]">
+          未配置组合卡片：将使用全局正面提示词逐张生成（在组合分区放入卡片并设置系数可增加张数）
+        </p>
+      )}
 
       {/* 自定义分区：维度 or 共享 */}
       {customSections.length > 0 && (
@@ -721,13 +737,17 @@ function ConfirmBody({
       <div className="rounded-lg border border-[var(--border)] bg-[var(--input)]/50 p-2.5">
         <div className="mb-1 text-xs font-medium text-[var(--muted)]">组合方案</div>
         <div className="space-y-1 text-xs">
-          {dimensions.map((d, i) => (
-            <div key={d.name}>
-              <span className="font-medium">{d.name}：</span>
-              {d.cards.map((c) => `${c.name} ×${c.coefficient}`).join("、")}
-              <span className="text-[var(--muted)]">（有效 {dimEffective[i]}）</span>
-            </div>
-          ))}
+          {dimensions.length === 0 ? (
+            <div className="text-[var(--muted)]">无组合维度：使用全局正面提示词逐张生成</div>
+          ) : (
+            dimensions.map((d, i) => (
+              <div key={d.name}>
+                <span className="font-medium">{d.name}：</span>
+                {d.cards.map((c) => `${c.name} ×${c.coefficient}`).join("、")}
+                <span className="text-[var(--muted)]">（有效 {dimEffective[i]}）</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
