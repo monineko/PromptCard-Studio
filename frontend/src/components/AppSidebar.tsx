@@ -12,7 +12,6 @@ import {
   Rocket,
   Settings as SettingsIcon,
   Star,
-  User,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
@@ -194,26 +193,6 @@ export function AppSidebar() {
             )}
 
             <div className="space-y-1.5 border-t border-[var(--border)] pt-2.5">
-              {/* 个人主页跳转 */}
-              <motion.a
-                href="https://space.bilibili.com/325112027"
-                target="_blank"
-                rel="noreferrer"
-                whileHover={{ scale: 1.06, y: -1 }}
-                whileTap={{ scale: 0.93 }}
-                transition={{ type: "spring", stiffness: 420, damping: 14 }}
-                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-pink-500 via-fuchsia-500 to-violet-600 px-3 py-2 text-xs font-semibold text-white shadow-lg"
-                title="个人主页：https://space.bilibili.com/325112027"
-              >
-                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/50 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-full" />
-                <User
-                  size={13}
-                  className="relative transition-transform duration-500 group-hover:rotate-[360deg]"
-                />
-                <span className="relative">个人主页</span>
-                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-ping rounded-full bg-pink-300" />
-              </motion.a>
-
               {/* GitHub 仓库跳转 */}
               <motion.a
                 href="https://github.com/monineko/PromptCard-Studio"
