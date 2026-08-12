@@ -52,23 +52,18 @@ NOISE_SCHEDULES = ["native", "karras", "exponential", "polyexponential"]
 UC_PRESETS = ["Heavy", "Light", "Furry Focus", "Human Focus", "None"]
 
 RESOLUTIONS = [
-    {"label": "Portrait", "category": "NORMAL", "width": 832, "height": 1216, "free": True},
-    {"label": "Landscape", "category": "NORMAL", "width": 1216, "height": 832, "free": False},
-    {"label": "Square", "category": "NORMAL", "width": 1024, "height": 1024, "free": False},
-    {"label": "Portrait", "category": "LARGE", "width": 1024, "height": 1536, "free": False},
-    {"label": "Landscape", "category": "LARGE", "width": 1536, "height": 1024, "free": False},
-    {"label": "Normal Landscape", "category": "LARGE", "width": 1472, "height": 1472, "free": False},
-    {"label": "Portrait", "category": "WALLPAPER", "width": 1088, "height": 1920, "free": False},
-    {"label": "Landscape", "category": "WALLPAPER", "width": 1920, "height": 1088, "free": False},
-    {"label": "Portrait", "category": "SMALL", "width": 512, "height": 768, "free": True},
-    {"label": "Landscape", "category": "SMALL", "width": 768, "height": 512, "free": True},
-    {"label": "Square", "category": "SMALL", "width": 640, "height": 640, "free": True},
+    {"label": "Portrait", "category": "NORMAL", "width": 832, "height": 1216},
+    {"label": "Landscape", "category": "NORMAL", "width": 1216, "height": 832},
+    {"label": "Square", "category": "NORMAL", "width": 1024, "height": 1024},
+    {"label": "Portrait", "category": "LARGE", "width": 1024, "height": 1536},
+    {"label": "Landscape", "category": "LARGE", "width": 1536, "height": 1024},
+    {"label": "Normal Landscape", "category": "LARGE", "width": 1472, "height": 1472},
+    {"label": "Portrait", "category": "WALLPAPER", "width": 1088, "height": 1920},
+    {"label": "Landscape", "category": "WALLPAPER", "width": 1920, "height": 1088},
+    {"label": "Portrait", "category": "SMALL", "width": 512, "height": 768},
+    {"label": "Landscape", "category": "SMALL", "width": 768, "height": 512},
+    {"label": "Square", "category": "SMALL", "width": 640, "height": 640},
 ]
-
-FREE_RESOLUTIONS = [f"{r['category']}:{r['label']}" for r in RESOLUTIONS if r["free"]]
-FREE_MAX_STEPS = 28
-FREE_N_SAMPLES = 1
-_FREE_SIZE_SET = {(832, 1216), (512, 768), (768, 512), (640, 640)}
 
 # 各模型的可用采样器 / 调度器 / UC 预设（与 ANR update_components_for_models_change 一致）
 _BASE_SAMPLERS = [s for s in SAMPLERS if s != "ddim_v3"]
@@ -325,17 +320,6 @@ class GenerationParams:
     @property
     def effective_seed(self) -> int:
         return random.randint(1000000000, 9999999999) if self.seed == -1 else self.seed
-
-
-def is_free_params(params: dict) -> bool:
-    """免费判定：步数 ≤ 28 且分辨率属于免费档且单次 1 张（批量始终 1 张）。"""
-    try:
-        steps = int(params.get("steps") or 0)
-        width = int(params.get("width") or 0)
-        height = int(params.get("height") or 0)
-    except (TypeError, ValueError):
-        return False
-    return steps <= FREE_MAX_STEPS and (width, height) in _FREE_SIZE_SET
 
 
 def build_text2image_payload(params: GenerationParams, prompt: str, negative_prompt: str) -> dict:
@@ -602,10 +586,5 @@ def meta() -> dict:
         "uc_presets": UC_PRESETS,
         "resolutions": RESOLUTIONS,
         "model_rules": MODEL_RULES,
-        "free": {
-            "max_steps": FREE_MAX_STEPS,
-            "resolutions": FREE_RESOLUTIONS,
-            "n_samples": FREE_N_SAMPLES,
-        },
         "quality_tags": QUALITY_TAGS,
     }
