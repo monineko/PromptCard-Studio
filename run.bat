@@ -1,4 +1,6 @@
 @echo off
+rem 首次初始化脚本（Windows）：创建虚拟环境、安装依赖、必要时构建前端，然后启动。
+rem 日常启动请用 start_local.cmd。
 chcp 65001 >nul
 cd /d "%~dp0"
 
