@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 首次初始化脚本（macOS / Linux）：准备虚拟环境与依赖后启动。
 set -e
 cd "$(dirname "$0")"
 
