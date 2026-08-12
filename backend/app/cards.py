@@ -11,7 +11,7 @@ import zipfile
 from datetime import date
 from pathlib import Path
 
-from .config import LIBRARY_DIR, PROJECT_ROOT, WILDCARDS_DIR, load_settings, save_settings
+from .config import LIBRARY_DIR, PROJECT_ROOT, PROMPTCARDS_DIR, load_settings, save_settings
 from .library import resolve_image
 
 SYSTEM_CATEGORIES = {"角色", "动作", "画师串", "负面"}
@@ -33,9 +33,9 @@ INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
 _sequential_state: dict[str, int] = {}
 
-CARD_IMAGES_FILE = WILDCARDS_DIR / ".card-images.json"
-CARD_META_FILE = WILDCARDS_DIR / ".card-meta.json"
-CARD_PINS_FILE = WILDCARDS_DIR / ".card-pins.json"
+CARD_IMAGES_FILE = PROMPTCARDS_DIR / ".card-images.json"
+CARD_META_FILE = PROMPTCARDS_DIR / ".card-meta.json"
+CARD_PINS_FILE = PROMPTCARDS_DIR / ".card-pins.json"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 TEMPLATE_FILE = Path(__file__).resolve().parent / "assets" / "卡片导入模板.xlsx"
 _SHEET_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -51,7 +51,7 @@ def _safe_name(name: str) -> str:
 
 
 def _category_path(category: str) -> Path:
-    return WILDCARDS_DIR / _safe_name(category)
+    return PROMPTCARDS_DIR / _safe_name(category)
 
 
 def ensure_default_categories() -> None:
@@ -108,7 +108,7 @@ def _load_card_images() -> dict[str, str]:
 
 
 def _save_card_images(images: dict[str, str]) -> None:
-    WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
+    PROMPTCARDS_DIR.mkdir(parents=True, exist_ok=True)
     CARD_IMAGES_FILE.write_text(
         json.dumps(images, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -126,7 +126,7 @@ def _load_card_meta() -> dict[str, float]:
 
 
 def _save_card_meta(meta: dict[str, float]) -> None:
-    WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
+    PROMPTCARDS_DIR.mkdir(parents=True, exist_ok=True)
     CARD_META_FILE.write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -153,7 +153,7 @@ def _load_card_pins() -> dict[str, list[str]]:
 
 
 def _save_card_pins(pins: dict[str, list[str]]) -> None:
-    WILDCARDS_DIR.mkdir(parents=True, exist_ok=True)
+    PROMPTCARDS_DIR.mkdir(parents=True, exist_ok=True)
     CARD_PINS_FILE.write_text(
         json.dumps(pins, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -161,12 +161,12 @@ def _save_card_pins(pins: dict[str, list[str]]) -> None:
 
 def list_categories() -> list[dict]:
     result = []
-    if not WILDCARDS_DIR.exists():
+    if not PROMPTCARDS_DIR.exists():
         return result
     images = _load_card_images()
     meta = _load_card_meta()
     pins = _load_card_pins()
-    for folder in sorted(p for p in WILDCARDS_DIR.iterdir() if p.is_dir()):
+    for folder in sorted(p for p in PROMPTCARDS_DIR.iterdir() if p.is_dir()):
         cards = []
         cat_pins = pins.get(folder.name) or []
         pin_index = {n: i for i, n in enumerate(cat_pins)}
@@ -432,7 +432,7 @@ def _trash(path: Path) -> None:
 
         send2trash.send2trash(str(path))
     except Exception:
-        trash_dir = WILDCARDS_DIR.parent / ".trash"
+        trash_dir = PROMPTCARDS_DIR.parent / ".trash"
         trash_dir.mkdir(parents=True, exist_ok=True)
         target = trash_dir / f"{path.name}_{random.randint(1000, 9999)}"
         shutil.move(str(path), str(target))
@@ -499,9 +499,9 @@ def expand(text: str, max_depth: int = 20) -> str:
 def export_zip() -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        if WILDCARDS_DIR.exists():
-            for file in WILDCARDS_DIR.rglob("*.txt"):
-                zf.write(file, file.relative_to(WILDCARDS_DIR))
+        if PROMPTCARDS_DIR.exists():
+            for file in PROMPTCARDS_DIR.rglob("*.txt"):
+                zf.write(file, file.relative_to(PROMPTCARDS_DIR))
     return buffer.getvalue()
 
 
@@ -653,7 +653,7 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
             rows.append((r, cells))
         rows.sort(key=lambda x: x[0])
 
-    before = {p.name for p in WILDCARDS_DIR.iterdir() if p.is_dir()} if WILDCARDS_DIR.exists() else set()
+    before = {p.name for p in PROMPTCARDS_DIR.iterdir() if p.is_dir()} if PROMPTCARDS_DIR.exists() else set()
 
     def _text(row_cells: dict[str, dict], col: str) -> str:
         return (row_cells.get(col) or {}).get("text", "").strip()
@@ -721,7 +721,7 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
             except Exception as e:
                 errors.append(f"第 {r} 行：图片保存失败 {e}")
 
-    after = {p.name for p in WILDCARDS_DIR.iterdir() if p.is_dir()} if WILDCARDS_DIR.exists() else set()
+    after = {p.name for p in PROMPTCARDS_DIR.iterdir() if p.is_dir()} if PROMPTCARDS_DIR.exists() else set()
     return {
         "imported": imported,
         "skipped": skipped,
