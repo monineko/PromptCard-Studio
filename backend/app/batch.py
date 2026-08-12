@@ -332,8 +332,8 @@ def start_batch(
 
         if not novelai_service.is_configured():
             raise ValueError("尚未配置 NovelAI token，请先在「设置」中配置")
-        if not dimensions:
-            raise ValueError("没有可用的组合维度")
+        if not base_positive.strip() and not dimensions:
+            raise ValueError("没有可生成的内容：请先在工作区添加提示词或卡片")
         for dim in dimensions:
             cards = dim.get("cards") or []
             if not cards:
