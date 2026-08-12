@@ -7,6 +7,7 @@
 """
 
 import base64
+import datetime
 import functools
 import http.server
 import io
@@ -184,9 +185,10 @@ class RenameTest(unittest.TestCase):
         )
 
     def test_samples(self):
+        prefix = datetime.date.today().strftime("%Y%m%d")
         samples = pub.rename_samples({"parts": ["date", "custom", "random"], "custom": "moni"})
         self.assertEqual(len(samples), 3)
-        self.assertTrue(all(s.startswith("20260811_moni_") for s in samples))
+        self.assertTrue(all(s.startswith(f"{prefix}_moni_") for s in samples))
 
 
 class EngineTest(unittest.TestCase):
@@ -280,7 +282,8 @@ class PipelineTest(unittest.TestCase):
         out = Path(state["output_dir"]) / f["output"]
         types = [c.decode() for c, _, _ in pub._iter_chunks(out.read_bytes())]
         self.assertIn("tEXt", types)  # 恢复原数据生效
-        self.assertTrue(f["output"].startswith("20260811_moni_"))
+        prefix = datetime.date.today().strftime("%Y%m%d")
+        self.assertTrue(f["output"].startswith(f"{prefix}_moni_"))
         # 输出目录命名：时间戳-随机，且在 outputs/ 下；清理运行后输出仍保留
         self.assertEqual(Path(state["output_dir"]).parent, pub.OUTPUTS_DIR)
         folder_name = Path(state["output_dir"]).name
