@@ -22,6 +22,7 @@ export function Settings() {
     multi_character: true,
     show_chinese: true,
     auto_note: true,
+    hide_backend_panel: false,
   });
   const [dictStatus, setDictStatus] = useState<DictionaryStatus | null>(null);
   const [bgImages, setBgImages] = useState<{ name: string; url: string }[]>([]);
@@ -58,6 +59,7 @@ export function Settings() {
       multi_character: settings.multi_character,
       show_chinese: settings.show_chinese,
       auto_note: settings.auto_note,
+      hide_backend_panel: settings.hide_backend_panel,
     });
   }, [settings]);
 
@@ -459,6 +461,21 @@ export function Settings() {
           </span>
         </label>
 
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.hide_backend_panel}
+            onChange={(e) => setForm({ ...form, hide_backend_panel: e.target.checked })}
+            className="mt-0.5 accent-[var(--accent)]"
+          />
+          <span>
+            隐藏后端面板
+            <span className="block text-xs text-[var(--muted)]">
+              勾选后，下次启动项目时后端命令行窗口将自动隐藏；可在本页「关闭本地服务」停止服务
+            </span>
+          </span>
+        </label>
+
         <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
           <div className="mb-1 flex items-center gap-2">
             <span className="text-sm font-medium">提示词词典</span>
@@ -513,6 +530,7 @@ export function Settings() {
                 multi_character: form.multi_character,
                 show_chinese: form.show_chinese,
                 auto_note: form.auto_note,
+                hide_backend_panel: form.hide_backend_panel,
               })
             }
           >
