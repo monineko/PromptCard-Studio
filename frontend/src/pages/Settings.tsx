@@ -10,6 +10,7 @@ import type { DictionaryStatus } from "../types";
 export function Settings() {
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
+  const setTheme = useStore((s) => s.setTheme);
   const setEffects = useStore((s) => s.setEffects);
   const addToast = useStore((s) => s.addToast);
   const [form, setForm] = useState({
@@ -280,7 +281,10 @@ export function Settings() {
             ).map(([value, label]) => (
               <button
                 key={value}
-                onClick={() => setForm({ ...form, mode: value })}
+                onClick={() => {
+                  setForm({ ...form, mode: value });
+                  setTheme({ mode: value });
+                }}
                 className={
                   "rounded-lg border px-4 py-1.5 text-sm transition-all " +
                   (form.mode === value
