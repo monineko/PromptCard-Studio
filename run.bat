@@ -1,28 +1,92 @@
 @echo off
-rem First-run setup (Windows): create venv, install dependencies, build frontend if needed, then start.
-rem For daily start, use start_local.cmd instead.
-chcp 65001 >nul
+rem PromptCard Studio for NovelAI - single entry point (Windows).
+rem First run creates .venv and installs dependencies, then starts the service
+rem and opens the browser. Every run uses this same file.
+rem Close this window to stop the service.
+setlocal
 cd /d "%~dp0"
 
-echo [1/4] Preparing virtual environment...
-if not exist .venv (
-  python -m venv .venv || (echo Failed to create venv. Please install Python 3.10+ & pause & exit /b 1)
+rem ---------- 1. locate Python ----------
+set "PY="
+where py >nul 2>nul
+if not errorlevel 1 set "PY=py -3"
+if not defined PY (
+  where python >nul 2>nul
+  if not errorlevel 1 set "PY=python"
 )
-call .venv\Scripts\activate.bat
+if not defined PY (
+  echo [ERROR] Python was not found.
+  echo Please install Python 3.10 or newer from https://www.python.org/downloads/
+  echo and check "Add Python to PATH" during installation.
+  pause
+  exit /b 1
+)
 
-echo [2/4] Installing backend dependencies...
-python -m pip install -r backend\requirements.txt -q || (echo Dependency install failed & pause & exit /b 1)
+rem ---------- 2. check Python version ----------
+%PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Python 3.10 or newer is required.
+  pause
+  exit /b 1
+)
 
-echo [3/4] Checking frontend build...
-if not exist frontend\dist\index.html (
-  echo Frontend not built. Trying to build (requires Node.js)...
+rem ---------- 3. create virtual environment ----------
+if not exist ".venv\pyvenv.cfg" (
+  if exist ".venv" rmdir /s /q ".venv"
+  if errorlevel 1 (
+    echo [ERROR] Cannot remove the broken .venv folder. Close programs using it and retry.
+    pause
+    exit /b 1
+  )
+  echo [1/3] Creating virtual environment...
+  %PY% -m venv .venv
+  if errorlevel 1 (
+    echo [ERROR] Failed to create the virtual environment.
+    pause
+    exit /b 1
+  )
+)
+set "VPY=.venv\Scripts\python.exe"
+
+rem ---------- 4. install dependencies if needed ----------
+echo [2/3] Checking backend dependencies...
+"%VPY%" -c "import fastapi, uvicorn, PIL, send2trash, multipart" >nul 2>nul
+if errorlevel 1 (
+  echo Installing backend dependencies...
+  "%VPY%" -m pip install --only-binary :all: -r backend\requirements.txt
+  if errorlevel 1 (
+    echo [ERROR] Dependency installation failed. Check your network connection.
+    pause
+    exit /b 1
+  )
+)
+
+rem ---------- 5. build frontend only if the bundle is missing ----------
+if not exist "frontend\dist\index.html" (
+  echo [3/3] Frontend build is missing. Trying to build with Node.js...
+  where node >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Node.js is required to build the frontend.
+    echo Please install Node.js from https://nodejs.org/ and retry.
+    pause
+    exit /b 1
+  )
   cd frontend
-  call npm.cmd install -s || (echo npm install failed. Please install Node.js & pause & exit /b 1)
-  call npm.cmd run build || (echo Frontend build failed & pause & exit /b 1)
+  call npm.cmd install -s || goto :frontend_failed
+  call npm.cmd run build || goto :frontend_failed
   cd ..
 )
 
-echo [4/4] Starting service (port 14419, auto-shift if occupied)...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_local.ps1"
-
+echo Starting service... The browser will open automatically.
+echo Close this window to stop the service.
+"%VPY%" start.py
+echo.
+echo Service stopped.
 pause
+exit /b 0
+
+:frontend_failed
+cd ..
+echo [ERROR] Frontend build failed.
+pause
+exit /b 1

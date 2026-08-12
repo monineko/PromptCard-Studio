@@ -32,18 +32,18 @@
 
 ## 快速开始
 
-1. 下载并解压本项目（Windows 用户）。
-2. 双击 **run.bat**：仅首次需要，自动创建运行环境并安装依赖（之后无需再运行）。
-3. 以后每次双击 **start_local.cmd** 启动，浏览器会自动打开 http://127.0.0.1:14419。
+1. 安装 Python 3.10 或更高版本（https://www.python.org/downloads/ ，安装时勾选 Add Python to PATH）。
+2. 下载并解压本项目。
+3. 双击 **run.bat**（Windows）或运行 **run.sh**（macOS / Linux）：首次会自动创建运行环境并安装依赖，然后启动服务并打开浏览器；以后每次也用它。
 4. 停止服务：应用内「设置 → 关闭本地服务」。
 
 脚本说明：
 
-- `run.bat`（Windows）/ `run.sh`（macOS / Linux）：首次初始化，准备环境后自动启动；
-- `start_local.cmd`：日常启动入口（Windows），端口被占用时自动更换。
+- `run.bat`（Windows）/ `run.sh`（macOS / Linux）：唯一启动入口，自动完成环境准备、依赖安装与启动，端口被占用时自动更换。
 
 小提示：
 
+- 首次运行需要联网安装依赖；前端构建产物已随包提供，无需安装 Node.js。
 - 端口 14419 被占用时会自动更换端口，无需手动设置；
 - 使用 NovelAI 生图前，请先在「设置」中填入你的 NovelAI Token（仅保存在本机）。
 
@@ -279,9 +279,8 @@ vibes/            参考图 Vibe 库（内置演示 vibe）
 images/           README 教程截图（仅文档用）
 LICENSE           开源协议（GPL-3.0）
 README.md         项目说明
-run.bat / run.sh  初次启动（Windows / macOS、Linux）
-start_local.cmd   日常启动入口（Windows）
-start_local.ps1   日常启动脚本（由 start_local.cmd 调用）
+run.bat / run.sh  启动入口（Windows / macOS、Linux）：自动初始化并打开浏览器
+start.py          服务启动器（由 run.bat / run.sh 调用）
 .gitignore        忽略用户数据，防止误提交
 ```
 

@@ -1,5 +1,5 @@
 fastapi
-uvicorn[standard]
+uvicorn
 python-multipart
 send2trash
-pillow
+pillow==12.2.0
