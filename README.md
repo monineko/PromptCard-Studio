@@ -31,6 +31,41 @@
 - **Vibe 管理**：参考图 Vibe 库导入、重命名、预览。
 - **设置**：主题、背景图、图库路径、NovelAI Token、特效开关、多角色、中文翻译、自动备注等。
 
+## 目录结构
+
+仓库自带的内容（解压即见）：
+
+```
+backend/          项目后端（FastAPI）：卡片/工作区/词典/生图/批量/图库/Vibe/PNG 发送/发布处理
+  └ app/assets/   卡片导入模板（xlsx）
+  └ app/engines/  超分引擎清单（*.json）与运行时下载目录（runtime/，首次使用时下载）
+frontend/         项目前端（React 18 + TypeScript + Vite + Tailwind v4 + Zustand）
+  └ src/assets/backgrounds/  内置背景图
+dictionary/       tag 词典（tags.json，随版本更新）
+promptcards/      提示词卡片（<分类>/<名称>.txt 及元数据，内置演示卡片）
+library/          本地图库（内置图库样例）
+vibes/            参考图 Vibe 库（内置演示 vibe）
+LICENSE           开源协议（GPL-3.0）
+README.md         项目说明
+run.bat / run.sh  初次启动（Windows / macOS、Linux）
+start_local.cmd   日常启动入口（Windows）
+start_local.ps1   日常启动脚本（由 start_local.cmd 调用）
+.gitignore        忽略用户数据，防止误提交
+```
+
+运行后生成或由你添加的用户数据（已加入 `.gitignore`，不会进入仓库）：
+
+```
+promptcards/      你添加的卡片（新增内容不入库）
+library/          你的图片库（新增内容不入库）
+vibes/            你的参考图（新增内容不入库）
+batch_runs/       批量生成断点记录
+publish_staging/  发布处理暂存区
+publish_runs/     发布处理运行内部暂存
+outputs/          发布处理输出
+dictionary/custom.json  用户自定义词典词条
+config.json / workspace.json  本地配置与工作区数据
+```
 ## 参考来源
 
 - NovelAI 接口与批量生成参考 **Auto-NovelAI-Refactor（ANR）**（https://github.com/zhulinyv/Auto-NovelAI-Refactor ，GPL-3.0）。依据 GPL-3.0，本项目以 GPL-3.0 整体开源（见 `LICENSE`）。
