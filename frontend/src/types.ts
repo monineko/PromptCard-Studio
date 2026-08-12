@@ -47,6 +47,8 @@ export type Settings = {
   show_chinese: boolean;
   /** 自动备注：查词后按分类预填块备注；关闭后不预填 */
   auto_note: boolean;
+  /** 隐藏后端面板：勾选后下次启动自动隐藏后端命令行窗口 */
+  hide_backend_panel: boolean;
   effects: {
     background_rotation: boolean;
     review_particles: boolean;
@@ -165,7 +167,6 @@ export type GenerateResolution = {
   category: string;
   width: number;
   height: number;
-  free: boolean;
 };
 
 export type GenerateModelRules = {
@@ -188,7 +189,6 @@ export type GenerateMeta = {
   uc_presets: string[];
   resolutions: GenerateResolution[];
   model_rules: Record<string, GenerateModelRules>;
-  free: { max_steps: number; resolutions: string[]; n_samples: number };
   quality_tags: Record<string, string>;
 };
 
@@ -293,7 +293,6 @@ export type BatchRun = {
   anlas: number | null;
   estimate_sec: number;
   eta_sec: number;
-  free: boolean;
   stop_anlas: number;
   dimensions: BatchDimension[];
   base_positive: string;
