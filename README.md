@@ -10,6 +10,7 @@
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2F%20TS%20%2F%20Tailwind%20v4-61dafb?style=flat-square)]()
 [![For](https://img.shields.io/badge/For-NovelAI-8b5cf6?style=flat-square)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)]()
+[![Bilibili](https://img.shields.io/badge/Bilibili-%E6%AE%B7%E7%90%AC%E6%B1%90-00A1D6?style=flat-square)](https://space.bilibili.com/325112027)
 
 [快速开始](#快速开始) · [使用教程](#使用教程) · [功能模块](#功能模块) · [目录结构](#目录结构) · [参考来源](#参考来源) · [隐私与安全](#隐私与安全)
 
