@@ -24,6 +24,7 @@ DEFAULT_SETTINGS = {
     "multi_character": True,     # 多角色：角色分区逐块作为独立角色；关闭后并入正面提示词
     "show_chinese": True,        # 显示中文翻译（词典标注）；关闭后块上不显示，备注不受影响
     "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）
+    "hide_backend_panel": False, # 勾选后下次启动自动隐藏后端命令行窗口（Windows）
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
     "effects": {                 # 特效开关（界面个性化）
