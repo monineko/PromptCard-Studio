@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Loader2, Pause, Play, Square, Wand2 } from "lucide-react";
+import { AlertTriangle, Loader2, Pause, Play, Square, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -168,13 +168,6 @@ export function BatchPanel() {
       : currentAnlas !== null
         ? currentAnlas + stopDelta
         : stopDelta;
-  const freeSize =
-    (params.width === 832 && params.height === 1216) ||
-    (params.width === 512 && params.height === 768) ||
-    (params.width === 768 && params.height === 512) ||
-    (params.width === 640 && params.height === 640);
-  const free = params.steps <= 28 && freeSize;
-
   const handleStartClick = () => {
     if (run) return;
     if (!status?.configured) {
@@ -291,7 +284,6 @@ export function BatchPanel() {
           currentAnlas={currentAnlas}
           threshold={threshold}
           stopDelta={stopDelta}
-          free={free}
           params={params}
           vibesCount={vibes.length}
           cardCoeffs={cardCoeffs}
@@ -316,7 +308,6 @@ export function BatchPanel() {
           negativeCount={negative.reduce((n, s) => n + s.blocks.length, 0)}
           currentAnlas={currentAnlas}
           threshold={threshold}
-          free={free}
         />
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={starting}>
@@ -428,7 +419,6 @@ function RunPanel({
         参数已锁定为开始时快照：{MODEL_LABELS[run.params.model ?? ""] ?? run.params.model} ·{" "}
         {run.params.width}×{run.params.height} · {run.params.steps} 步 ·{" "}
         {run.params.seed === -1 ? "随机种子" : "固定种子递增"} · Vibe {run.params.vibes?.length ?? 0} 个
-        {run.free ? " · 免费档" : " · 消耗点数"}
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -464,7 +454,6 @@ function ConfigPanel({
   currentAnlas,
   threshold,
   stopDelta,
-  free,
   params,
   vibesCount,
   cardCoeffs,
@@ -488,7 +477,6 @@ function ConfigPanel({
   currentAnlas: number | null;
   threshold: number;
   stopDelta: number;
-  free: boolean;
   params: ReturnType<typeof useGenerateStore.getState>["params"];
   vibesCount: number;
   cardCoeffs: Record<string, number>;
@@ -650,7 +638,6 @@ function ConfigPanel({
         </Button>
         <span className="text-[10px] text-[var(--muted)]">
           当前点数 {currentAnlas ?? "—"}；默认在当前点数 −{Math.abs(stopDelta)}
-          {free ? "；免费档不消耗点数，不触发停止" : ""}
         </span>
       </div>
 
@@ -662,20 +649,11 @@ function ConfigPanel({
         <span className="text-[10px] text-[var(--muted)]">
           约每张 {ESTIMATE_SEC_PER_IMAGE} 秒，预计 {fmtMin(total * ESTIMATE_SEC_PER_IMAGE)}
         </span>
-        {free ? (
-          <span className="flex items-center gap-1 rounded-md bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400">
-            <CheckCircle2 size={11} /> 免费档
-          </span>
-        ) : (
-          <span className="flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">
-            <AlertTriangle size={11} /> 消耗点数
-          </span>
-        )}
         <Button
           className="ml-auto !px-6 !py-3 text-base"
           onClick={onStart}
-          disabled={!currentAnlas && !free}
-          title={!currentAnlas && !free ? "无法获取点数，请先配置 Token" : undefined}
+          disabled={!currentAnlas}
+          title={!currentAnlas ? "无法获取点数，请先配置 Token" : undefined}
         >
           <Wand2 size={16} /> 开始批量
         </Button>
@@ -697,7 +675,6 @@ function ConfirmBody({
   negativeCount,
   currentAnlas,
   threshold,
-  free,
 }: {
   params: ReturnType<typeof useGenerateStore.getState>["params"];
   vibes: string[];
@@ -708,7 +685,6 @@ function ConfirmBody({
   negativeCount: number;
   currentAnlas: number | null;
   threshold: number;
-  free: boolean;
 }) {
   const kv: [string, string][] = [
     ["模型", MODEL_LABELS[params.model] ?? params.model],
@@ -767,7 +743,7 @@ function ConfirmBody({
         <div className="mb-1 font-medium text-[var(--muted)]">点数与预计</div>
         <div className="space-y-0.5">
           <div>
-            当前点数 {currentAnlas ?? "—"}；{free ? "免费档，不检查点数停止" : `剩余点数低于 ${threshold} 时自动停止`}
+            当前点数 {currentAnlas ?? "—"}；剩余点数低于 {threshold} 时自动停止
           </div>
           <div>
             总张数 <span className="font-semibold text-[var(--accent)]">{total} 张</span>，预计{" "}
