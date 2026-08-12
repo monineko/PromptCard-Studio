@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import {
   CheckSquare,
   ChevronDown,
+  Github,
   Home,
   Images,
   ListOrdered,
@@ -10,6 +11,8 @@ import {
   Play,
   Rocket,
   Settings as SettingsIcon,
+  Star,
+  User,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
@@ -158,24 +161,89 @@ export function AppSidebar() {
             </div>
           )}
 
-          {reviewAvailable && (
-            <div className="mt-3 border-t border-[var(--border)] pt-3">
-              <button
-                onClick={() => startQuickPick?.()}
-                className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--hover)] px-4 py-2.5 text-sm font-medium transition-colors hover:bg-[var(--accent)] hover:text-white"
-                title="多选图片，批量移动到其他文件夹"
+          <div className="mt-auto flex flex-col gap-2.5 pt-3">
+            {reviewAvailable && (
+              <div className="space-y-2 border-t border-[var(--border)] pt-2.5">
+                <motion.button
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => startQuickPick?.()}
+                  className="group flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--hover)] px-4 py-2.5 text-sm font-medium transition-colors hover:bg-[var(--accent)] hover:text-white"
+                  title="多选图片，批量移动到其他文件夹"
+                >
+                  <CheckSquare
+                    size={15}
+                    className="transition-transform duration-300 group-hover:-rotate-12 group-hover:scale-125"
+                  />
+                  快捷选取
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05, y: -1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => startReview?.()}
+                  className="group flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg transition-shadow hover:shadow-[0_0_18px_rgba(168,85,247,0.55)]"
+                  style={{ background: "var(--accent)" }}
+                >
+                  <Play
+                    size={16}
+                    className="transition-transform duration-300 group-hover:scale-125 group-hover:rotate-12"
+                  />
+                  筛选模式
+                </motion.button>
+              </div>
+            )}
+
+            <div className="space-y-1.5 border-t border-[var(--border)] pt-2.5">
+              {/* 个人主页跳转 */}
+              <motion.a
+                href="https://space.bilibili.com/325112027"
+                target="_blank"
+                rel="noreferrer"
+                whileHover={{ scale: 1.06, y: -1 }}
+                whileTap={{ scale: 0.93 }}
+                transition={{ type: "spring", stiffness: 420, damping: 14 }}
+                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-pink-500 via-fuchsia-500 to-violet-600 px-3 py-2 text-xs font-semibold text-white shadow-lg"
+                title="个人主页：https://space.bilibili.com/325112027"
               >
-                <CheckSquare size={15} /> 快捷选取
-              </button>
-              <button
-                onClick={() => startReview?.()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-85"
-                style={{ background: "var(--accent)" }}
+                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/50 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-full" />
+                <User
+                  size={13}
+                  className="relative transition-transform duration-500 group-hover:rotate-[360deg]"
+                />
+                <span className="relative">个人主页</span>
+                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-ping rounded-full bg-pink-300" />
+              </motion.a>
+
+              {/* GitHub 仓库跳转 */}
+              <motion.a
+                href="https://github.com/monineko/PromptCard-Studio"
+                target="_blank"
+                rel="noreferrer"
+                whileHover={{ scale: 1.06, y: -1, rotate: -0.5 }}
+                whileTap={{ scale: 0.93 }}
+                transition={{ type: "spring", stiffness: 420, damping: 14 }}
+                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--hover)] px-3 py-2 text-xs font-semibold text-[var(--text)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+                title="GitHub 仓库：https://github.com/monineko/PromptCard-Studio"
               >
-                <Play size={16} /> 筛选模式
-              </button>
+                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-[var(--accent)]/40 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-full" />
+                <Github
+                  size={13}
+                  className="relative transition-transform duration-500 group-hover:rotate-12 group-hover:scale-125"
+                />
+                <span className="relative">GitHub 仓库</span>
+                <Star
+                  size={10}
+                  className="relative fill-amber-300 text-amber-300 transition-transform duration-500 group-hover:rotate-[360deg] group-hover:scale-150"
+                />
+              </motion.a>
             </div>
-          )}
+
+            {/* 底部预留提示文本 */}
+            <div className="flex items-center justify-center gap-1 border-t border-[var(--border)] pt-2 text-[10px] text-[var(--muted)]">
+              <Star size={9} className="animate-pulse text-amber-300" />
+              如果觉得好用请star
+            </div>
+          </div>
           </div>
         </motion.div>
       </aside>
