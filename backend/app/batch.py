@@ -5,7 +5,7 @@
 - 系数为每张卡片的独立数值（前端提供「分区统一系数」快捷设置），
   总张数 = 各维度（卡片系数之和）的连乘，等价于逐组合 × 组合内系数乘积；
 - 串行一张一张生成（与 ANR 一致），不做并发；
-- 停止条件 = 剩余点数低于阈值（开始时固定，免费参数不检查），无最大张数上限；
+- 停止条件 = 剩余点数低于阈值（开始时固定），无最大张数上限；
 - 每张图完成后立即落盘记录，中断（用户暂停 / 网络中断 / 进程中断）后可从断点继续；
 - 只有用户确认「结束任务」才清理断点记录文件。
 """
@@ -238,7 +238,7 @@ def _worker_loop() -> None:
             _set_status("completed", stop_reason=None)
             return
 
-        if not record.get("free") and record.get("anlas") is not None:
+        if record.get("anlas") is not None:
             if int(record["anlas"]) < int(record["stop_anlas"]):
                 _set_status(
                     "stopped",
@@ -346,14 +346,12 @@ def start_batch(
         if not items:
             raise ValueError("组合结果为空，无法开始批量生成")
 
-        free = novelai_service.is_free_params(params)
         anlas: int | None = None
-        if not free:
-            anlas, err = novelai_service.inquire_anlas()
-            if anlas is None:
-                raise RuntimeError(f"查询点数失败：{err}")
-            if int(anlas) < int(stop_anlas):
-                raise ValueError(f"当前点数 {anlas} 已低于停止阈值 {stop_anlas}，无法开始")
+        anlas, err = novelai_service.inquire_anlas()
+        if anlas is None:
+            raise RuntimeError(f"查询点数失败：{err}")
+        if int(anlas) < int(stop_anlas):
+            raise ValueError(f"当前点数 {anlas} 已低于停止阈值 {stop_anlas}，无法开始")
 
         record = {
             "id": uuid.uuid4().hex[:8],
@@ -366,7 +364,6 @@ def start_batch(
             "negative": negative,
             "dimensions": dimensions,
             "stop_anlas": int(stop_anlas),
-            "free": free,
             "items": items,
             "total": len(items),
             "done": 0,
@@ -401,15 +398,14 @@ def resume_batch() -> dict:
             raise ValueError("批量任务正在运行中")
         if record.get("status") == "completed":
             raise ValueError("批量任务已完成，无需继续")
-        if not record.get("free"):
-            anlas, err = novelai_service.inquire_anlas()
-            if anlas is None:
-                raise RuntimeError(f"查询点数失败：{err}")
-            if int(anlas) < int(record.get("stop_anlas") or 0):
-                raise ValueError(
-                    f"当前点数 {anlas} 仍低于停止阈值 {record.get('stop_anlas')}，无法继续"
-                )
-            record["anlas"] = anlas
+        anlas, err = novelai_service.inquire_anlas()
+        if anlas is None:
+            raise RuntimeError(f"查询点数失败：{err}")
+        if int(anlas) < int(record.get("stop_anlas") or 0):
+            raise ValueError(
+                f"当前点数 {anlas} 仍低于停止阈值 {record.get('stop_anlas')}，无法继续"
+            )
+        record["anlas"] = anlas
         record["status"] = "running"
         record["stop_reason"] = None
         _stop_event.clear()
@@ -462,7 +458,6 @@ def _public_view(record: dict) -> dict:
         "eta_sec": round(record.get("estimate_sec", DEFAULT_ESTIMATE_SEC) * remaining, 1)
         if remaining
         else 0,
-        "free": record.get("free"),
         "stop_anlas": record.get("stop_anlas"),
         "dimensions": record.get("dimensions"),
         "base_positive": record.get("base_positive"),
