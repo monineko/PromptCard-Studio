@@ -57,19 +57,21 @@ def load_workspace() -> dict:
             if isinstance(data, dict):
                 positive = data.get("positive") or []
                 negative = data.get("negative") or []
+                back_note = data.get("back_note") or ""
                 if positive and isinstance(positive[0], dict) and "blocks" in positive[0]:
-                    return {"positive": positive, "negative": negative}
+                    return {"positive": positive, "negative": negative, "back_note": back_note}
                 return {
                     "positive": _migrate_legacy(positive),
                     "negative": _migrate_legacy(negative),
+                    "back_note": back_note,
                 }
         except Exception:
             pass
-    return {"positive": _default_zone(), "negative": _default_zone()}
+    return {"positive": _default_zone(), "negative": _default_zone(), "back_note": ""}
 
 
-def save_workspace(positive: list, negative: list) -> dict:
-    data = {"positive": positive, "negative": negative}
+def save_workspace(positive: list, negative: list, back_note: str = "") -> dict:
+    data = {"positive": positive, "negative": negative, "back_note": back_note or ""}
     WORKSPACE_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )

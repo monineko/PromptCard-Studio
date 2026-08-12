@@ -19,7 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 from app import library as lib  # noqa: E402
 
 ANR_SAMPLE = Path(
-    r"E:\NAI\ANR\Auto-NovelAI-Refactor-main\outputs\image2image\2026-08-04\5783883876_00001.png"
+    r"C:\Auto-NovelAI-Refactor\outputs\image2image\sample.png"
 )
 
 

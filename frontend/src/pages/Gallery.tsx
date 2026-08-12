@@ -864,7 +864,7 @@ export function Gallery() {
         render={{
           slide: ({ slide, offset }) =>
             offset !== 0 ? null : (
-              <ZoomableImage key={slide.src} src={slide.src} onClose={() => setLightboxIndex(null)} />
+              <ZoomableImage key={slide.src} src={slide.src} />
             ),
           slideFooter: ({ slide }) => {
             const sameItem = currentItem?.path === slide.path;
@@ -892,7 +892,6 @@ export function Gallery() {
         }}
         on={{
           view: ({ index }) => setLightboxIndex(index),
-          click: () => setLightboxIndex(null),
         }}
       />
 

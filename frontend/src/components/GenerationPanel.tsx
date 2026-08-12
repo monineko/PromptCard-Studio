@@ -438,6 +438,8 @@ export function GenerationPanel() {
   const positive = useStore((s) => s.positive);
   const negative = useStore((s) => s.negative);
   const addToast = useStore((s) => s.addToast);
+  const settings = useStore((s) => s.settings);
+  const multiCharacter = settings?.multi_character ?? true;
 
   const params = useGenerateStore((s) => s.params);
   const setParam = useGenerateStore((s) => s.setParam);
@@ -472,6 +474,11 @@ export function GenerationPanel() {
       })),
     [rolePositive, roleNegative]
   );
+  // 多角色关闭时：角色分区并入正面提示词，不再生成独立角色槽
+  const mergedBase = useMemo(() => {
+    if (multiCharacter || !rolePositive.length) return posSplit.base;
+    return [posSplit.base, rolePositive.join(", ")].filter(Boolean).join(", ");
+  }, [multiCharacter, posSplit.base, rolePositive]);
 
   const reloadVibes = useCallback(() => {
     api
@@ -555,8 +562,8 @@ export function GenerationPanel() {
       navigate("/settings");
       return;
     }
-    if (!posSplit.base.trim()) {
-      addToast("基础正面提示词为空，请先在工作区添加内容", "err");
+    if (!mergedBase.trim()) {
+      addToast("正面提示词为空，请先在工作区添加内容", "err");
       return;
     }
     setGenerating(true);
@@ -564,14 +571,14 @@ export function GenerationPanel() {
     try {
       const payload = {
         ...params,
-        characters,
+        characters: multiCharacter ? characters : [],
         vibes: vibes.map((v) => ({
           id: v.id,
           strength: v.strength,
           information_extracted: v.information_extracted,
         })),
       };
-      const r = await api.text2image(posSplit.base, negSplit.base, payload);
+      const r = await api.text2image(mergedBase, negSplit.base, payload);
       setResult(r);
       addToast("生成完成，已保存到图库（未评分）");
       void refreshStatus();
@@ -644,8 +651,17 @@ export function GenerationPanel() {
               角色提示词
               <span className="ml-1.5 text-[10px] font-normal text-[var(--muted)]">{characters.length} 个</span>
             </span>
+            {!multiCharacter && (
+              <span className="rounded bg-[var(--hover)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
+                多角色已关闭，角色分区并入正面提示词
+              </span>
+            )}
           </div>
-          {characters.length === 0 ? (
+          {!multiCharacter ? (
+            <p className="px-2.5 pb-2.5 text-[10px] leading-relaxed text-[var(--muted)]">
+              设置中「多角色」已关闭：工作区「角色」分区的提示词会作为普通正面提示词发送，不会生成独立角色槽。
+            </p>
+          ) : characters.length === 0 ? (
             <p className="px-2.5 pb-2.5 text-[10px] leading-relaxed text-[var(--muted)]">
               未设置角色；在工作区「角色」分区添加卡片后，会自动按卡片数生成角色 1、角色 2…
             </p>

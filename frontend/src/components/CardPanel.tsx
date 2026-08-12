@@ -974,7 +974,7 @@ function ImportModal() {
           <input
             value={anrPath}
             onChange={(e) => setAnrPath(e.target.value)}
-            placeholder="例如 E:\NAI\ANR\Auto-NovelAI-Refactor-main\wildcards"
+            placeholder="例如 D:\Auto-NovelAI-Refactor\wildcards"
             className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
           />
         </div>

@@ -1,4 +1,15 @@
-export type PromptBlock = { id: string; type: "prompt"; text: string; weight?: number };
+export type PromptBlock = {
+  id: string;
+  type: "prompt";
+  text: string;
+  weight?: number;
+  /** 中文标注（来自本地词典，或用户手动填写） */
+  cn?: string;
+  /** 词典分类映射到卡包分类后的名称（角色/动作/画师串/负面/质量/场景/表情/服装） */
+  category?: string;
+  /** 用户备注（块级，保存在工作区） */
+  note?: string;
+};
 export type CardBlock = { id: string; type: "card"; category: string; name: string };
 export type Block = PromptBlock | CardBlock;
 export type Zone = "positive" | "negative";
@@ -30,11 +41,37 @@ export type Settings = {
   recycle_reject: boolean;
   format_input: boolean;
   port: number;
+  /** 多角色：角色分区逐块作为独立角色；关闭后并入正面提示词 */
+  multi_character: boolean;
+  /** 显示中文翻译（词典标注）；关闭后块上不显示，备注不受影响 */
+  show_chinese: boolean;
+  /** 自动备注：查词后按分类预填块备注；关闭后不预填 */
+  auto_note: boolean;
   effects: {
     background_rotation: boolean;
     review_particles: boolean;
     review_animations: boolean;
   };
+};
+
+export type WorkspaceData = {
+  positive: Section[];
+  negative: Section[];
+  back_note?: string;
+};
+
+export type DictionaryStatus = {
+  builtin_count: number;
+  custom_count: number;
+  folder: string;
+  builtin_file: string;
+  custom_file: string;
+};
+
+export type DictionaryEntry = {
+  cn: string;
+  source: string;
+  category?: string;
 };
 
 export type LibraryCategoryKey = "all" | "treasure" | "fine" | "reject" | "favorites" | "unrated";

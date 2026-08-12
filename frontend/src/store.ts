@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { api, uid } from "./api";
-import { copyText, serializeSections, splitWeightedPrompt, SYSTEM_SECTIONS } from "./lib";
+import {
+  copyText,
+  normalizePromptTerms,
+  serializeBlocks,
+  serializeSections,
+  splitWeightedPrompt,
+  SYSTEM_SECTIONS,
+} from "./lib";
 import type { Block, Category, Section, Settings, Zone } from "./types";
 
 type Snapshot = { positive: Section[]; negative: Section[] };
@@ -95,6 +102,10 @@ interface AppState {
   zone: Zone;
   positive: Section[];
   negative: Section[];
+  backNote: string;
+  selectMode: boolean;
+  selected: string[];
+  selectAnchor: string | null;
   past: Snapshot[];
   future: Snapshot[];
   toasts: Toast[];
@@ -112,6 +123,7 @@ interface AppState {
   setSearch: (s: string) => void;
   toggleExpanded: (name: string) => void;
   setZone: (z: Zone) => void;
+  setBackNote: (v: string) => void;
   setTheme: (patch: Partial<Settings["theme"]>) => void;
   setEffects: (patch: Partial<Settings["effects"]>) => void;
   saveSettings: (patch: Partial<Settings>) => Promise<void>;
@@ -136,14 +148,27 @@ interface AppState {
   renameSection: (sectionId: string, name: string) => void;
   deleteSection: (sectionId: string) => void;
   addSection: (name: string) => void;
-  splitSectionPrompts: (sectionId: string) => void;
+  splitSectionPrompts: (sectionId: string) => Promise<void>;
+  annotateBlocks: (entries: { id: string; cn: string; category?: string }[]) => void;
+  updatePromptMeta: (sectionId: string, blockId: string, meta: { cn?: string; note?: string }) => void;
   composeSectionId: string | null;
   setComposeSectionId: (id: string | null) => void;
   replaceSectionWithCard: (sectionId: string, category: string, name: string) => void;
+  moveSectionBlocks: (fromSectionId: string, toSectionId: string) => void;
+  moveWorkbenchToRole: () => void;
   clearZone: () => void;
+  clearSection: (sectionId: string) => void;
   undo: () => void;
   redo: () => void;
-  copyZone: () => Promise<void>;
+  copySection: (sectionId: string) => Promise<void>;
+  mergeSectionBlocks: (sectionId: string) => Promise<void>;
+  copyPositive: () => Promise<void>;
+  toggleSelectMode: () => void;
+  exitSelectMode: () => void;
+  toggleSelect: (blockId: string) => void;
+  rangeSelect: (anchorId: string, blockId: string) => void;
+  clearSelection: () => void;
+  moveSelectedBlocks: (toSectionId: string) => void;
   overwriteZonesFromPng: (payload: {
     positive: string;
     negative: string;
@@ -167,7 +192,7 @@ function scheduleSave(get: () => AppState) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const s = get();
-    api.saveWorkspace(s.positive, s.negative).catch(() => {});
+    api.saveWorkspace(s.positive, s.negative, s.backNote).catch(() => {});
   }, 600);
 }
 
@@ -215,6 +240,10 @@ export const useStore = create<AppState>((set, get) => {
     zone: "positive",
     positive: [],
     negative: [],
+    backNote: "",
+    selectMode: false,
+    selected: [],
+    selectAnchor: null,
     past: [],
     future: [],
     toasts: [],
@@ -244,6 +273,7 @@ export const useStore = create<AppState>((set, get) => {
             categoryColor: buildColorMap(categories),
             positive,
             negative,
+            backNote: ws.back_note ?? "",
             past: s.past,
             future: s.future,
             ready: true,
@@ -279,6 +309,11 @@ export const useStore = create<AppState>((set, get) => {
     toggleExpanded: (name) =>
       set((s) => ({ expanded: { ...s.expanded, [name]: !s.expanded[name] } })),
     setZone: (z) => set({ zone: z }),
+
+    setBackNote(v) {
+      set({ backNote: v });
+      scheduleSave(get);
+    },
 
     setTheme(patch) {
       set((s) => {
@@ -337,10 +372,21 @@ export const useStore = create<AppState>((set, get) => {
     addPrompt(sectionId, text) {
       const t = text.trim();
       if (!t) return;
+      const blockId = uid();
       commit((s) => {
         const section = findSection(s, sectionId);
-        if (section) section.blocks.push({ id: uid(), type: "prompt", text: t });
+        if (section) section.blocks.push({ id: blockId, type: "prompt", text: t });
       });
+      api
+        .dictBatch([t])
+        .then((res) => {
+          const cn = res[t]?.cn || "";
+          if (cn)
+            get().annotateBlocks([
+              { id: blockId, cn, category: res[t]?.category || "" },
+            ]);
+        })
+        .catch(() => {});
     },
 
     addPrompts(sectionId, texts) {
@@ -432,14 +478,43 @@ export const useStore = create<AppState>((set, get) => {
       });
     },
 
-    splitSectionPrompts(sectionId) {
+    async splitSectionPrompts(sectionId) {
+      // 先异步读取分区内所有卡片的内容，用于把卡片也拆成单词块
+      const current = allSections(get()).find((x) => x.id === sectionId);
+      if (!current) return;
+      const cardContents = new Map<string, string>();
+      for (const b of current.blocks) {
+        if (b.type !== "card") continue;
+        try {
+          const r = await api.cardContent(b.category, b.name);
+          cardContents.set(b.id, (r as { content?: string }).content ?? "");
+        } catch {
+          /* 读取失败则保留卡片块不拆分 */
+        }
+      }
+      const fresh: { id: string; text: string }[] = [];
       commit((s) => {
         const section = findSection(s, sectionId);
         if (!section) return;
         const next: Block[] = [];
         for (const b of section.blocks) {
           if (b.type === "card") {
-            next.push(b);
+            const content = cardContents.get(b.id) ?? "";
+            const terms = content.trim() ? splitWeightedPrompt(content) : [];
+            if (!terms.length) {
+              next.push(b);
+              continue;
+            }
+            for (const t of terms) {
+              const block: Block = {
+                id: uid(),
+                type: "prompt",
+                text: t.text,
+                weight: t.weight !== 1 ? t.weight : undefined,
+              };
+              next.push(block);
+              fresh.push({ id: block.id, text: t.text });
+            }
             continue;
           }
           const terms = splitWeightedPrompt(b.text);
@@ -448,15 +523,66 @@ export const useStore = create<AppState>((set, get) => {
             continue;
           }
           for (const t of terms) {
-            next.push({
+            const block: Block = {
               id: uid(),
               type: "prompt",
               text: t.text,
               weight: t.weight !== 1 ? t.weight : undefined,
-            });
+            };
+            next.push(block);
+            fresh.push({ id: block.id, text: t.text });
           }
         }
         section.blocks = next;
+      });
+      if (!fresh.length) return;
+      try {
+        const res = await api.dictBatch(fresh.map((f) => f.text));
+        const entries = fresh
+          .map((f) => ({
+            id: f.id,
+            cn: res[f.text]?.cn || "",
+            category: res[f.text]?.category || "",
+          }))
+          .filter((e) => e.cn);
+        if (entries.length) get().annotateBlocks(entries);
+      } catch {
+        /* 查词失败不阻断分块 */
+      }
+    },
+
+    annotateBlocks(entries) {
+      if (!entries.length) return;
+      set((s) => {
+        const byId = new Map(entries.map((e) => [e.id, e]));
+        const autoNote = s.settings?.auto_note !== false;
+        const patch = (sections: Section[]) =>
+          sections.map((sec) => ({
+            ...sec,
+            blocks: sec.blocks.map((b) => {
+              if (b.type !== "prompt" || !byId.has(b.id)) return b;
+              const entry = byId.get(b.id)!;
+              return {
+                ...b,
+                cn: entry.cn || b.cn,
+                category: entry.category || b.category,
+                // 自动备注开启时按分类预填备注（负面/其他保持灰色）；已有备注不覆盖
+                note: b.note || (autoNote ? entry.category || undefined : undefined),
+              };
+            }),
+          }));
+        return { positive: patch(s.positive), negative: patch(s.negative) };
+      });
+    },
+
+    updatePromptMeta(sectionId, blockId, meta) {
+      commit((s) => {
+        const section = findSection(s, sectionId);
+        const block = section?.blocks.find((b) => b.id === blockId && b.type === "prompt");
+        if (block && block.type === "prompt") {
+          if (meta.cn !== undefined) block.cn = meta.cn.trim() || undefined;
+          if (meta.note !== undefined) block.note = meta.note.trim() || undefined;
+        }
       });
     },
 
@@ -478,6 +604,13 @@ export const useStore = create<AppState>((set, get) => {
         s.negative.forEach((sec) => (sec.blocks = []));
       });
       get().addToast("已清空提示词工作区（含负面）");
+    },
+
+    clearSection(sectionId) {
+      commit((s) => {
+        const section = findSection(s, sectionId);
+        if (section) section.blocks = [];
+      });
     },
 
     undo() {
@@ -508,20 +641,160 @@ export const useStore = create<AppState>((set, get) => {
       scheduleSave(get);
     },
 
-    async copyZone() {
+    async copySection(sectionId) {
       const s = get();
-      const raw = serializeSections(allSections(s));
-      if (!raw.trim()) {
-        s.addToast("工作区没有内容可复制", "err");
+      const section = allSections(s).find((x) => x.id === sectionId);
+      if (!section || section.blocks.length === 0) {
+        s.addToast("该分区没有内容可复制", "err");
         return;
       }
+      const raw = serializeBlocks(section.blocks);
       try {
         const { text } = await api.expand(raw);
         await copyText(text);
-        s.addToast(`已复制，共 ${text.length} 字符`);
+        s.addToast(`已复制「${section.name}」分区，共 ${text.length} 字符`);
       } catch (e) {
         s.addToast(`复制失败: ${(e as Error).message}`, "err");
       }
+    },
+
+    async mergeSectionBlocks(sectionId) {
+      const s = get();
+      const section = allSections(s).find((x) => x.id === sectionId);
+      if (!section) return;
+      const promptBlocks = section.blocks.filter((b) => b.type === "prompt");
+      if (promptBlocks.length < 2) {
+        s.addToast("至少需要 2 个提示词块才能合并", "err");
+        return;
+      }
+      const raw = serializeBlocks(promptBlocks);
+      try {
+        const { text } = await api.expand(raw);
+        const terms = splitWeightedPrompt(text);
+        if (!terms.length) {
+          s.addToast("未解析到有效提示词", "err");
+          return;
+        }
+        const merged = normalizePromptTerms(terms);
+        commit((st) => {
+          const sec = findSection(st, sectionId);
+          if (!sec) return;
+          const firstPrompt = sec.blocks.findIndex((b) => b.type === "prompt");
+          const cards = sec.blocks.filter((b) => b.type === "card");
+          const mergedBlock: Block = { id: uid(), type: "prompt", text: merged };
+          sec.blocks = [...sec.blocks.slice(0, Math.max(0, firstPrompt)), mergedBlock, ...cards];
+        });
+        s.addToast("已合并为 1 个提示词块（可 Ctrl+Z 撤销）");
+      } catch (e) {
+        s.addToast(`合并失败: ${(e as Error).message}`, "err");
+      }
+    },
+
+    async copyPositive() {
+      const s = get();
+      const hasContent = s.positive.some((sec) => sec.blocks.length > 0);
+      if (!hasContent) {
+        s.addToast("正面提示词为空，没有可复制的内容", "err");
+        return;
+      }
+      const raw = serializeSections(s.positive);
+      try {
+        const { text } = await api.expand(raw);
+        await copyText(text);
+        s.addToast(`已复制正面提示词，共 ${text.length} 字符`);
+      } catch (e) {
+        s.addToast(`复制失败: ${(e as Error).message}`, "err");
+      }
+    },
+
+    moveSectionBlocks(fromSectionId, toSectionId) {
+      commit((s) => {
+        const from = findSection(s, fromSectionId);
+        const to = findSection(s, toSectionId);
+        if (!from || !to || from === to) return;
+        to.blocks.push(...from.blocks);
+        from.blocks = [];
+      });
+    },
+
+    moveWorkbenchToRole() {
+      commit((s) => {
+        const wb = s.positive.find((x) => x.name === WORKBENCH_NAME);
+        if (!wb) return;
+        const role = s.positive.find((x) => x.name === "角色") ?? ensureSection(s.positive, "角色");
+        role.blocks.push(...wb.blocks);
+        wb.blocks = [];
+      });
+      get().addToast("工作台内容已全部移到「角色」分区");
+    },
+
+    toggleSelectMode() {
+      const on = !get().selectMode;
+      set({
+        selectMode: on,
+        selected: on ? get().selected : [],
+        selectAnchor: null,
+      });
+      if (on) {
+        get().addToast("选择模式：单击选中/取消，Shift+单击 头尾连选，拖动移动整组，点空白或 Esc 退出");
+      }
+    },
+
+    exitSelectMode() {
+      if (!get().selectMode) return;
+      set({ selectMode: false, selected: [], selectAnchor: null });
+    },
+
+    toggleSelect(blockId) {
+      set((s) => {
+        const has = s.selected.includes(blockId);
+        return {
+          selected: has ? s.selected.filter((id) => id !== blockId) : [...s.selected, blockId],
+          selectAnchor: blockId,
+        };
+      });
+    },
+
+    rangeSelect(anchorId, blockId) {
+      set((s) => {
+        const secOf = (id: string) => allSections(s).find((sec) => sec.blocks.some((b) => b.id === id));
+        const aSec = secOf(anchorId);
+        const bSec = secOf(blockId);
+        if (!aSec || aSec !== bSec) {
+          return { selected: [...s.selected, blockId], selectAnchor: blockId };
+        }
+        const a = aSec.blocks.findIndex((b) => b.id === anchorId);
+        const b = aSec.blocks.findIndex((b) => b.id === blockId);
+        if (a < 0 || b < 0) return s;
+        const [lo, hi] = a <= b ? [a, b] : [b, a];
+        const range = aSec.blocks.slice(lo, hi + 1).map((b) => b.id);
+        return {
+          selected: [...new Set([...s.selected, ...range])],
+          selectAnchor: blockId,
+        };
+      });
+    },
+
+    clearSelection() {
+      set({ selected: [], selectAnchor: null });
+    },
+
+    moveSelectedBlocks(toSectionId) {
+      commit((s) => {
+        const target = findSection(s, toSectionId);
+        if (!target) return;
+        const wanted = new Set(s.selected);
+        const moved: Block[] = [];
+        for (const sec of allSections(s)) {
+          const keep: Block[] = [];
+          for (const b of sec.blocks) {
+            if (wanted.has(b.id)) moved.push(b);
+            else keep.push(b);
+          }
+          sec.blocks = keep;
+        }
+        target.blocks.push(...moved);
+      });
     },
 
     overwriteZonesFromPng({ positive, negative, characters }) {
@@ -609,7 +882,25 @@ export const useStore = create<AppState>((set, get) => {
       try {
         await api.updateCard(d.category, d.name, content, newCategory, newName);
         await get().refreshCategories();
-        get().addToast(`已保存修改 <${newCategory || d.category}:${newName || d.name}>`);
+        const finalCat = newCategory?.trim() || d.category;
+        const finalName = newName?.trim() || d.name;
+        const renamed = finalCat !== d.category || finalName !== d.name;
+        if (renamed) {
+          commit((s) => {
+            const patch = (sections: Section[]) =>
+              sections.map((sec) => ({
+                ...sec,
+                blocks: sec.blocks.map((b) =>
+                  b.type === "card" && b.category === d.category && b.name === d.name
+                    ? { ...b, category: finalCat, name: finalName }
+                    : b
+                ),
+              }));
+            s.positive = patch(s.positive);
+            s.negative = patch(s.negative);
+          });
+        }
+        get().addToast(`已保存修改 <${finalCat}:${finalName}>` + (renamed ? "，工作区中的旧卡片引用已同步更新" : ""));
         set({ detail: null });
         return true;
       } catch (e) {

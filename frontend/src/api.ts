@@ -15,6 +15,9 @@ import type {
   Settings,
   Text2ImageResult,
   VibeItem,
+  WorkspaceData,
+  DictionaryStatus,
+  DictionaryEntry,
 } from "./types";
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
@@ -86,9 +89,25 @@ export const api = {
   },
   importAnr: (path: string) => request("/api/cards/import-anr", { method: "POST", body: JSON.stringify({ path }) }),
   exportUrl: () => "/api/cards/export",
-  workspace: () => request<{ positive: Section[]; negative: Section[] }>("/api/workspace"),
-  saveWorkspace: (positive: Section[], negative: Section[]) =>
-    request("/api/workspace", { method: "PUT", body: JSON.stringify({ positive, negative }) }),
+  workspace: () => request<WorkspaceData>("/api/workspace"),
+  saveWorkspace: (positive: Section[], negative: Section[], back_note = "") =>
+    request("/api/workspace", {
+      method: "PUT",
+      body: JSON.stringify({ positive, negative, back_note }),
+    }),
+  dictBatch: (terms: string[]) =>
+    request<Record<string, DictionaryEntry>>("/api/dictionary/batch", {
+      method: "POST",
+      body: JSON.stringify({ terms }),
+    }),
+  dictSave: (term: string, cn: string) =>
+    request<{ ok: boolean; count: number }>("/api/dictionary/save", {
+      method: "POST",
+      body: JSON.stringify({ term, cn }),
+    }),
+  dictStatus: () => request<DictionaryStatus>("/api/dictionary/status"),
+  openDictionaryFolder: () =>
+    request<{ ok: boolean; path: string }>("/api/dictionary/open-folder", { method: "POST" }),
   settings: () => request<Settings>("/api/settings"),
   saveSettings: (settings: Partial<Settings>) =>
     request("/api/settings", { method: "PUT", body: JSON.stringify(settings) }),
@@ -190,6 +209,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  importVibeFile: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request<{ ok: boolean; id: string; name: string }>("/api/vibes/import-file", {
+      method: "POST",
+      body: fd,
+    });
+  },
   systemShutdown: () =>
     request<{ ok: boolean; message: string }>("/api/system/shutdown", { method: "POST" }),
 };

@@ -44,6 +44,16 @@ class ExpandRequest(BaseModel):
 class WorkspaceIn(BaseModel):
     positive: list
     negative: list
+    back_note: Optional[str] = None
+
+
+class DictionaryBatchIn(BaseModel):
+    terms: list[str] = []
+
+
+class DictionarySaveIn(BaseModel):
+    term: str = ""
+    cn: str = ""
 
 
 class AnrImportIn(BaseModel):

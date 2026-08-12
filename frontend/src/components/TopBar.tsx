@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
-import { Moon, Palette, Sparkles, Sun } from "lucide-react";
+import { Moon, Palette, Sun } from "lucide-react";
 import { NavLink, useNavigate } from "react-router-dom";
+import projectIcon from "../assets/icons/project-icon.png";
 import { cn } from "../lib";
 import { useStore } from "../store";
 import { useNavStore } from "../store/navStore";
@@ -31,12 +32,11 @@ export function TopBar() {
         className="flex w-fit cursor-pointer items-center gap-2 rounded-lg justify-self-start transition-opacity hover:opacity-80"
         title="回到提示词工作区"
       >
-        <span
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-lg"
-          style={{ background: "var(--accent)" }}
-        >
-          <Sparkles size={16} />
-        </span>
+        <img
+          src={projectIcon}
+          alt="项目图标"
+          className="h-8 w-8 rounded-xl object-contain shadow-lg"
+        />
         <span className="text-sm font-semibold tracking-wide">Novelai Prompt Manager</span>
       </button>
 

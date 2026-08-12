@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import cards as cards_service
 from . import batch as batch_service
 from . import backgrounds as backgrounds_service
+from . import dictionary as dictionary_service
 from . import novelai as novelai_service
 from . import png_send as png_send_service
 from . import library as library_service
@@ -28,6 +29,8 @@ from .schemas import (
     CategoryOrder,
     CategoryIn,
     CategoryRename,
+    DictionaryBatchIn,
+    DictionarySaveIn,
     ExpandRequest,
     DeleteImagesIn,
     GenerateTokenIn,
@@ -44,6 +47,7 @@ from .schemas import (
 )
 
 ensure_dirs()
+cards_service.ensure_default_categories()
 
 app = FastAPI(title="Novelai Prompt Manager", version="0.1.0")
 
@@ -249,7 +253,36 @@ def get_workspace():
 
 @app.put("/api/workspace")
 def put_workspace(body: WorkspaceIn):
-    return workspace_service.save_workspace(body.positive, body.negative)
+    return workspace_service.save_workspace(body.positive, body.negative, body.back_note or "")
+
+
+# ---------- 提示词标注词典 ----------
+
+
+@app.post("/api/dictionary/batch")
+def dictionary_batch(body: DictionaryBatchIn):
+    return dictionary_service.lookup_batch(body.terms)
+
+
+@app.post("/api/dictionary/save")
+def dictionary_save(body: DictionarySaveIn):
+    try:
+        return dictionary_service.save_custom(body.term, body.cn)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.get("/api/dictionary/status")
+def dictionary_status():
+    return dictionary_service.status()
+
+
+@app.post("/api/dictionary/open-folder")
+def dictionary_open_folder():
+    try:
+        return dictionary_service.open_dictionary_folder()
+    except Exception as e:
+        raise _as_http(e)
 
 
 # ---------- 设置 ----------
@@ -289,6 +322,15 @@ def vibe_rename(body: VibeRenameIn):
         raise _as_http(e, 404)
     except FileExistsError as e:
         raise _as_http(e, 409)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/vibes/import-file")
+async def vibe_import_file(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        return vibes_service.import_vibe_file_upload(file.filename or "", content)
     except ValueError as e:
         raise _as_http(e, 400)
 

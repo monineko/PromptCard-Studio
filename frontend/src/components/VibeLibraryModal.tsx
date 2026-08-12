@@ -1,5 +1,5 @@
-import { Check, CheckCircle2, FolderOpen, Pencil, Sparkles, X } from "lucide-react";
-import { useState } from "react";
+import { Check, CheckCircle2, FolderOpen, Pencil, RefreshCw, Sparkles, Upload, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { api } from "../api";
 import { cn } from "../lib";
 import { useStore } from "../store";
@@ -24,6 +24,8 @@ export function VibeLibraryModal({
   const setVibes = useGenerateStore((s) => s.setVibes);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const openFolder = async () => {
     try {
@@ -31,6 +33,24 @@ export function VibeLibraryModal({
       addToast(`已打开 Vibe 文件夹：${r.path}`);
     } catch (e) {
       addToast(`打开文件夹失败: ${(e as Error).message}`, "err");
+    }
+  };
+
+  const pickFile = () => fileRef.current?.click();
+
+  const importFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const r = await api.importVibeFile(file);
+      addToast(`已导入 Vibe「${r.name}」`);
+      onReload();
+    } catch (err) {
+      addToast(`导入失败: ${(err as Error).message}`, "err");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -78,15 +98,30 @@ export function VibeLibraryModal({
   return (
     <Modal open={open} onClose={onClose} title="Vibe 库" wide>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <Button size="sm" variant="ghost" onClick={() => void openFolder()}>
-          <FolderOpen size={13} /> 打开 Vibe 所在文件夹
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={pickFile} disabled={importing}>
+            <Upload size={13} /> {importing ? "导入中…" : "导入 Vibe"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => void openFolder()}>
+            <FolderOpen size={13} /> 打开文件夹
+          </Button>
+          <IconBtn title="刷新列表" onClick={onReload}>
+            <RefreshCw size={13} />
+          </IconBtn>
+        </div>
         <span className="text-xs text-[var(--muted)]">单击添加 · 再次单击移除</span>
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".naiv4vibe"
+        className="hidden"
+        onChange={(e) => void importFile(e)}
+      />
       <div className="scroll-thin max-h-[55vh] space-y-1 overflow-y-auto pr-1">
         {items.length === 0 && (
           <p className="py-8 text-center text-xs text-[var(--muted)]">
-            Vibe 文件夹为空，可通过「打开 Vibe 所在文件夹」放入 .naiv4vibe 文件
+            Vibe 文件夹为空，可通过「导入 Vibe」选择文件，或「打开文件夹」手动放入 .naiv4vibe 后点刷新
           </p>
         )}
         {items.map((it) => {

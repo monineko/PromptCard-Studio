@@ -5,6 +5,7 @@ import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
 import { Button, ConfirmDialog } from "../components/UI";
 import { useStore } from "../store";
 import { useGalleryVisual } from "../store/galleryVisual";
+import type { DictionaryStatus } from "../types";
 
 export function Settings() {
   const settings = useStore((s) => s.settings);
@@ -18,7 +19,11 @@ export function Settings() {
     format_input: true,
     library_path: "",
     recycle_reject: true,
+    multi_character: true,
+    show_chinese: true,
+    auto_note: true,
   });
+  const [dictStatus, setDictStatus] = useState<DictionaryStatus | null>(null);
   const [bgImages, setBgImages] = useState<{ name: string; url: string }[]>([]);
   const [bgFolder, setBgFolder] = useState("");
   const [bgLoading, setBgLoading] = useState(false);
@@ -50,8 +55,18 @@ export function Settings() {
       format_input: settings.format_input,
       library_path: settings.library_path,
       recycle_reject: settings.recycle_reject,
+      multi_character: settings.multi_character,
+      show_chinese: settings.show_chinese,
+      auto_note: settings.auto_note,
     });
   }, [settings]);
+
+  useEffect(() => {
+    api
+      .dictStatus()
+      .then(setDictStatus)
+      .catch(() => {});
+  }, []);
 
   const loadBackgrounds = useCallback(async () => {
     setBgLoading(true);
@@ -396,6 +411,85 @@ export function Settings() {
           Reject 回收站内删除图片时：移入系统回收站（关闭则永久删除）
         </label>
 
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.multi_character}
+            onChange={(e) => setForm({ ...form, multi_character: e.target.checked })}
+            className="mt-0.5 accent-[var(--accent)]"
+          />
+          <span>
+            开启多角色
+            <span className="block text-xs text-[var(--muted)]">
+              开启：工作区「角色」分区的每个块作为独立角色槽传入生图。关闭：角色分区并入正面提示词，
+              适合把角色分区当作临时挑词区时使用。
+            </span>
+          </span>
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.show_chinese}
+            onChange={(e) => setForm({ ...form, show_chinese: e.target.checked })}
+            className="mt-0.5 accent-[var(--accent)]"
+          />
+          <span>
+            显示中文翻译
+            <span className="block text-xs text-[var(--muted)]">
+              勾选后提示词块显示词典中文标注；取消勾选则隐藏。备注不受影响，仍可正常显示与编辑，
+              手动填写的翻译也仍可在编辑弹窗中修改。
+            </span>
+          </span>
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.auto_note}
+            onChange={(e) => setForm({ ...form, auto_note: e.target.checked })}
+            className="mt-0.5 accent-[var(--accent)]"
+          />
+          <span>
+            自动备注
+            <span className="block text-xs text-[var(--muted)]">
+              勾选后，分块或输入提示词命中词典时自动按分类预填备注（角色/动作/表情等）；
+              取消勾选则只标注中文翻译，不预填备注。
+            </span>
+          </span>
+        </label>
+
+        <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-sm font-medium">提示词词典</span>
+            <span className="text-xs text-[var(--muted)]">
+              {dictStatus ? `内置 ${dictStatus.builtin_count} 条 · 自定义 ${dictStatus.custom_count} 条` : "读取中…"}
+            </span>
+          </div>
+          <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
+            分块后自动用本地词典给提示词标注中文；词典里没有的词可在块弹窗手动填写并「保存到词典」。
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={async () => {
+                try {
+                  const r = await api.openDictionaryFolder();
+                  addToast(`已打开词典文件夹：${r.path}`);
+                } catch (e) {
+                  addToast(`打开失败: ${(e as Error).message}`, "err");
+                }
+              }}
+            >
+              <FolderOpen size={13} /> 打开词典文件夹
+            </Button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-[var(--muted)]">
+            升级/迁移项目时，把项目根目录整个 <b>dictionary</b> 文件夹复制到新项目根目录即可保留你的自定义词典；
+            custom.json 为应用内保存的词条，tags.json 为可选内置词典（可自行放入，注意其来源授权）。
+          </p>
+        </div>
+
         <div>
           <label className="mb-1 block text-sm">图片库路径（M2 使用）</label>
           <input
@@ -414,6 +508,9 @@ export function Settings() {
                 format_input: form.format_input,
                 library_path: form.library_path,
                 recycle_reject: form.recycle_reject,
+                multi_character: form.multi_character,
+                show_chinese: form.show_chinese,
+                auto_note: form.auto_note,
               })
             }
           >

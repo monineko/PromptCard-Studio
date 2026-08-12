@@ -13,6 +13,7 @@ workspace.json
 config.json
 batch_runs/
 .trash/
+dictionary/custom.json
 
 # 系统文件
 .DS_Store

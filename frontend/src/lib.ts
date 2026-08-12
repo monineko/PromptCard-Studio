@@ -3,6 +3,17 @@ import type { Block, Section } from "./types";
 /** 系统默认分区（工作区不可删除 + wildcards 分类不可删除）。 */
 export const SYSTEM_SECTIONS = ["提示词工作台", "角色", "动作", "画师串", "负面"] as const;
 
+/** 词典分类中会着色的卡包分类；负面/其他/未命中保持灰色备注 */
+export const NOTE_COLOR_CATEGORIES = new Set([
+  "角色",
+  "动作",
+  "画师串",
+  "质量",
+  "场景",
+  "表情",
+  "服装",
+]);
+
 export function cn(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
 }
@@ -24,26 +35,27 @@ export function copyText(text: string): Promise<void> {
   return Promise.resolve();
 }
 
-/** 把块列表序列化为提示词文本（卡片引用保留 <分类:名称>，展开在服务端完成）。 */
+/**
+ * 把块列表序列化为提示词文本（卡片引用保留 <分类:名称>，展开在服务端完成）。
+ * 规范化：块与块之间用英文逗号 + 空格连接，不保留末尾逗号。
+ */
 export function serializeBlocks(blocks: Block[]): string {
-  const text = blocks
-    .map((b) =>
-      b.type === "card"
-        ? `<${b.category}:${b.name}>`
-        : b.weight && b.weight !== 1
-          ? `${b.weight}::${b.text}::`
-          : b.text
-    )
-    .join(" ");
-  return text.trim() ? text + "," : "";
+  const parts = blocks.map((b) =>
+    b.type === "card"
+      ? `<${b.category}:${b.name}>`
+      : b.weight && b.weight !== 1
+        ? `${b.weight}::${b.text}::`
+        : b.text
+  );
+  return parts.filter(Boolean).join(", ").trim();
 }
 
-/** 把区域的分区列表序列化为提示词文本。 */
+/** 把区域的分区列表序列化为提示词文本：分区之间空一行（两个换行）。 */
 export function serializeSections(sections: Section[]): string {
   return sections
     .map((s) => serializeBlocks(s.blocks))
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 }
 
 /**

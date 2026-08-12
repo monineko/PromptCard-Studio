@@ -70,6 +70,28 @@ def open_vibes_folder() -> dict:
     return {"ok": True, "path": str(VIBES_DIR)}
 
 
+def import_vibe_file_upload(filename: str, content: bytes) -> dict:
+    """把用户选择的 .naiv4vibe 文件复制进 Vibe 目录（重名自动加序号）。"""
+    if not str(filename or "").lower().endswith(".naiv4vibe"):
+        raise ValueError("仅支持 .naiv4vibe 文件")
+    try:
+        data = json.loads(content.decode("utf-8-sig"))
+    except Exception:
+        raise ValueError("文件不是有效的 Vibe JSON")
+    if not isinstance(data, dict) or data.get("type") != "image":
+        raise ValueError("文件不是有效的 Vibe（缺少 type=image 字段）")
+
+    VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    stem = Path(filename).stem.strip() or "vibe"
+    base = _safe_new_name(stem)
+    name, n = base, 1
+    while (VIBES_DIR / f"{name}.naiv4vibe").exists():
+        n += 1
+        name = f"{base}_{n}"
+    (VIBES_DIR / f"{name}.naiv4vibe").write_bytes(content)
+    return {"ok": True, "id": name, "name": name}
+
+
 def rename_vibe(vibe_id: str, new_name: str) -> dict:
     """重命名 .naiv4vibe 文件（文件名即显示名）。"""
     old = _safe_id(vibe_id)

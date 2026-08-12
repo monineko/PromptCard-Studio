@@ -14,6 +14,19 @@ from .library import resolve_image
 
 SYSTEM_CATEGORIES = {"角色", "动作", "画师串", "负面"}
 
+# 项目初始化时预填的默认卡包分类（顺序即展示顺序）。
+DEFAULT_CATEGORIES = ("角色", "动作", "画师串", "负面", "质量", "场景", "表情", "服装")
+DEFAULT_CATEGORY_COLORS = {
+    "角色": 0,
+    "动作": 249,
+    "画师串": 120,
+    "质量": 300,
+    "场景": 170,
+    "表情": 330,
+    "服装": 45,
+}
+_DEFAULTS_MARKER = "default_categories_initialized"
+
 INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
 _sequential_state: dict[str, int] = {}
@@ -32,6 +45,32 @@ def _safe_name(name: str) -> str:
 
 def _category_path(category: str) -> Path:
     return WILDCARDS_DIR / _safe_name(category)
+
+
+def ensure_default_categories() -> None:
+    """项目初始化：补齐默认卡包分类的文件夹、颜色与展示顺序。
+
+    仅在首次初始化时执行（以 settings 中的标记位判断），之后不覆盖用户的排序/颜色/删除操作。
+    """
+    settings = load_settings()
+    if settings.get(_DEFAULTS_MARKER):
+        return
+    for name in DEFAULT_CATEGORIES:
+        _category_path(name).mkdir(parents=True, exist_ok=True)
+    colors = settings.get("category_colors") or {}
+    changed_color = False
+    for name, hue in DEFAULT_CATEGORY_COLORS.items():
+        if name not in colors:
+            colors[name] = hue
+            changed_color = True
+    if changed_color:
+        save_settings({"category_colors": colors})
+    order = settings.get("category_order") or []
+    rest = [n for n in order if n not in DEFAULT_CATEGORIES]
+    new_order = [*DEFAULT_CATEGORIES, *rest]
+    if new_order != order:
+        save_settings({"category_order": new_order})
+    save_settings({_DEFAULTS_MARKER: True})
 
 
 def _card_path(category: str, name: str) -> Path:

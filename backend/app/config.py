@@ -6,6 +6,7 @@ WILDCARDS_DIR = PROJECT_ROOT / "wildcards"
 LIBRARY_DIR = PROJECT_ROOT / "library"
 BACKGROUNDS_DIR = PROJECT_ROOT / "backgrounds"
 VIBES_DIR = PROJECT_ROOT / "vibes"
+DICTIONARY_DIR = PROJECT_ROOT / "dictionary"
 CONFIG_FILE = PROJECT_ROOT / "config.json"
 WORKSPACE_FILE = PROJECT_ROOT / "workspace.json"
 
@@ -19,6 +20,9 @@ DEFAULT_SETTINGS = {
     "recycle_reject": True,        # 筛选结束时 Reject 图片移入回收站（False = 永久删除）
     "format_input": True,        # 复制时是否做格式规范化
     "port": 11451,
+    "multi_character": True,     # 多角色：角色分区逐块作为独立角色；关闭后并入正面提示词
+    "show_chinese": True,        # 显示中文翻译（词典标注）；关闭后块上不显示，备注不受影响
+    "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
     "effects": {                 # 特效开关（界面个性化）
@@ -62,3 +66,4 @@ def ensure_dirs():
     LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
     BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
     VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    DICTIONARY_DIR.mkdir(parents=True, exist_ok=True)
