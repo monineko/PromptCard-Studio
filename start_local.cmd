@@ -1,5 +1,5 @@
 @echo off
-rem 日常启动脚本（Windows）：调用 start_local.ps1 隐藏启动后端并打开浏览器。
+rem Daily start (Windows): calls start_local.ps1 to start the backend hidden and open the browser.
 cd /d "%~dp0"
 
 echo ============================================
