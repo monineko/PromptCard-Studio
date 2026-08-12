@@ -1,6 +1,4 @@
 import {
-  AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Dices,
@@ -553,9 +551,6 @@ export function GenerationPanel() {
     setParam(next);
   };
 
-  const currentRes = meta?.resolutions.find((r) => r.width === params.width && r.height === params.height);
-  const free = !!meta && !!currentRes?.free && params.steps <= meta.free.max_steps;
-
   const generate = async () => {
     if (!status?.configured) {
       addToast("请先在「设置」中配置 NovelAI token", "err");
@@ -690,7 +685,6 @@ export function GenerationPanel() {
             max={50}
             step={1}
             onChange={(v) => setParamSafe({ steps: v })}
-            hint={`≤ ${meta?.free.max_steps ?? 28} 步免费`}
           />
           <SliderField
             label="Prompt Guidance 提示词引导"
@@ -746,15 +740,6 @@ export function GenerationPanel() {
         <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-[var(--muted)]">更多参数</span>
-            {free ? (
-              <span className="flex items-center gap-1 rounded-md bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400">
-                <CheckCircle2 size={11} /> 免费档
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400">
-                <AlertTriangle size={11} /> 消耗点数
-              </span>
-            )}
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="col-span-2">
@@ -925,7 +910,7 @@ export function GenerationPanel() {
             <div className="flex flex-col items-center gap-2 text-[var(--muted)]">
               <ImageIcon size={32} className="opacity-50" />
               <span className="text-sm">生成结果将显示在这里</span>
-              <span className="text-[11px]">横图 / 竖图 / 方图自动适配居中</span>
+              <span className="text-[11px]">请确保您已配置NovelAI的token，否则生成功能不可用！</span>
             </div>
           )}
         </div>
@@ -949,9 +934,6 @@ export function GenerationPanel() {
           >
             <Wand2 size={20} />
             生成1张
-            <span className={cn("text-xs", free ? "opacity-80" : "text-amber-300")}>
-              {generating ? "生成中…" : free ? "· 免费" : "· 消耗点数"}
-            </span>
           </Button>
         </div>
         {!status?.configured && (
