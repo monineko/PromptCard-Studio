@@ -1,6 +1,6 @@
 import type { Block, Section } from "./types";
 
-/** 系统默认分区（工作区不可删除 + wildcards 分类不可删除）。 */
+/** 系统默认分区（工作区不可删除 + promptcards 分类不可删除）。 */
 export const SYSTEM_SECTIONS = ["提示词工作台", "角色", "动作", "画师串", "负面"] as const;
 
 /** 词典分类中会着色的卡包分类；负面/其他/未命中保持灰色备注 */
