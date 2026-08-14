@@ -20,7 +20,11 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "backend"))
 
 DEFAULT_PORT = 14419
-MAX_PORT_SHIFT = 20
+# Windows may reserve a contiguous "excluded port" block for Hyper-V / WSL2 /
+# Docker (e.g. 14397-14996 here). Those ports refuse bind() even though nothing
+# is listening, so the shift window must be wide enough to skip such blocks.
+# When the preferred port is free, pick_port returns immediately.
+MAX_PORT_SHIFT = 1000
 
 
 def port_bindable(port: int) -> bool:
