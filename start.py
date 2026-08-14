@@ -23,15 +23,24 @@ DEFAULT_PORT = 14419
 MAX_PORT_SHIFT = 20
 
 
-def port_free(port: int) -> bool:
+def port_bindable(port: int) -> bool:
+    """Return True if the port can really be bound on 127.0.0.1.
+
+    Unlike a connect probe, this also detects Windows reserved/excluded
+    port ranges (e.g. Hyper-V / WSL dynamic ranges) which refuse bind with
+    EACCES (WinError 10013) even when nothing is listening.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.3)
-        return s.connect_ex(("127.0.0.1", port)) != 0
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
 
 
 def pick_port(preferred: int) -> int:
     for port in range(preferred, preferred + MAX_PORT_SHIFT):
-        if port_free(port):
+        if port_bindable(port):
             return port
     return 0
 
@@ -85,8 +94,8 @@ def main() -> int:
     port = pick_port(args.port)
     if not port:
         print(
-            f"[ERROR] Ports {args.port}-{args.port + MAX_PORT_SHIFT - 1} are all in use. "
-            "Please close other processes and retry."
+            f"[ERROR] Ports {args.port}-{args.port + MAX_PORT_SHIFT - 1} are all occupied "
+            "or reserved by the system. Please close other processes and retry."
         )
         return 1
 
