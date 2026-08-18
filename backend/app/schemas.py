@@ -149,6 +149,7 @@ class PublishRunIn(BaseModel):
     nodes: dict = {}
     rename: dict = {}
     engine_params: dict = {}
+    mosaic_params: dict = {}
 
 
 class PublishStageIn(BaseModel):

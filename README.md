@@ -18,7 +18,7 @@
 
 ## 项目简介
 
-一款本地优先的 NovelAI 提示词管理工具。把提示词整理成可复用的「卡片」，在工作区里快速组合、分类、拖拽，管理图片库与参考图 Vibe，并支持卡片组合批量生成和发布前处理（超分降噪 / 数据抹除 / 批量重命名）。下载解压即可使用，所有数据只保存在你自己的电脑上。
+一款本地优先的 NovelAI 提示词管理工具。把提示词整理成可复用的「卡片」，在工作区里快速组合、分类、拖拽，管理图片库与参考图 Vibe，并支持卡片组合批量生成和发布前处理（超分降噪 / 自动打码 / 数据抹除 / 批量重命名）。下载解压即可使用，所有数据只保存在你自己的电脑上。
 
 ## 演示预览
 
@@ -191,8 +191,9 @@
 主要能力：
 
 - **独立暂存区**：从图库勾选 →「快捷选取 → 发布处理」，以硬链接秒级复制进暂存区，原图不动；发布页可预览 / 删除 / 清空 / 添加；
-- **固定节点顺序**：超分降噪 → 恢复原数据 → 数据抹除 → 批量重命名；
+- **固定节点顺序**：超分降噪 → 自动打码（可选）→ 恢复原数据 → 数据抹除 → 批量重命名；
 - **超分降噪**：支持 Real-ESRGAN（ncnn-Vulkan，可自动下载，带校验与断点续传）与 waifu2x-caffe（本地路径接入）；
+- **自动打码**：可选插件。启用后节点出现，可配置处理部位（欧金金 / 欧芒果 / 欧派派）与打码方式（像素 / 模糊 / 线条 / 纯色）；未检测到目标部位的图片自动跳过；
 - **恢复原数据**：超分后把原图的提示词/参数写回，图片变清晰但信息不丢；
 - **数据抹除**：null 覆写清除其余块，NovelAI 等读取器读到为空；JPEG 同时清除 EXIF/XMP；
 - **批量重命名**：日期（可选）_ 自定义段（可选）_ 随机数字段（6 位），三段可拖动换序、实时预览；
@@ -202,9 +203,10 @@
 
 1. 在图片库勾选要发布的图，点「快捷选取 → 发布处理」，图片进入暂存区（见图7-1）；
 2. 在发布页检查暂存区，可预览、删除或继续添加；
-3. 按顺序配置节点：选择超分引擎与参数（Real-ESRGAN / waifu2x-caffe，可选）、勾选恢复原数据/数据抹除（以文字说明为准，未配图）；
-4. 配置重命名规则，右侧实时预览文件名（见图7-3）；
-5. 点「开始处理」，完成后点「打开输出文件」查看结果（见图7-4）。
+3. 如需自动打码：在「可选插件」区点「下载并启用」，确认下载检测模型（约 42.5 MB）后，节点列表出现「自动打码」；
+4. 按顺序配置节点：选择超分引擎与参数（Real-ESRGAN / waifu2x-caffe，可选）、勾选自动打码并选部位与方式、勾选恢复原数据/数据抹除（以文字说明为准，未配图）；
+5. 配置重命名规则，右侧实时预览文件名（见图7-3）；
+6. 点「开始处理」，完成后点「打开输出文件」查看结果（见图7-4）。
 
 ![图7-1 发布暂存区](images/7-1.png)
 
@@ -259,7 +261,7 @@ Vibe 是 NovelAI 的参考图机制。本项目提供 Vibe 库管理，导入后
 - **NovelAI 生图**：单张生成，支持模型 / 分辨率 / 步数 / 采样器 / 负面预设 / 质量词 / Variety / Vibe 参考 / 多角色，参数自动记忆。
 - **批量生成**：角色 × 动作 × 画师串（可加自定义维度）组合枚举、每卡系数、串行生成、点数停止阈值、断点续跑。
 - **图片库**：瀑布流、日期分组、筛选模式（Treasure / Fine / Reject / 收藏）、读取 PNG 信息并完整还原到工作区、快速导入 / 移动 / 删除、分类封面。
-- **发布处理**：勾选图片进入独立暂存区，按节点处理：超分降噪（Real-ESRGAN 或 waifu2x-caffe）→ 恢复原数据 → 数据抹除（NovelAI 等读取器读到为空）→ 批量重命名（日期 / 自定义段 / 随机数字段可拖动换序）；输出到 `outputs/` 独立文件夹。
+- **发布处理**：勾选图片进入独立暂存区，按节点处理：超分降噪（Real-ESRGAN 或 waifu2x-caffe）→ 自动打码（可选插件，检测敏感部位并打码）→ 恢复原数据 → 数据抹除（NovelAI 等读取器读到为空）→ 批量重命名（日期 / 自定义段 / 随机数字段可拖动换序）；输出到 `outputs/` 独立文件夹。
 - **Vibe 管理**：参考图 Vibe 库导入、重命名、预览。
 - **设置**：主题、背景图、图库路径、NovelAI Token、特效开关、多角色、中文翻译、自动备注等。
 
@@ -271,6 +273,8 @@ Vibe 是 NovelAI 的参考图机制。本项目提供 Vibe 库管理，导入后
 backend/          项目后端（FastAPI）：卡片/工作区/词典/生图/批量/图库/Vibe/PNG 发送/发布处理
   └ app/assets/   卡片导入模板（xlsx）
   └ app/engines/  超分引擎清单（*.json）与运行时下载目录（runtime/，首次使用时下载）
+plugins/          可选插件（默认不启用；启用后节点才出现在发布处理页面）
+  └ auto_mosaics/ 自动打码插件（检测模型首次启用时下载）
 frontend/         项目前端（React 18 + TypeScript + Vite + Tailwind v4 + Zustand）
   └ src/assets/backgrounds/  内置背景图
 dictionary/       tag 词典（tags.json，随版本更新）
@@ -304,9 +308,10 @@ config.json / workspace.json  本地配置与工作区数据
 - NovelAI 接口与批量生成参考 **Auto-NovelAI-Refactor（ANR）**（https://github.com/zhulinyv/Auto-NovelAI-Refactor ，GPL-3.0）。依据 GPL-3.0，本项目以 GPL-3.0 整体开源（见 `LICENSE`）。
 - 提示词中文词典由 **DanbooruSearchOnline（DSO）** 的标签库转换而来（https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline ，标签数据完全开源）。
 - 超分引擎：**Real-ESRGAN**（https://github.com/xinntao/Real-ESRGAN ，BSD-3-Clause，按需下载）；可选 **waifu2x-caffe**（https://github.com/lltcggie/waifu2x-caffe ，MIT，本地路径接入）。
+- 自动打码插件：检测模型 **censor_detect_v1.0_s** 来自 **deepghs/anime_censor_detection**（https://huggingface.co/deepghs/anime_censor_detection ，YOLOv8 训练，MIT，启用插件时下载）；模型推理使用 **ONNX Runtime**（https://github.com/microsoft/onnxruntime ，MIT）；模型架构与导出工具 **YOLOv8 / ultralytics**（https://github.com/ultralytics/ultralytics ，AGPL-3.0，仅在导出模型时使用）；打码算法参考 ANR 的 **anr_plugin_auto_mosaics** 插件（https://github.com/zhulinyv/Auto-NovelAI-Refactor ，GPL-3.0）。
 
 ## 隐私与安全
 
-- 应用完全本地运行：除你主动触发的 NovelAI 生成请求外，不会向任何外部服务发送数据；超分引擎仅在勾选时从官方或镜像源下载。
+- 应用完全本地运行：除你主动触发的 NovelAI 生成请求外，不会向任何外部服务发送数据；超分引擎仅在勾选时从官方或镜像源下载；自动打码插件的检测模型仅在确认启用时下载一次，处理过程完全在本地完成，图片不会上传。
 - NovelAI Token 仅保存在本机配置文件中，不会出现在接口响应、日志或提交记录中；配置与全部用户数据目录均已加入 `.gitignore`，不会进入仓库。
 - 请勿将你的 Token、配置或本地数据目录提交到任何公开仓库。

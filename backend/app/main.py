@@ -15,6 +15,7 @@ from . import backgrounds as backgrounds_service
 from . import dictionary as dictionary_service
 from . import novelai as novelai_service
 from . import png_send as png_send_service
+from . import plugins as plugin_service
 from . import publish as publish_service
 from . import library as library_service
 from . import vibes as vibes_service
@@ -691,6 +692,7 @@ def publish_run(body: PublishRunIn):
             body.nodes or {},
             body.rename or {},
             body.engine_params or {},
+            body.mosaic_params or {},
         )
     except ValueError as e:
         raise _as_http(e, 400)
@@ -774,6 +776,37 @@ def publish_staging_file(name: str):
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     return FileResponse(file)
+
+
+# ---------- 发布处理插件 ----------
+
+
+@app.get("/api/plugins")
+def plugins_list():
+    try:
+        return plugin_service.list_plugins()
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/plugins/{plugin_id}/install")
+def plugin_install(plugin_id: str):
+    try:
+        return plugin_service.install_plugin(plugin_id)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except Exception as e:
+        raise _as_http(e, 502)
+
+
+@app.post("/api/plugins/{plugin_id}/uninstall")
+def plugin_uninstall(plugin_id: str):
+    try:
+        return plugin_service.uninstall_plugin(plugin_id)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except Exception as e:
+        raise _as_http(e, 502)
 
 
 # ---------- 静态前端 ----------

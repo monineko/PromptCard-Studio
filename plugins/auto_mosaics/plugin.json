@@ -1,0 +1,37 @@
+{
+  "id": "auto_mosaics",
+  "name": "自动打码",
+  "version": "0.1.0",
+  "description": "自动检测动漫图片敏感部位（欧金金 / 欧芒果 / 欧派派）并打码，作为发布处理页面的可选节点；检测模型在首次启用时下载（YOLOv8 + ONNX Runtime，约 42.5 MB）。",
+  "author": "PromptCard Studio",
+  "license": "GPL-3.0",
+  "node": {
+    "key": "mosaic",
+    "label": "自动打码",
+    "desc": "自动检测所选部位并打码（需先启用插件）",
+    "order": 2
+  },
+  "parts": [
+    { "value": "欧金金", "detect": "penis" },
+    { "value": "欧芒果", "detect": "pussy" },
+    { "value": "欧派派", "detect": "nipple_f" }
+  ],
+  "methods": [
+    { "value": "pixel", "label": "像素" },
+    { "value": "blur", "label": "模糊" },
+    { "value": "line", "label": "线条" },
+    { "value": "solid", "label": "纯色" }
+  ],
+  "model": {
+    "file": "censor_detect_v1.0_s/model.onnx",
+    "size": 44586353,
+    "sha256": "2c2524824d7d320c5619a0a73702a2e2186f619067c823d211e94f7cfe489cba",
+    "urls": [
+      "https://huggingface.co/deepghs/anime_censor_detection/resolve/main/censor_detect_v1.0_s/model.onnx",
+      "https://huggingface.co/Dxskss/anime_censor_detection/resolve/main/censor_detect_v1.0_s/model.onnx",
+      "https://huggingface.co/Library-Mutsumi/anime_censor_detection/resolve/main/censor_detect_v1.0_s/model.onnx",
+      "https://hf-mirror.com/deepghs/anime_censor_detection/resolve/main/censor_detect_v1.0_s/model.onnx"
+    ]
+  },
+  "python_dependencies": ["onnxruntime"]
+}

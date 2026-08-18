@@ -15,6 +15,7 @@ publish_runs/
 publish_staging/
 outputs/
 backend/app/engines/runtime/
+plugins/*/models/runtime/
 .trash/
 dictionary/custom.json
 

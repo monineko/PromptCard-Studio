@@ -1,7 +1,7 @@
 """M3 发布处理后端自测（可独立运行：python backend/tests/test_publish.py）。
 
 覆盖：PNG 元数据提取/抹除/回写、批量重命名、暂存区（添加/列表/删除/清空）、
-引擎清单识别与命令行构造、完整流水线（超分+恢复+重命名 / 仅抹除）、
+引擎清单识别与命令行构造、完整流水线（超分+恢复+重命名 / 仅抹除 / 自动打码）、
 节点约束校验、输出目录命名与保留、真实 HTTP 冒烟。
 使用临时目录与假引擎，不触碰真实用户数据、不联网。
 """
@@ -21,6 +21,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+from unittest import mock
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,8 +29,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app import config as app_config  # noqa: E402
 from app import library as lib  # noqa: E402
+from app import plugins as plugin_service  # noqa: E402
 from app import publish as pub  # noqa: E402
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 MOCK_ENGINE = Path(__file__).resolve().parent / "fixtures" / "mock_engine.py"
 
@@ -41,6 +43,14 @@ def make_png_with_meta() -> bytes:
     return pub._rebuild(
         chunks, insert_before_idat={b"tEXt": [b"Comment\x00{\"prompt\":\"1girl\",\"seed\":777}"]}
     )
+
+
+def fake_mosaic(input_path, out_path, params):
+    """测试用假打码：在左上角画一个红块并保存，模拟插件输出。"""
+    img = Image.open(input_path).convert("RGB")
+    ImageDraw.Draw(img).rectangle([0, 0, 5, 5], fill=(255, 0, 0))
+    img.save(out_path)
+    return {"path": str(out_path), "detected": 1, "skipped": False, "message": "已检测并打码 1 处"}
 
 
 def set_up_temp_environment(cls) -> Path:
@@ -57,6 +67,8 @@ def set_up_temp_environment(cls) -> Path:
     pub.STAGING_INDEX = pub.STAGING_DIR / "items.json"
     pub.OUTPUTS_DIR = tmp / "outputs"
     pub.PUBLISH_DIR = tmp / "runs"
+    # 插件目录重定向到临时目录，避免测试受真实插件安装状态影响
+    plugin_service.PLUGINS_DIR = tmp / "plugins"
     return tmp
 
 
@@ -321,6 +333,96 @@ class PipelineTest(unittest.TestCase):
             pub._validate_nodes({"upscale": True, "restore": True, "wipe": True, "rename": False})
         with self.assertRaises(ValueError):
             pub._validate_nodes({"upscale": False, "restore": False, "wipe": False, "rename": False})
+
+
+class MosaicNodeTest(unittest.TestCase):
+    """自动打码插件节点：启用校验、流水线顺序（超分→打码→恢复→抹除→重命名）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        set_up_temp_environment(cls)
+        pub._engine_binary = lambda: MOCK_ENGINE  # type: ignore[method-assign]
+        cls.staged = pub.stage_images(["Treasure/Treasure-2026-08-11/novelai_777.png"])
+
+    def _wait(self, run_id: str) -> dict:
+        for _ in range(100):
+            state = pub.run_status(run_id)
+            if state["status"] != "running":
+                return state
+            time.sleep(0.1)
+        self.fail("任务超时")
+
+    def test_mosaic_requires_enabled_plugin(self):
+        # 插件未启用时，勾选打码节点应报错（即便其他节点合法）
+        with self.assertRaises(ValueError):
+            pub._validate_nodes({"upscale": False, "wipe": False, "rename": False, "mosaic": True})
+
+    def test_mosaic_alone_with_rename(self):
+        with mock.patch.object(pub.plugin_service, "is_enabled", return_value=True), mock.patch.object(
+            pub, "_mosaic_process", side_effect=fake_mosaic
+        ):
+            res = pub.start_run(
+                ["novelai_777.png"],
+                {"upscale": False, "wipe": False, "rename": True, "mosaic": True},
+                {"parts": ["custom", "random"], "custom": "mos"},
+                {},
+                {"method": "pixel", "parts": ["欧金金"]},
+            )
+            state = self._wait(res["id"])
+        f = state["files"][0]
+        self.assertEqual(f["status"], "done")
+        self.assertIn("已检测并打码", f["message"])
+        out = Path(state["output_dir"]) / f["output"]
+        self.assertTrue(out.exists())
+        self.assertTrue(f["output"].startswith("mos_"))
+        # 打码确实改写了像素
+        original = Image.open(self.library / "Treasure" / "Treasure-2026-08-11" / "novelai_777.png").convert("RGB")
+        processed = Image.open(out).convert("RGB")
+        self.assertNotEqual(original.getpixel((0, 0)), processed.getpixel((0, 0)))
+        pub.delete_run(res["id"])
+
+    def test_mosaic_restore_rename_order(self):
+        # 超分 → 打码 → 恢复原数据：打码用 PIL 保存会抹掉元数据，恢复必须在其之后写回
+        with mock.patch.object(pub.plugin_service, "is_enabled", return_value=True), mock.patch.object(
+            pub, "_mosaic_process", side_effect=fake_mosaic
+        ):
+            res = pub.start_run(
+                ["novelai_777.png"],
+                {"upscale": True, "restore": True, "wipe": False, "rename": True, "mosaic": True},
+                {"parts": ["random"], "custom": ""},
+                {"model": "realesr-animevideov3", "scale": 4, "tile": 0, "gpu": 0, "format": "png", "tta": False},
+                {"method": "pixel"},
+            )
+            state = self._wait(res["id"])
+        f = state["files"][0]
+        self.assertEqual(f["status"], "done")
+        out = Path(state["output_dir"]) / f["output"]
+        types = [c.decode() for c, _, _ in pub._iter_chunks(out.read_bytes())]
+        self.assertIn("tEXt", types)  # 打码后恢复原数据仍生效
+        meta = pub.extract_png_metadata(out)
+        raw = base64.b64decode(meta["tEXt"][0])
+        self.assertIn(b'"1girl"', raw)
+        pub.delete_run(res["id"])
+
+    def test_mosaic_wipe(self):
+        # 打码 + 抹除：输出仍为 null 覆写，与不打码行为一致
+        with mock.patch.object(pub.plugin_service, "is_enabled", return_value=True), mock.patch.object(
+            pub, "_mosaic_process", side_effect=fake_mosaic
+        ):
+            res = pub.start_run(
+                ["novelai_777.png"],
+                {"upscale": False, "wipe": True, "rename": False, "mosaic": True},
+                {},
+                {},
+            )
+            state = self._wait(res["id"])
+        f = state["files"][0]
+        out = Path(state["output_dir"]) / f["output"]
+        meta = pub.extract_png_metadata(out)
+        raw = base64.b64decode(meta["tEXt"][0])
+        self.assertIn(b'"prompt": null', raw)
+        self.assertEqual(len(Path(f["output"]).stem), 8)  # 未重命名时中性名
+        pub.delete_run(res["id"])
 
 
 class PublishHttpSmokeTest(unittest.TestCase):

@@ -404,6 +404,24 @@ export type PublishNodes = {
   restore: boolean;
   wipe: boolean;
   rename: boolean;
+  mosaic: boolean;
+};
+
+export type PublishPlugin = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  license: string;
+  node: { key: keyof PublishNodes; label: string; desc: string; order: number };
+  parts: { value: string; detect: string }[];
+  methods: { value: string; label: string }[];
+  model_size: number;
+  enabled: boolean;
+  installing: boolean;
+  progress: number;
+  message: string;
+  installed_at: string;
 };
 
 export type PublishRunFile = {

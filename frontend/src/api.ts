@@ -11,6 +11,7 @@ import type {
   MoveImagesResult,
   PngInfoResult,
   PublishEngineStatus,
+  PublishPlugin,
   PublishNodes,
   PublishStagedItem,
   PublishRunStatus,
@@ -247,6 +248,7 @@ export const api = {
     nodes: PublishNodes;
     rename: { parts: string[]; custom?: string; random_length?: number };
     engine_params: Record<string, string | number | boolean>;
+    mosaic_params: Record<string, string | number | boolean | string[]>;
   }) =>
     request<{ id: string; total: number }>("/api/publish/run", {
       method: "POST",
@@ -273,6 +275,13 @@ export const api = {
     }),
   publishStagingClear: () =>
     request<{ ok: boolean; removed: number }>("/api/publish/staging/clear", { method: "POST" }),
+  plugins: () => request<{ plugins: PublishPlugin[] }>("/api/plugins"),
+  pluginInstall: (id: string) =>
+    request<{ ok: boolean; installing: boolean; message: string }>(`/api/plugins/${id}/install`, {
+      method: "POST",
+    }),
+  pluginUninstall: (id: string) =>
+    request<{ ok: boolean; removed: boolean }>(`/api/plugins/${id}/uninstall`, { method: "POST" }),
 };
 
 export function uid(): string {

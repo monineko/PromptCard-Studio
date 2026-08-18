@@ -7,6 +7,7 @@ import {
   Images,
   Loader2,
   Plus,
+  Puzzle,
   RefreshCw,
   Save,
   Sparkles,
@@ -17,20 +18,55 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useStore } from "../store";
+import { ConfirmDialog } from "../components/UI";
 import type {
   PublishEngineParam,
   PublishEngineStatus,
   PublishNodes,
+  PublishPlugin,
   PublishRunStatus,
   PublishStagedItem,
 } from "../types";
 
-const NODE_ORDER: { key: keyof PublishNodes; label: string; desc: string }[] = [
+const BASE_NODES: { key: keyof PublishNodes; label: string; desc: string }[] = [
   { key: "upscale", label: "超分降噪", desc: "引擎输出会抹掉 PNG 元数据，图片文件名不变" },
   { key: "restore", label: "恢复原数据", desc: "超分前提取 PNG 元数据，超分后写回（需勾选超分）" },
   { key: "wipe", label: "数据抹除", desc: "清除 PNG 内部元数据与文件名里的信息（与恢复互斥）" },
   { key: "rename", label: "批量重命名", desc: "最后执行，按下方规则生成最终文件名" },
 ];
+
+const NUMERIC_MOSAIC_KEYS = [
+  "pixel_size",
+  "blur_radius",
+  "line_width_min",
+  "line_width_max",
+  "line_spacing_min",
+  "line_spacing_max",
+] as const;
+type NumericMosaicKey = (typeof NUMERIC_MOSAIC_KEYS)[number];
+type MosaicParams = {
+  parts: string[];
+  method: string;
+  pixel_size: number;
+  blur_radius: number;
+  line_width_min: number;
+  line_width_max: number;
+  line_spacing_min: number;
+  line_spacing_max: number;
+  color: string;
+};
+
+const DEFAULT_MOSAIC_PARAMS: MosaicParams = {
+  parts: ["欧金金", "欧芒果", "欧派派"],
+  method: "pixel",
+  pixel_size: 15,
+  blur_radius: 12,
+  line_width_min: 3,
+  line_width_max: 10,
+  line_spacing_min: 10,
+  line_spacing_max: 15,
+  color: "#808080",
+};
 
 const PART_META: { key: string; label: string; desc: string }[] = [
   { key: "date", label: "日期", desc: "YYYYMMDD" },
@@ -57,11 +93,35 @@ function paramValue(p: PublishEngineParam, params: Record<string, string | numbe
   return params[p.key] ?? p.default ?? (p.type === "bool" ? false : "");
 }
 
+function mosaicNumberField(
+  params: MosaicParams,
+  setParams: (updater: (prev: MosaicParams) => MosaicParams) => void,
+  key: NumericMosaicKey,
+  label: string,
+  min: number,
+  max: number
+) {
+  return (
+    <div key={key} className="flex items-center gap-2">
+      <label className="w-36 shrink-0 text-xs text-[var(--muted)]">{label}</label>
+      <input
+        type="number"
+        value={Number(params[key])}
+        min={min}
+        max={max}
+        onChange={(e) => setParams((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
+        className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)]/60 px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]"
+      />
+    </div>
+  );
+}
+
 export function Publish() {
   const navigate = useNavigate();
   const addToast = useStore((s) => s.addToast);
   const [staged, setStaged] = useState<PublishStagedItem[]>([]);
   const [stagingLoading, setStagingLoading] = useState(true);
+  const [plugins, setPlugins] = useState<PublishPlugin[]>([]);
   const [engine, setEngine] = useState<PublishEngineStatus | null>(null);
   const [engineError, setEngineError] = useState("");
   const [nodes, setNodes] = useState<PublishNodes>({
@@ -69,6 +129,7 @@ export function Publish() {
     restore: false,
     wipe: false,
     rename: false,
+    mosaic: false,
   });
   const [params, setParams] = useState<Record<string, string | number | boolean>>({});
   const [parts, setParts] = useState<string[]>([...DEFAULT_RENAME.parts]);
@@ -76,11 +137,15 @@ export function Publish() {
   const [customPath, setCustomPath] = useState("");
   const [savingPath, setSavingPath] = useState(false);
   const [savingParams, setSavingParams] = useState(false);
+  const [mosaicParams, setMosaicParams] = useState<MosaicParams>({ ...DEFAULT_MOSAIC_PARAMS });
+  const [confirmPluginInstall, setConfirmPluginInstall] = useState(false);
+  const [confirmPluginUninstall, setConfirmPluginUninstall] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [run, setRun] = useState<PublishRunStatus | null>(null);
   const [starting, setStarting] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const wasInstallingRef = useRef(false);
+  const wasPluginInstallingRef = useRef(false);
 
   const refreshStaging = useCallback(async () => {
     try {
@@ -110,10 +175,61 @@ export function Publish() {
     }
   }, []);
 
+  const refreshPlugins = useCallback(async () => {
+    try {
+      const res = await api.plugins();
+      setPlugins(res.plugins);
+    } catch (e) {
+      addToast(`插件列表加载失败: ${(e as Error).message}`, "err");
+    }
+  }, [addToast]);
+
   useEffect(() => {
     void refreshStaging();
     void refreshEngine();
-  }, [refreshStaging, refreshEngine]);
+    void refreshPlugins();
+  }, [refreshStaging, refreshEngine, refreshPlugins]);
+
+  const mosaicPlugin = plugins.find((p) => p.node?.key === "mosaic");
+  const anyPluginInstalling = plugins.some((p) => p.installing);
+
+  // 插件下载中：轮询进度；完成后提示
+  useEffect(() => {
+    if (anyPluginInstalling) wasPluginInstallingRef.current = true;
+    if (wasPluginInstallingRef.current && !anyPluginInstalling && plugins.length > 0) {
+      wasPluginInstallingRef.current = false;
+      if (mosaicPlugin?.enabled) addToast("自动打码插件已启用");
+      else addToast(mosaicPlugin?.message || "自动打码插件安装失败", "err");
+    }
+  }, [anyPluginInstalling, plugins, mosaicPlugin, addToast]);
+
+  useEffect(() => {
+    if (!anyPluginInstalling) return;
+    const timer = window.setInterval(() => void refreshPlugins(), 1000);
+    return () => window.clearInterval(timer);
+  }, [anyPluginInstalling, refreshPlugins]);
+
+  const installPlugin = async () => {
+    setConfirmPluginInstall(false);
+    try {
+      await api.pluginInstall("auto_mosaics");
+      await refreshPlugins();
+    } catch (e) {
+      addToast(`插件安装失败: ${(e as Error).message}`, "err");
+    }
+  };
+
+  const uninstallPlugin = async () => {
+    setConfirmPluginUninstall(false);
+    try {
+      await api.pluginUninstall("auto_mosaics");
+      addToast("自动打码插件已卸载");
+      setNodes((prev) => ({ ...prev, mosaic: false }));
+      await refreshPlugins();
+    } catch (e) {
+      addToast(`卸载失败: ${(e as Error).message}`, "err");
+    }
+  };
 
   // 引擎下载中：轮询进度
   useEffect(() => {
@@ -160,6 +276,30 @@ export function Publish() {
   const togglePart = (key: string) => {
     setParts((prev) => (prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]));
   };
+
+  const toggleMosaicPart = (value: string) => {
+    setMosaicParams((prev) => {
+      if (prev.parts.includes(value) && prev.parts.length === 1) return prev; // 至少保留一个部位
+      return {
+        ...prev,
+        parts: prev.parts.includes(value) ? prev.parts.filter((p) => p !== value) : [...prev.parts, value],
+      };
+    });
+  };
+
+  const nodeOrder = useMemo(() => {
+    const list = BASE_NODES.map((n, i) => ({ ...n, order: i }));
+    if (mosaicPlugin?.enabled && mosaicPlugin.node) {
+      const order = Math.min(Math.max(mosaicPlugin.node.order ?? 2, 0), list.length);
+      list.splice(order, 0, {
+        key: mosaicPlugin.node.key,
+        label: mosaicPlugin.node.label,
+        desc: mosaicPlugin.node.desc,
+        order,
+      });
+    }
+    return list;
+  }, [mosaicPlugin]);
 
   const reorderPart = (from: number, to: number) => {
     if (from === to) return;
@@ -235,8 +375,9 @@ export function Publish() {
     !running &&
     !starting &&
     staged.length > 0 &&
-    (nodes.upscale || nodes.wipe || nodes.rename) &&
-    (!nodes.upscale || engine?.installed);
+    (nodes.upscale || nodes.wipe || nodes.rename || nodes.mosaic) &&
+    (!nodes.upscale || engine?.installed) &&
+    (!nodes.mosaic || mosaicPlugin?.enabled);
 
   const startRun = async () => {
     if (!canStart) return;
@@ -247,6 +388,7 @@ export function Publish() {
         nodes,
         rename: { parts, custom: custom.trim() },
         engine_params: params,
+        mosaic_params: mosaicParams,
       });
       setRunId(res.id);
       const st = await api.publishRunStatus(res.id);
@@ -367,11 +509,63 @@ export function Publish() {
         )}
       </div>
 
+      {/* 可选插件 */}
+      <div className="mb-4 rounded-xl border border-[var(--border)] p-3">
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+          <Puzzle size={15} style={{ color: "var(--accent)" }} />
+          可选插件
+          <span className="rounded-full bg-[var(--hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)]">
+            自动打码
+          </span>
+        </div>
+        {mosaicPlugin?.enabled ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-semibold text-emerald-400">已启用</span>
+            <span className="min-w-0 flex-1 text-[var(--muted)]">
+              自动打码插件已就绪，勾选下方「自动打码」节点即可使用；模型仅保存在本地。
+            </span>
+            <button
+              onClick={() => setConfirmPluginUninstall(true)}
+              className="shrink-0 rounded bg-[var(--hover)] px-2 py-1 text-[11px] transition-colors hover:text-red-400"
+            >
+              卸载插件
+            </button>
+          </div>
+        ) : mosaicPlugin?.installing ? (
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-xs text-[var(--muted)]">
+              <Loader2 size={13} className="animate-spin" />
+              {mosaicPlugin.message || "正在下载检测模型…"}
+              <span>{Math.round(mosaicPlugin.progress * 100)}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--hover)]">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${Math.max(3, mosaicPlugin.progress * 100)}%`, background: "var(--accent)" }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 text-xs leading-relaxed text-[var(--muted)]">
+              自动检测敏感部位（欧金金 / 欧芒果 / 欧派派）并打码。检测模型约{" "}
+              {((mosaicPlugin?.model_size ?? 0) / 1024 / 1024).toFixed(1)} MB，仅在确认启用时下载一次。
+            </span>
+            <button
+              onClick={() => setConfirmPluginInstall(true)}
+              className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-85"
+            >
+              <Download size={13} /> 下载并启用
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 节点工作流 */}
       <div className="mb-4 rounded-xl border border-[var(--border)] p-3">
         <div className="mb-2 text-sm font-semibold">处理节点（可勾选，顺序固定）</div>
         <div className="space-y-2">
-          {NODE_ORDER.map((node, i) => {
+          {nodeOrder.map((node, i) => {
             const disabledRestore = node.key === "restore" && (!nodes.upscale || nodes.wipe);
             const checked = nodes[node.key];
             return (
@@ -398,7 +592,7 @@ export function Publish() {
                     <span className="block text-[11px] leading-relaxed text-[var(--muted)]">{node.desc}</span>
                   </span>
                 </button>
-                {i < NODE_ORDER.length - 1 && (
+                {i < nodeOrder.length - 1 && (
                   <div className="flex justify-center py-0.5 text-[var(--muted)]">
                     <ArrowRight size={13} className="rotate-90" />
                   </div>
@@ -571,6 +765,74 @@ export function Publish() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 自动打码参数 */}
+      {nodes.mosaic && mosaicPlugin?.enabled && (
+        <div className="mb-4 space-y-3 rounded-xl border border-[var(--border)] p-3">
+          <div className="text-sm font-semibold">自动打码参数</div>
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-[var(--muted)]">处理部位</div>
+            <div className="flex flex-wrap gap-2">
+              {mosaicPlugin.parts.map((part) => {
+                const checked = mosaicParams.parts.includes(part.value);
+                return (
+                  <button
+                    key={part.value}
+                    onClick={() => toggleMosaicPart(part.value)}
+                    className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                      checked
+                        ? "border-[var(--accent)] bg-[var(--accent)]/10 font-semibold text-[var(--accent)]"
+                        : "border-[var(--border)] bg-[var(--hover)]/50 text-[var(--muted)] hover:text-[var(--fg)]"
+                    }`}
+                  >
+                    {part.value}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-36 shrink-0 text-xs text-[var(--muted)]">打码方式</label>
+            <select
+              value={mosaicParams.method}
+              onChange={(e) => setMosaicParams((prev) => ({ ...prev, method: e.target.value }))}
+              className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)]/60 px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]"
+            >
+              {mosaicPlugin.methods.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {mosaicParams.method === "pixel" &&
+            mosaicNumberField(mosaicParams, setMosaicParams, "pixel_size", "像素大小", 1, 100)}
+          {mosaicParams.method === "blur" &&
+            mosaicNumberField(mosaicParams, setMosaicParams, "blur_radius", "模糊半径", 1, 100)}
+          {mosaicParams.method === "line" && (
+            <>
+              {mosaicNumberField(mosaicParams, setMosaicParams, "line_width_min", "最小线条宽度", 1, 20)}
+              {mosaicNumberField(mosaicParams, setMosaicParams, "line_width_max", "最大线条宽度", 2, 20)}
+              {mosaicNumberField(mosaicParams, setMosaicParams, "line_spacing_min", "最小线条间距", 1, 30)}
+              {mosaicNumberField(mosaicParams, setMosaicParams, "line_spacing_max", "最大线条间距", 2, 30)}
+            </>
+          )}
+          {mosaicParams.method === "solid" && (
+            <div className="flex items-center gap-2">
+              <label className="w-36 shrink-0 text-xs text-[var(--muted)]">填充颜色</label>
+              <input
+                type="color"
+                value={mosaicParams.color}
+                onChange={(e) => setMosaicParams((prev) => ({ ...prev, color: e.target.value }))}
+                className="h-8 w-14 cursor-pointer rounded-lg border border-[var(--border)] bg-transparent"
+              />
+            </div>
+          )}
+          <p className="text-[11px] leading-relaxed text-[var(--muted)]">
+            未检测到所选部位的图片会自动跳过打码，不影响整批处理。
+          </p>
         </div>
       )}
 
@@ -751,6 +1013,22 @@ export function Publish() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmPluginInstall}
+        title="启用自动打码插件"
+        message={`将下载检测模型（约 ${((mosaicPlugin?.model_size ?? 0) / 1024 / 1024).toFixed(1)} MB，YOLOv8 ONNX，MIT 许可）并加入发布处理节点，是否继续？`}
+        onConfirm={installPlugin}
+        onCancel={() => setConfirmPluginInstall(false)}
+      />
+      <ConfirmDialog
+        open={confirmPluginUninstall}
+        title="卸载自动打码插件"
+        message="将删除已下载的检测模型并移除「自动打码」节点，插件代码仍保留在项目中，可随时重新启用。"
+        onConfirm={uninstallPlugin}
+        onCancel={() => setConfirmPluginUninstall(false)}
+        danger
+      />
     </div>
   );
 }

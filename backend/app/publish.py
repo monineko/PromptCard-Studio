@@ -9,9 +9,10 @@
 4. 完成后可「打开输出文件」直接查看本次输出的文件夹。
 
 节点与固定顺序（设计推理见 docs/ROADMAP.md §M3）：
-    超分降噪 → 恢复原数据 → 数据抹除 → 批量重命名
+    超分降噪 → 自动打码（可选插件）→ 恢复原数据 → 数据抹除 → 批量重命名
 - 超分：引擎输出抹掉 PNG 元数据，文件名不变。
-- 恢复原数据：仅勾选超分后可用，超分前提取 PNG 元数据、超分后写回；与抹除互斥。
+- 自动打码：可选插件节点，未启用插件时不可勾选；检测不到目标部位时自动跳过该图。
+- 恢复原数据：仅勾选超分后可用，在超分/打码等像素级处理前提取 PNG 元数据、处理后写回；与抹除互斥。
 - 数据抹除：清除 PNG 内部元数据；未勾选重命名时文件名改为随机中性名（隐藏名字里的提示词）。
 - 批量重命名：最后执行；日期（可选）_ 自定义段（可选）_ 随机数字段（6 位），三部分可拖动换序。
 
@@ -39,6 +40,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .config import PROJECT_ROOT, load_settings, save_settings
+from . import plugins as plugin_service
 
 PUBLISH_DIR = PROJECT_ROOT / "publish_runs"        # 运行内部暂存（input/meta/.tmp），可清理
 STAGING_DIR = PROJECT_ROOT / "publish_staging"     # 用户发布暂存区（与图库隔离）
@@ -884,16 +886,25 @@ def _validate_nodes(nodes: dict) -> dict:
     restore = bool(nodes.get("restore"))
     wipe = bool(nodes.get("wipe"))
     rename = bool(nodes.get("rename"))
-    if not (upscale or wipe or rename):
+    mosaic = bool(nodes.get("mosaic"))
+    if not (upscale or wipe or rename or mosaic):
         raise ValueError("请至少勾选一个处理节点")
     if restore and not upscale:
         raise ValueError("恢复原数据只能在勾选超分降噪后使用（恢复的是超分抹掉的数据）")
     if restore and wipe:
         raise ValueError("恢复原数据与数据抹除互斥，请只保留一个")
-    return {"upscale": upscale, "restore": restore, "wipe": wipe, "rename": rename}
+    if mosaic and not plugin_service.is_enabled("auto_mosaics"):
+        raise ValueError("自动打码插件未启用：请先在发布页面下载并启用插件")
+    return {"upscale": upscale, "restore": restore, "wipe": wipe, "rename": rename, "mosaic": mosaic}
 
 
-def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params: dict) -> dict:
+def start_run(
+    staged_names: list[str],
+    nodes: dict,
+    rename: dict,
+    engine_params: dict,
+    mosaic_params: dict | None = None,
+) -> dict:
     global _active_run_id
     with _lock:
         if _active_run_id is not None:
@@ -946,6 +957,7 @@ def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params:
         "nodes": nodes,
         "rename": rename,
         "engine_params": engine_params or {},
+        "mosaic_params": mosaic_params or {},
         "files": files,
         "output_dir": str(out_dir),
         "total": len(files),
@@ -960,6 +972,11 @@ def start_run(staged_names: list[str], nodes: dict, rename: dict, engine_params:
     return {"id": run_id, "total": len(files), "output_dir": str(out_dir)}
 
 
+def _mosaic_process(input_path, out_path, params: dict) -> dict:
+    """自动打码节点：调用自动打码插件处理单张图片（测试可替换此函数）。"""
+    return plugin_service.process_file("auto_mosaics", input_path, out_path, params)
+
+
 def _run_worker(run_id: str) -> None:
     global _active_run_id
     try:
@@ -972,6 +989,7 @@ def _run_worker(run_id: str) -> None:
         nodes = state["nodes"]
         rename = state["rename"]
         engine_params = {**(state.get("engine_params") or {})}
+        mosaic_params = {**(state.get("mosaic_params") or {})}
         today = date.today()
         binary = _engine_binary()
 
@@ -983,6 +1001,17 @@ def _run_worker(run_id: str) -> None:
                 ext = staged.suffix.lower()
                 current = staged
 
+                # 0) 恢复原数据需要的最早元数据：在一切像素级处理前提取
+                #    （超分、打码都会抹掉 PNG 元数据，写回放在打码之后）
+                meta = None
+                if nodes["restore"] and nodes["upscale"]:
+                    meta = extract_png_metadata(staged)
+                    if meta:
+                        sidecar = meta_dir / f"{index}.json"
+                        sidecar.write_text(
+                            json.dumps({"chunks": meta}, ensure_ascii=False), encoding="utf-8"
+                        )
+
                 # 1) 超分降噪（输出抹掉元数据，文件名不变）
                 if nodes["upscale"]:
                     params = dict(engine_params)
@@ -991,17 +1020,22 @@ def _run_worker(run_id: str) -> None:
                     out_ext = ".png" if params.get("format", "png") == "png" else "." + str(params.get("format") or "png")
                     out_tmp = tmp_dir / f"{index}_upscale{out_ext}"
                     _run_engine(binary, params, current, out_tmp)
-                    if nodes["restore"] and out_tmp.suffix.lower() == ".png":
-                        meta = extract_png_metadata(current)
-                        if meta:
-                            sidecar = meta_dir / f"{index}.json"
-                            sidecar.write_text(
-                                json.dumps({"chunks": meta}, ensure_ascii=False), encoding="utf-8"
-                            )
-                            apply_png_metadata(out_tmp, meta)
                     current = out_tmp
 
-                # 2) 数据抹除（PNG 内部元数据 + 未重命名时的文件名）
+                # 2) 自动打码（可选插件；未检测到目标部位时跳过，不中断整批）
+                if nodes["mosaic"]:
+                    out_ext = current.suffix.lower() or ".png"
+                    out_tmp = tmp_dir / f"{index}_mosaic{out_ext}"
+                    mosaic_result = _mosaic_process(current, out_tmp, mosaic_params)
+                    if mosaic_result.get("path"):
+                        current = Path(mosaic_result["path"])
+                    f["message"] = mosaic_result.get("message", "")
+
+                # 3) 恢复原数据写回（放在超分/打码之后、抹除之前）
+                if nodes["restore"] and meta and current.suffix.lower() == ".png":
+                    apply_png_metadata(current, meta)
+
+                # 4) 数据抹除（PNG 内部元数据 + 未重命名时的文件名）
                 final_name = current.name
                 if nodes["wipe"]:
                     _ensure_detached(current)  # 断开与图库/暂存区的硬链接再原地改写
@@ -1021,7 +1055,7 @@ def _run_worker(run_id: str) -> None:
                     if not nodes["rename"]:
                         final_name = uuid.uuid4().hex[:8] + current.suffix.lower()
 
-                # 3) 批量重命名（最后执行，保证最终名字）
+                # 5) 批量重命名（最后执行，保证最终名字）
                 if nodes["rename"]:
                     digits = _random_digits((rename or {}).get("random_length"))
                     stem = build_rename_name(rename, today, digits)
