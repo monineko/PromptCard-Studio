@@ -28,3 +28,13 @@
 - ONNX Runtime（MIT）：https://github.com/microsoft/onnxruntime
 - YOLOv8 / ultralytics（AGPL-3.0，仅用于导出模型）：https://github.com/ultralytics/ultralytics
 - 打码算法参考 Auto-NovelAI-Refactor 的 `anr_plugin_auto_mosaics` 插件（GPL-3.0）：https://github.com/zhulinyv/Auto-NovelAI-Refactor
+
+## 常见问题
+
+- **提示「依赖 onnxruntime 安装失败 / No matching distribution found」**：
+  1. 先确认运行环境是标准版 Python——free-threading（无 GIL，如 python3.13t）构建没有
+     onnxruntime 的预编译 wheel。删除项目根目录的 `.venv` 后重新运行 `run.bat` / `run.sh`，
+     启动脚本会自动用标准版 Python 重建运行环境；
+  2. 若网络需要代理（如 Clash），请保持代理开启；插件安装时会自动继承系统代理，
+     并依次尝试官方源与国内镜像源；
+  3. 仍失败时可按提示手动执行 pip 安装命令后重启应用。

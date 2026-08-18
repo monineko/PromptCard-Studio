@@ -6,27 +6,33 @@
 set -u
 cd "$(dirname "$0")"
 
-# 1. locate Python
+# 1. locate Python (standard CPython 3.10+ only; free-threading/no-GIL builds unsupported)
 PY=""
-if command -v python3 >/dev/null 2>&1; then
-  PY="python3"
-elif command -v python >/dev/null 2>&1; then
-  PY="python"
-else
-  echo "[ERROR] Python was not found."
-  echo "Please install Python 3.10 or newer from https://www.python.org/downloads/"
+for CAND in python3 python; do
+  if command -v "$CAND" >/dev/null 2>&1; then
+    if "$CAND" -c 'import sys, sysconfig; raise SystemExit(0 if sys.version_info >= (3, 10) and sysconfig.get_config_var("Py_GIL_DISABLED") != 1 else 1)' >/dev/null 2>&1; then
+      PY="$CAND"
+      break
+    fi
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "[ERROR] Python 3.10 or newer (standard CPython) was not found."
+  echo "Free-threading / no-GIL experimental builds are not supported yet."
+  echo "Please install the standard build from https://www.python.org/downloads/"
   exit 1
 fi
 
-# 2. check Python version
-if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
-  echo "[ERROR] Python 3.10 or newer is required."
-  exit 1
-fi
-
-# 3. create virtual environment
+# 2. create / repair virtual environment
 VPY=".venv/bin/python"
-if [ ! -f .venv/pyvenv.cfg ]; then
+if [ ! -f "$VPY" ]; then
+  CREATE_VENV=1
+elif ! "$VPY" -c 'import sys, sysconfig; raise SystemExit(0 if sys.version_info >= (3, 10) and sysconfig.get_config_var("Py_GIL_DISABLED") != 1 else 1)' >/dev/null 2>&1; then
+  CREATE_VENV=1
+else
+  CREATE_VENV=0
+fi
+if [ "$CREATE_VENV" = "1" ]; then
   if [ -d .venv ]; then
     rm -rf .venv || { echo "[ERROR] Cannot remove the broken .venv folder. Close programs using it and retry."; exit 1; }
   fi

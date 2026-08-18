@@ -33,7 +33,7 @@
 
 ## 快速开始
 
-1. 安装 Python 3.10 或更高版本（https://www.python.org/downloads/ ，安装时勾选 Add Python to PATH）。
+1. 安装 Python 3.10 或更高版本（https://www.python.org/downloads/ ，安装时勾选 Add Python to PATH；请使用标准版 CPython，暂不支持 free-threading / 无 GIL 实验性构建）。
 2. 下载并解压本项目。
 3. 双击 **run.bat**（Windows）或运行 **run.sh**（macOS / Linux）：首次会自动创建运行环境并安装依赖，然后启动服务并打开浏览器；以后每次也用它。
 4. 停止服务：应用内「设置 → 关闭本地服务」。
@@ -46,6 +46,7 @@
 
 - 首次运行需要联网安装依赖；前端构建产物已随包提供，无需安装 Node.js。
 - 端口 14419 被占用时会自动更换端口，无需手动设置；
+- 若检测到 free-threading（无 GIL）版 Python，启动脚本会自动重建为标准版运行环境；
 - 使用 NovelAI 生图前，请先在「设置」中填入你的 NovelAI Token（仅保存在本机）。
 - 若不想看到后端命令行窗口，可在「设置 → 常规设置」勾选「隐藏后端面板」，下次启动自动隐藏。
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -139,6 +140,9 @@ def _download_model(plugin_id: str, manifest: dict) -> Path:
     runtime_dir = _runtime_dir(plugin_id)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     target = runtime_dir / file
+    # 已下载且校验通过则直接复用（重试/断点续装不重复下载）
+    if target.is_file() and (not expected or _sha256(target) == expected):
+        return target
     partial = runtime_dir / (Path(file).name + ".part")
 
     last_error = ""
@@ -174,19 +178,56 @@ def _download_model(plugin_id: str, manifest: dict) -> Path:
 def _ensure_python_dependency(name: str) -> None:
     """依赖缺失时用当前解释器安装（纯 wheel，不编译源码）。"""
     import importlib.util
+    import sysconfig
 
     if importlib.util.find_spec(name) is not None:
         return
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        raise RuntimeError(
+            f"当前 Python 是 free-threading（无 GIL）实验性构建，{name} 暂不支持。"
+            "请用标准版 Python 重建运行环境后重试（删除 .venv 后重新运行 run.bat / run.sh）"
+        )
     _install_state["message"] = f"正在安装依赖 {name}（仅首次需要）"
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", name, "--only-binary", ":all:", "--disable-pip-version-check"],
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    if result.returncode != 0 or importlib.util.find_spec(name) is None:
+    # pip 不读 Windows 系统代理（仅认环境变量），这里把系统代理传给 pip 子进程
+    env = dict(os.environ)
+    proxies = urllib.request.getproxies()
+    if proxies.get("http") and not env.get("HTTP_PROXY"):
+        env["HTTP_PROXY"] = proxies["http"]
+    if proxies.get("https") and not env.get("HTTPS_PROXY"):
+        env["HTTPS_PROXY"] = proxies["https"]
+    if proxies.get("no"):
+        env.setdefault("NO_PROXY", proxies["no"])
+    # 依次尝试官方源与国内镜像源
+    indexes = [None, "https://pypi.tuna.tsinghua.edu.cn/simple", "https://mirrors.aliyun.com/pypi/simple/"]
+    errors = []
+    for index in indexes:
+        cmd = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            name,
+            "--only-binary",
+            ":all:",
+            "--disable-pip-version-check",
+            "--timeout",
+            "60",
+        ]
+        if index:
+            cmd += ["--index-url", index]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=900, env=env)
+        except subprocess.TimeoutExpired:
+            errors.append("安装超时")
+            continue
+        if result.returncode == 0 and importlib.util.find_spec(name) is not None:
+            return
         tail = (result.stderr or result.stdout or "").strip().splitlines()[-3:]
-        raise RuntimeError(f"依赖 {name} 安装失败：{' / '.join(tail) or '未知错误'}")
+        errors.append(" / ".join(tail) or f"退出码 {result.returncode}")
+    raise RuntimeError(
+        f"依赖 {name} 安装失败（已尝试官方源与国内镜像）：{' | '.join(errors)}；"
+        f"请检查网络/代理后重试，或手动执行 `{sys.executable} -m pip install {name} --only-binary :all:` 后重启应用"
+    )
 
 
 # ---------- 安装 / 卸载 ----------
