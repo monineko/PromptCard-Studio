@@ -502,7 +502,7 @@ def _engine_binary() -> Path | None:
     except Exception:
         return None
     binary = Path(str(info.get("binary") or "")).expanduser()
-    if binary.exists():
+    if binary.is_file():
         return binary
     # 标记里的路径可能因目录调整失效：在引擎目录内按二进制名搜索兜底
     binary_name = info.get("binary_name") or (manifest.get("install") or {}).get("binary") or ""
