@@ -221,6 +221,19 @@ export const api = {
       body: fd,
     });
   },
+  migrateUserData: (files: File[], paths: string[]) => {
+    const fd = new FormData();
+    files.forEach((file) => fd.append("files", file));
+    fd.append("paths", JSON.stringify(paths));
+    return request<{
+      copied: number;
+      overwritten: number;
+      skipped: number;
+      ignored: number;
+      errors: string[];
+      backup: string | null;
+    }>("/api/migration/user-data", { method: "POST", body: fd });
+  },
   systemShutdown: () =>
     request<{ ok: boolean; message: string }>("/api/system/shutdown", { method: "POST" }),
   publishEngine: () => request<PublishEngineStatus>("/api/publish/engine"),
