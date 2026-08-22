@@ -1,6 +1,9 @@
 import os
 import re
+import subprocess
+import sys
 import threading
+import time
 from datetime import date
 from pathlib import Path
 
@@ -86,12 +89,42 @@ def _shutdown_now() -> None:
     os._exit(0)
 
 
+def _restart_now(port: int) -> None:
+    """等待旧服务释放端口后，用当前 Python 环境重新启动项目。"""
+    time.sleep(1.2)
+    popen_kwargs = {"cwd": str(PROJECT_ROOT)}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.DETACHED_PROCESS
+    else:
+        popen_kwargs["start_new_session"] = True
+    subprocess.Popen(
+        [sys.executable, str(PROJECT_ROOT / "start.py"), "--no-browser", "--port", str(port)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        **popen_kwargs,
+    )
+    os._exit(0)
+
+
 @app.post("/api/system/shutdown")
 def system_shutdown(request: Request):
     if not _is_local_origin(request.headers):
         raise HTTPException(403, "拒绝来自外部来源的关闭请求")
     threading.Timer(0.5, _shutdown_now).start()
     return {"ok": True, "message": "本地服务正在关闭，可关闭本页面；再次使用时重新运行启动脚本"}
+
+
+@app.post("/api/system/restart")
+def system_restart(request: Request):
+    if not _is_local_origin(request.headers):
+        raise HTTPException(403, "拒绝来自外部来源的重启请求")
+    port = request.url.port
+    if not port:
+        raise HTTPException(400, "无法确定当前服务端口")
+    threading.Thread(target=_restart_now, args=(port,), daemon=True).start()
+    return {"ok": True, "message": "本地服务正在快速重启"}
 
 
 @app.get("/api/health")
