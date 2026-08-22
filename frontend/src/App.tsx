@@ -75,6 +75,16 @@ function Shell() {
     if (location.pathname !== "/library") setSidebarOpen(false);
   }, [location.pathname, setSidebarOpen]);
 
+  // 从图库选择演示图返回时，恢复到首页的 Prompt 卡包区域。
+  // HashRouter 不会自动处理 SPA 路由切换后的窗口滚动位置。
+  useEffect(() => {
+    if (location.pathname !== "/" || location.state?.scrollTarget !== "prompt-cards") return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("prompt-cards")?.scrollIntoView({ behavior: "auto", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.key, location.pathname, location.state]);
+
   return (
     <>
       <Shortcuts />
