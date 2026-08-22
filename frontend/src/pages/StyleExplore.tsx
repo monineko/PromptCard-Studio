@@ -2,9 +2,11 @@ import { CircleHelp, Compass, FileUp, FolderPlus, Pause, Play, RefreshCw, Rotate
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { Modal } from "../components/UI";
+import { StyleExploreParamsPanel } from "../components/StyleExploreParamsPanel";
 import { serializeSections } from "../lib";
 import { useStore } from "../store";
 import { useGenerateStore } from "../store/generate";
+import { useStyleExploreDraft } from "../store/styleExploreDraft";
 import type { Section, StyleExplorePool, StyleExplorePoolSummary, StyleExploreRun, StyleExploreRunSummary } from "../types";
 
 const inputClass = "w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
@@ -107,8 +109,14 @@ export function StyleExplore() {
   const addToast = useStore((s) => s.addToast);
   const workspacePositive = useStore((s) => s.positive);
   const workspaceNegative = useStore((s) => s.negative);
-  const params = useGenerateStore((s) => s.params);
-  const vibes = useGenerateStore((s) => s.vibes);
+  const workspaceParams = useGenerateStore((s) => s.params);
+  const workspaceVibes = useGenerateStore((s) => s.vibes);
+  const positive = useStyleExploreDraft((s) => s.positive);
+  const negative = useStyleExploreDraft((s) => s.negative);
+  const params = useStyleExploreDraft((s) => s.params);
+  const vibes = useStyleExploreDraft((s) => s.vibes);
+  const setPrompts = useStyleExploreDraft((s) => s.setPrompts);
+  const importWorkspaceSnapshot = useStyleExploreDraft((s) => s.importWorkspaceSnapshot);
   const fileRef = useRef<HTMLInputElement>(null);
   const [pools, setPools] = useState<StyleExplorePoolSummary[]>([]);
   const [runs, setRuns] = useState<StyleExploreRunSummary[]>([]);
@@ -118,8 +126,6 @@ export function StyleExplore() {
   const [poolText, setPoolText] = useState("");
   const [newPoolName, setNewPoolName] = useState("");
   const [newPoolText, setNewPoolText] = useState("");
-  const [positive, setPositive] = useState("");
-  const [negative, setNegative] = useState("");
   const [targetCount, setTargetCount] = useState(20);
   const [taskName, setTaskName] = useState("");
   const [artistCount, setArtistCount] = useState(2);
@@ -162,7 +168,7 @@ export function StyleExplore() {
     setBusy(true); try { await action(); } catch (e) { addToast((e as Error).message, "err"); } finally { setBusy(false); }
   };
   const importWorkspace = () => {
-    setPositive(toExplorePrompt(workspacePositive)); setNegative(serializeSections(workspaceNegative));
+    importWorkspaceSnapshot(toExplorePrompt(workspacePositive), serializeSections(workspaceNegative), workspaceParams, workspaceVibes);
     addToast(workspaceHasArtistCard ? "已导入工作区提示词；画师串 Card 已从探索导入内容中移除" : "已导入工作区正面和负面提示词");
   };
   const createPool = () => void withBusy(async () => {
@@ -213,8 +219,9 @@ export function StyleExplore() {
         <section className="glass rounded-2xl p-4"><h2 className="mb-3 font-semibold">探索任务</h2><select className={inputClass} value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)}><option value="">新建任务 / 未选择</option>{runs.map((item) => <option key={item.id} value={item.id}>{item.name} · {statusLabel(item.status)} · {item.done_count}/{item.target_count}</option>)}</select>{run && <div className="mt-3 rounded-xl border border-[var(--border)] p-3 text-xs"><div className="font-medium">{run.name} · {statusLabel(run.status)} · {run.done_count}/{run.target_count}</div><div className="mt-1 break-all text-[var(--muted)]">任务 {run.id}</div>{run.status_reason && <div className="mt-1 text-amber-500">{run.status_reason}</div>}</div>}</section>
       </aside>
       <main className="space-y-5">
-        <section className="glass rounded-2xl p-5"><div className="flex flex-wrap items-center gap-2"><div><h2 className="font-semibold">基础画风探索</h2><p className="mt-1 text-xs text-[var(--muted)]">正负面与生成参数可从工作区导入，也可独立编辑。Artist String 是本轮主要随机变量。</p></div><button className={`${ghostButtonClass} ml-auto`} onClick={importWorkspace}><WandSparkles size={14} />导入工作区提示词</button></div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2"><label className="text-sm">任务名称<input className={`${inputClass} mt-1`} value={taskName} onChange={(e) => setTaskName(e.target.value)} placeholder="例如：厚涂水彩画风" /></label><div className="text-xs leading-relaxed text-[var(--muted)]">任务名称只用于识别专属图库；系统会额外保存不可变任务 ID。切换任务后只显示该任务的候选。</div><label className="text-sm">正面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={positive} onChange={(e) => setPositive(e.target.value)} placeholder="可直接粘贴或导入工作区内容" /></label><label className="text-sm">负面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={negative} onChange={(e) => setNegative(e.target.value)} placeholder="可选" /></label></div>
+        <section className="glass rounded-2xl p-5"><div className="flex flex-wrap items-center gap-2"><div><h2 className="font-semibold">基础画风探索</h2><p className="mt-1 text-xs text-[var(--muted)]">提示词与生成参数可从工作区复制一次，也可在此独立编辑。Artist String 是本轮主要随机变量。</p></div><button className={`${ghostButtonClass} ml-auto`} onClick={importWorkspace}><WandSparkles size={14} />导入工作区提示词与参数</button></div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2"><label className="text-sm">任务名称<input className={`${inputClass} mt-1`} value={taskName} onChange={(e) => setTaskName(e.target.value)} placeholder="例如：厚涂水彩画风" /></label><div className="text-xs leading-relaxed text-[var(--muted)]">提示词与探索参数会自动保存在本机，切换页面或刷新后仍会保留。创建任务时会将当前内容固化为本轮生成快照。</div><label className="text-sm">正面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={positive} onChange={(e) => setPrompts(e.target.value, negative)} placeholder="可直接粘贴或导入工作区内容" /></label><label className="text-sm">负面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={negative} onChange={(e) => setPrompts(positive, e.target.value)} placeholder="可选" /></label></div>
+          <div className="mt-5"><StyleExploreParamsPanel /></div>
           <div className="mt-4 grid gap-x-4 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
             <ParameterControl label="目标图片数" help={{ title: "目标图片数", description: "本次基础探索要生成的候选图片数。数值越大，覆盖的 Artist String 组合越多，也会增加生成耗时和消耗。" }} value={targetCount} onChange={setTargetCount} min={1} max={10000} step={1} defaultValue={20} integer onOpenHelp={setHelpEntry} />
             <ParameterControl label="每串 ID 数" help={{ title: "每串 ID 数", description: "每一条 Artist String 从 ArtistPool 中无放回选取的画师 ID 数量。数量越多，画风融合越明显；较少时更容易辨认单个画师的影响。" }} value={artistCount} onChange={setArtistCount} min={1} max={10} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} />

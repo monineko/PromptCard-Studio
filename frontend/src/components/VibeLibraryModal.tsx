@@ -4,21 +4,27 @@ import { api } from "../api";
 import { cn } from "../lib";
 import { useStore } from "../store";
 import { useGenerateStore } from "../store/generate";
-import type { VibeFolder, VibeItem } from "../types";
+import type { GenerateParamsPayload, GenerateVibe, VibeFolder, VibeItem } from "../types";
 import { Button, IconBtn, Modal } from "./UI";
 
-export function VibeLibraryModal({ open, onClose, items, folders, onReload, title = "添加 Vibe" }: {
+export function VibeLibraryModal({ open, onClose, items, folders, onReload, title = "添加 Vibe", params: suppliedParams, vibes: suppliedVibes, onSetVibes }: {
   open: boolean;
   onClose: () => void;
   items: VibeItem[];
   folders: VibeFolder[];
   onReload: () => void;
   title?: string;
+  params?: GenerateParamsPayload;
+  vibes?: GenerateVibe[];
+  onSetVibes?: (vibes: GenerateVibe[]) => void;
 }) {
   const addToast = useStore((s) => s.addToast);
-  const params = useGenerateStore((s) => s.params);
-  const vibes = useGenerateStore((s) => s.vibes);
-  const setVibes = useGenerateStore((s) => s.setVibes);
+  const globalParams = useGenerateStore((s) => s.params);
+  const globalVibes = useGenerateStore((s) => s.vibes);
+  const setGlobalVibes = useGenerateStore((s) => s.setVibes);
+  const params = suppliedParams ?? globalParams;
+  const vibes = suppliedVibes ?? globalVibes;
+  const setVibes = onSetVibes ?? setGlobalVibes;
   const [selectedFolder, setSelectedFolder] = useState("其他");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
