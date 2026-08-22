@@ -72,12 +72,15 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_pool_normalizes_two_supported_formats_and_keeps_escapes(self):
-        pool = explore.create_pool("混合池", "a, b\n# note\na\nsakimori_\\(hououbds\\)\n")
-        self.assertEqual(pool["count"], 3)
+        pool = explore.create_pool("混合池", "a, b\n# note\na\nsakimori_\\(hououbds\\)\nname\\,with-comma\n")
+        self.assertEqual(pool["count"], 4)
         self.assertEqual(pool["skipped"], 2)
+        self.assertEqual(pool["input_count"], 6)
+        self.assertEqual(pool["duplicate_count"], 1)
+        self.assertEqual(pool["skipped_count"], 1)
         loaded = explore.get_pool(pool["id"])
-        self.assertEqual(loaded["ids"], ["a", "b", "sakimori_\\(hououbds\\)"])
-        self.assertEqual(loaded["content"], "a\nb\nsakimori_\\(hououbds\\)\n")
+        self.assertEqual(loaded["ids"], ["a", "b", "sakimori_\\(hououbds\\)", "name\\,with-comma"])
+        self.assertEqual(loaded["content"], "a\nb\nsakimori_\\(hououbds\\)\nname\\,with-comma\n")
 
     def test_pool_update_creates_backup_and_run_snapshots_ids(self):
         pool = explore.create_pool("原池", "a\nb\n")

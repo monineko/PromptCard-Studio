@@ -359,6 +359,11 @@ export type StyleExplorePoolSummary = {
   created_at: string;
   updated_at: string;
   count: number;
+  input_count?: number;
+  valid_count?: number;
+  duplicate_count?: number;
+  skipped_count?: number;
+  skipped?: number;
 };
 
 export type StyleExplorePool = StyleExplorePoolSummary & {

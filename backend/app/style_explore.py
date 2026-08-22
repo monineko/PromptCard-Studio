@@ -64,24 +64,45 @@ def _read_json(path: Path, fallback):
         return fallback
 
 
-def _normalize_ids(content: str) -> tuple[list[str], int]:
-    """兼容每行一个 ID 与逗号分隔 ID，保序去重并保留标签转义字符。"""
+def _split_pool_entries(content: str) -> list[str]:
+    """按未转义英文逗号或换行分隔，同时保留 ``\\,`` 等提示词转义。"""
     raw = (content or "").lstrip("\ufeff")
+    parts: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in raw:
+        if char in {"\r", "\n", ","} and not escaped:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    parts.append("".join(current))
+    return parts
+
+
+def _normalize_ids(content: str) -> tuple[list[str], dict[str, int]]:
+    """兼容两种池子格式，保序去重并返回可展示的导入统计。"""
     seen: set[str] = set()
     ids: list[str] = []
-    skipped = 0
-    for part in re.split(r"[,\r\n]+", raw):
+    report = {"input_count": 0, "duplicate_count": 0, "skipped_count": 0}
+    for part in _split_pool_entries(content):
         value = part.strip()
-        if not value or value.startswith("#"):
-            if value:
-                skipped += 1
+        if not value:
+            continue
+        report["input_count"] += 1
+        if value.startswith("#"):
+            report["skipped_count"] += 1
             continue
         if value in seen:
-            skipped += 1
+            report["duplicate_count"] += 1
             continue
         seen.add(value)
         ids.append(value)
-    return ids, skipped
+    return ids, {**report, "valid_count": len(ids), "skipped": report["duplicate_count"] + report["skipped_count"]}
 
 
 def _pool_text(ids: list[str]) -> str:
@@ -126,15 +147,15 @@ def get_pool(pool_id: str) -> dict:
     with _lock:
         pool = _pool_by_id(pool_id)
         content = _pool_file(pool_id).read_text(encoding="utf-8") if _pool_file(pool_id).exists() else ""
-        ids, skipped = _normalize_ids(content)
-        return {**_public_pool(pool, ids), "content": _pool_text(ids), "ids": ids, "skipped": skipped}
+        ids, report = _normalize_ids(content)
+        return {**_public_pool(pool, ids), "content": _pool_text(ids), "ids": ids, **report}
 
 
 def create_pool(name: str, content: str, source_name: str = "") -> dict:
     clean_name = (name or "").strip()
     if not clean_name:
         raise ValueError("ArtistPool 名称不能为空")
-    ids, skipped = _normalize_ids(content)
+    ids, report = _normalize_ids(content)
     if not ids:
         raise ValueError("ArtistPool 至少需要一个有效 ID")
     with _lock:
@@ -152,7 +173,7 @@ def create_pool(name: str, content: str, source_name: str = "") -> dict:
         index = _load_pool_index()
         index.append(pool)
         _save_pool_index(index)
-        return {**_public_pool(pool, ids), "skipped": skipped}
+        return {**_public_pool(pool, ids), **report}
 
 
 def _backup_pool(pool_id: str) -> Path | None:
@@ -167,7 +188,7 @@ def _backup_pool(pool_id: str) -> Path | None:
 
 
 def update_pool(pool_id: str, content: str, name: str | None = None) -> dict:
-    ids, skipped = _normalize_ids(content)
+    ids, report = _normalize_ids(content)
     if not ids:
         raise ValueError("ArtistPool 至少需要一个有效 ID")
     with _lock:
@@ -186,7 +207,7 @@ def update_pool(pool_id: str, content: str, name: str | None = None) -> dict:
                 pool = item
                 break
         _save_pool_index(index)
-        return {**_public_pool(pool, ids), "skipped": skipped}
+        return {**_public_pool(pool, ids), **report}
 
 
 def _run_file(run_id: str) -> Path:

@@ -160,7 +160,7 @@ export function StyleExplore() {
   };
   const createPool = () => void withBusy(async () => {
     const created = await api.styleExploreCreatePool(newPoolName, newPoolText);
-    setNewPoolName(""); setNewPoolText(""); setPoolId(created.id); await refresh(); addToast(`已创建池子，共 ${created.count} 个 ID`);
+    setNewPoolName(""); setNewPoolText(""); setPoolId(created.id); await refresh(); addToast(`已创建池子：${created.input_count ?? created.count} 项输入，${created.count} 个有效 ID，${created.duplicate_count ?? 0} 项重复`);
   });
   const savePool = () => void withBusy(async () => {
     if (!pool) return;
@@ -169,7 +169,7 @@ export function StyleExplore() {
   });
   const importPoolFile = (file: File | undefined) => void withBusy(async () => {
     if (!file) return;
-    const imported = await api.styleExploreImportPool(file); setPoolId(imported.id); await refresh(); addToast(`已导入并规范化池子，共 ${imported.count} 个 ID`);
+    const imported = await api.styleExploreImportPool(file); setPoolId(imported.id); await refresh(); addToast(`已导入并规范化：${imported.input_count ?? imported.count} 项输入，${imported.count} 个有效 ID，${imported.duplicate_count ?? 0} 项重复`);
   });
   const createRun = () => void withBusy(async () => {
     if (!poolId) throw new Error("请先选择 ArtistPool");
@@ -200,7 +200,7 @@ export function StyleExplore() {
       <aside className="space-y-5">
         <section className="glass rounded-2xl p-4"><h2 className="mb-3 font-semibold">ArtistPool</h2>
           <select className={inputClass} value={poolId} onChange={(e) => setPoolId(e.target.value)}>{pools.length === 0 && <option value="">暂无池子</option>}{pools.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.count} ID</option>)}</select>
-          {pool && <><input className={`${inputClass} mt-3`} value={poolName} onChange={(e) => setPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-52 font-mono text-xs`} value={poolText} onChange={(e) => setPoolText(e.target.value)} /><p className="mt-1 text-xs text-[var(--muted)]">当前 {pool.ids.length} 个有效 ID；保存时会规范为一行一个 ID。</p><button className={`${buttonClass} mt-3 w-full`} onClick={savePool} disabled={busy}><Save size={14} />保存池子</button></>}
+          {pool && <><input className={`${inputClass} mt-3`} value={poolName} onChange={(e) => setPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-52 font-mono text-xs`} value={poolText} onChange={(e) => setPoolText(e.target.value)} /><p className="mt-1 text-xs text-[var(--muted)]">本次文本：{pool.input_count} 项输入，{pool.ids.length} 个有效 ID，{pool.duplicate_count} 项重复，{pool.skipped_count} 项跳过。保存时会规范为一行一个 ID，并保留备份。</p><button className={`${buttonClass} mt-3 w-full`} onClick={savePool} disabled={busy}><Save size={14} />保存池子</button></>}
           <div className="mt-4 border-t border-[var(--border)] pt-4"><input className={inputClass} placeholder="新池子名称" value={newPoolName} onChange={(e) => setNewPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-20 text-xs`} placeholder="换行或逗号分隔的 ID" value={newPoolText} onChange={(e) => setNewPoolText(e.target.value)} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={createPool} disabled={busy}><FolderPlus size={14} />新建池子</button><input ref={fileRef} className="hidden" type="file" accept=".txt,text/plain" onChange={(e) => { importPoolFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={14} />导入 TXT</button></div>
         </section>
         <section className="glass rounded-2xl p-4"><h2 className="mb-3 font-semibold">探索任务</h2><select className={inputClass} value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)}><option value="">新建任务 / 未选择</option>{runs.map((item) => <option key={item.id} value={item.id}>{item.name} · {statusLabel(item.status)} · {item.done_count}/{item.target_count}</option>)}</select>{run && <div className="mt-3 rounded-xl border border-[var(--border)] p-3 text-xs"><div className="font-medium">{run.name} · {statusLabel(run.status)} · {run.done_count}/{run.target_count}</div><div className="mt-1 break-all text-[var(--muted)]">任务 {run.id}</div>{run.status_reason && <div className="mt-1 text-amber-500">{run.status_reason}</div>}</div>}</section>
