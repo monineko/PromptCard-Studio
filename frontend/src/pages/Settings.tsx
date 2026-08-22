@@ -1,11 +1,24 @@
 import { FolderOpen, Images, KeyRound, Power, RefreshCw, Save, Undo2, Zap } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
 import { Button, ConfirmDialog } from "../components/UI";
 import { useStore } from "../store";
 import { useGalleryVisual } from "../store/galleryVisual";
 import type { DictionaryStatus } from "../types";
+import { APP_VERSION, fetchLatestRelease, isNewerVersion, type LatestRelease } from "../update";
+
+type DirectoryFile = File & { webkitRelativePath?: string };
+
+function isMigratablePath(path: string): boolean {
+  const normal = path.replace(/\\/g, "/");
+  if (normal === "config.json" || normal === "workspace.json") return true;
+  if (/^(promptcards|library|vibes)\//.test(normal)) return true;
+  if (normal === "dictionary/custom.json") return true;
+  if (normal.startsWith("frontend/src/assets/backgrounds/")) return true;
+  if (normal.startsWith("backend/app/engines/runtime/")) return true;
+  return /^plugins\/[^/]+\/(installed\.json|models\/runtime\/)/.test(normal);
+}
 
 export function Settings() {
   const settings = useStore((s) => s.settings);
@@ -36,6 +49,58 @@ export function Settings() {
   const [naiSaving, setNaiSaving] = useState(false);
   const [naiChecking, setNaiChecking] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
+  const [release, setRelease] = useState<LatestRelease | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateError, setUpdateError] = useState("");
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<{
+    copied: number;
+    overwritten: number;
+    ignored: number;
+    errors: string[];
+    backup: string | null;
+  } | null>(null);
+  const migrationInputRef = useRef<HTMLInputElement>(null);
+
+  const checkForUpdates = useCallback(async () => {
+    setUpdateChecking(true);
+    setUpdateError("");
+    try {
+      setRelease(await fetchLatestRelease());
+    } catch (e) {
+      setUpdateError((e as Error).message);
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  const migrateOldProject = async (fileList: FileList | null) => {
+    const files = Array.from(fileList ?? []);
+    const selected: { file: File; path: string }[] = [];
+    for (const file of files) {
+      const fullPath = (file as DirectoryFile).webkitRelativePath || file.name;
+      const parts = fullPath.replace(/\\/g, "/").split("/");
+      const path = parts.length > 1 ? parts.slice(1).join("/") : parts[0];
+      if (isMigratablePath(path)) selected.push({ file, path });
+    }
+    if (!selected.length) {
+      addToast("没有找到可迁移的用户数据", "err");
+      return;
+    }
+    if (!window.confirm(`找到 ${selected.length} 个用户数据文件。继续迁移吗？同名文件会先备份再覆盖。`)) return;
+    setMigrationBusy(true);
+    setMigrationResult(null);
+    try {
+      const result = await api.migrateUserData(selected.map((item) => item.file), selected.map((item) => item.path));
+      setMigrationResult(result);
+      addToast(result.errors.length ? `迁移完成，但有 ${result.errors.length} 个文件失败，请检查结果` : `迁移完成：${result.copied} 个文件，请重启应用使迁移内容全部生效`);
+    } catch (e) {
+      addToast(`迁移失败: ${(e as Error).message}`, "err");
+    } finally {
+      setMigrationBusy(false);
+      if (migrationInputRef.current) migrationInputRef.current.value = "";
+    }
+  };
 
   const doShutdown = async () => {
     try {
@@ -111,6 +176,79 @@ export function Settings() {
   return (
     <div className="animate-fade-in-up mx-auto w-full max-w-2xl space-y-5 px-4 py-6">
       <h1 className="text-lg font-semibold">设置</h1>
+
+      {/* ---------- 更新与迁移 ---------- */}
+      <div className="glass space-y-4 rounded-2xl p-5">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2">
+          <RefreshCw size={15} className="text-[var(--accent)]" />
+          <h2 className="text-sm font-semibold">更新与迁移</h2>
+          <span className="ml-auto text-xs text-[var(--muted)]">当前版本 {APP_VERSION}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => void checkForUpdates()} disabled={updateChecking}>
+            <RefreshCw size={13} /> {updateChecking ? "检查中…" : "检查更新"}
+          </Button>
+          {release && (
+            <span className={isNewerVersion(release.version) ? "text-xs text-amber-300" : "text-xs text-emerald-300"}>
+              {isNewerVersion(release.version) ? `发现 ${release.version}` : `已是最新正式版本（${release.version}）`}
+            </span>
+          )}
+        </div>
+        {updateError && <p className="text-xs text-red-400">检查失败：{updateError}</p>}
+        {release && isNewerVersion(release.version) && (
+          <div className="rounded-xl border border-[var(--accent)]/35 bg-[var(--input)]/40 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium">{release.name}（{release.version}）</span>
+              <a href={release.htmlUrl} target="_blank" rel="noreferrer" className="text-xs text-[var(--accent)] hover:underline">
+                查看 GitHub Release
+              </a>
+            </div>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-[var(--muted)]">{release.body}</pre>
+            {release.assets.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {release.assets.map((asset) => (
+                  <a
+                    key={asset.url}
+                    href={asset.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg bg-[var(--accent)] px-2.5 py-1.5 text-xs text-white hover:opacity-85"
+                  >
+                    下载 {asset.name}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="border-t border-[var(--border)] pt-4">
+          <div className="mb-1 text-sm font-medium">迁移旧项目数据</div>
+          <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
+            下载新项目并运行后，选择旧项目文件夹即可迁移卡片、图库、Vibe、设置、词典自定义内容、背景图和已安装插件数据。
+            程序文件与依赖不会迁移，同名用户文件会先备份再覆盖。
+          </p>
+          <input
+            ref={migrationInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            {...{ webkitdirectory: "" }}
+            onChange={(e) => void migrateOldProject(e.target.files)}
+          />
+          <Button size="sm" onClick={() => migrationInputRef.current?.click()} disabled={migrationBusy}>
+            <FolderOpen size={13} /> {migrationBusy ? "迁移中…" : "选择旧项目文件夹"}
+          </Button>
+          <p className="mt-2 text-[11px] text-slate-500">迁移完成后请重启应用；不要选择当前项目文件夹。</p>
+          {migrationResult && (
+            <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3 text-xs leading-relaxed text-[var(--muted)]">
+              <div>已迁移 {migrationResult.copied} 个文件；覆盖 {migrationResult.overwritten} 个文件；忽略 {migrationResult.ignored} 个非用户文件。</div>
+              {migrationResult.backup && <div>原文件备份：{migrationResult.backup}</div>}
+              {migrationResult.errors.length > 0 && <div className="mt-1 text-red-400">失败：{migrationResult.errors.join("；")}</div>}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* ---------- NovelAI 连接 ---------- */}
       <div className="glass space-y-4 rounded-2xl p-5">
