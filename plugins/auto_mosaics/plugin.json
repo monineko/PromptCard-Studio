@@ -1,7 +1,7 @@
 {
   "id": "auto_mosaics",
   "name": "自动打码",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "自动检测动漫图片敏感部位（欧金金 / 欧芒果 / 欧派派）并打码，作为发布处理页面的可选节点；检测模型在首次启用时下载（YOLOv8 + ONNX Runtime，约 42.5 MB）。",
   "author": "PromptCard Studio",
   "license": "GPL-3.0",
