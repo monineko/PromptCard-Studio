@@ -845,7 +845,7 @@ export function Gallery() {
             <button
               onClick={() => {
                 cancelPick();
-                navigate("/");
+                navigate("/", { state: { scrollTarget: "prompt-cards" } });
               }}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#ffb6c1]/50 text-[#ffb6c1] transition-colors hover:bg-[#ffb6c1]/15"
               title="取消"
@@ -1033,7 +1033,7 @@ export function Gallery() {
                     useStore.getState().refreshCategories();
                     setPickCandidate(null);
                     cancelPick();
-                    navigate("/");
+                    navigate("/", { state: { scrollTarget: "prompt-cards" } });
                   } catch (e) {
                     useStore.getState().addToast(`设置失败: ${(e as Error).message}`, "err");
                   }
