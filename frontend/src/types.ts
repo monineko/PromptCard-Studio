@@ -232,11 +232,19 @@ export type VibeItem = {
   id: string;
   name: string;
   file: string;
+  folder: string;
+  folder_label: string;
   thumbnail: string;
   models: string[];
   default_strength: number;
   default_information_extracted: number;
   encodings: Record<string, number[]>;
+};
+
+export type VibeFolder = {
+  name: string;
+  label: string;
+  default: boolean;
 };
 
 export type GenerateCharacter = {

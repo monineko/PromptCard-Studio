@@ -54,6 +54,8 @@ from .schemas import (
     SetCoverIn,
     Text2ImageIn,
     VibeRenameIn,
+    VibeFolderIn,
+    VibeFolderRenameIn,
     WorkspaceIn,
 )
 
@@ -380,6 +382,43 @@ def list_vibes():
     return vibes_service.list_vibes()
 
 
+@app.get("/api/vibes/folders")
+def list_vibe_folders():
+    return vibes_service.list_vibe_folders()
+
+
+@app.post("/api/vibes/folders")
+def vibe_folder_create(body: VibeFolderIn):
+    try:
+        return vibes_service.create_vibe_folder(body.name)
+    except FileExistsError as e:
+        raise _as_http(e, 409)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/vibes/folders/rename")
+def vibe_folder_rename(body: VibeFolderRenameIn):
+    try:
+        return vibes_service.rename_vibe_folder(body.name, body.new_name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except FileExistsError as e:
+        raise _as_http(e, 409)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.delete("/api/vibes/folders")
+def vibe_folder_delete(name: str):
+    try:
+        return vibes_service.delete_vibe_folder(name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
 @app.post("/api/vibes/rename")
 def vibe_rename(body: VibeRenameIn):
     try:
@@ -393,10 +432,10 @@ def vibe_rename(body: VibeRenameIn):
 
 
 @app.post("/api/vibes/import-file")
-async def vibe_import_file(file: UploadFile = File(...)):
+async def vibe_import_file(file: UploadFile = File(...), folder: str = Form("")):
     try:
         content = await file.read()
-        return vibes_service.import_vibe_file_upload(file.filename or "", content)
+        return vibes_service.import_vibe_file_upload(file.filename or "", content, folder)
     except ValueError as e:
         raise _as_http(e, 400)
 
@@ -420,6 +459,7 @@ def vibe_import(body: VibeImportIn):
             else 0.7,
             body.model,
             body.name,
+            body.folder,
         )
     except ValueError as e:
         raise _as_http(e, 400)
@@ -864,7 +904,7 @@ if (DIST / "assets").exists():
 def index():
     index_file = DIST / "index.html"
     if index_file.exists():
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
     return {"message": "backend running; frontend not built yet"}
 
 
@@ -872,5 +912,5 @@ def index():
 def spa(full_path: str):
     index_file = DIST / "index.html"
     if index_file.exists() and not full_path.startswith("api/"):
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
     raise HTTPException(404, "not found")

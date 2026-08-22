@@ -11,6 +11,7 @@ import {
   Play,
   Rocket,
   Settings as SettingsIcon,
+  Sparkles,
   Star,
 } from "lucide-react";
 import { useState } from "react";
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { to: "/", label: "提示词工作区", icon: Home },
   { to: "/library", label: "图片库", icon: Images },
   { to: "/settings", label: "设置", icon: SettingsIcon },
+  { to: "/vibes", label: "Vibe 管理", icon: Sparkles },
   { to: "/publish", label: "发布处理", icon: Rocket },
 ];
 

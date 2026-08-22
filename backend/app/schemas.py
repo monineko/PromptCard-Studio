@@ -106,6 +106,15 @@ class VibeRenameIn(BaseModel):
     name: str = ""
 
 
+class VibeFolderIn(BaseModel):
+    name: str = ""
+
+
+class VibeFolderRenameIn(BaseModel):
+    name: str = ""
+    new_name: str = ""
+
+
 class Text2ImageIn(BaseModel):
     prompt: str = ""
     negative_prompt: str = ""
@@ -142,6 +151,7 @@ class VibeImportIn(BaseModel):
     strength: float = 0.7
     information_extracted: float | None = None
     model: str = ""
+    folder: str = ""
 
 
 class PublishRunIn(BaseModel):

@@ -20,6 +20,7 @@ import type {
   Settings,
   Text2ImageResult,
   VibeItem,
+  VibeFolder,
   WorkspaceData,
   DictionaryStatus,
   DictionaryEntry,
@@ -164,6 +165,18 @@ export const api = {
     request<{ ok: boolean; path: string }>("/api/backgrounds/open-folder", { method: "POST" }),
   generateMeta: () => request<GenerateMeta>("/api/generate/meta"),
   vibes: () => request<VibeItem[]>("/api/vibes"),
+  vibeFolders: () => request<VibeFolder[]>("/api/vibes/folders"),
+  createVibeFolder: (name: string) =>
+    request<VibeFolder>("/api/vibes/folders", { method: "POST", body: JSON.stringify({ name }) }),
+  renameVibeFolder: (name: string, new_name: string) =>
+    request<VibeFolder>("/api/vibes/folders/rename", {
+      method: "POST",
+      body: JSON.stringify({ name, new_name }),
+    }),
+  deleteVibeFolder: (name: string) =>
+    request<{ ok: boolean; name: string }>(`/api/vibes/folders?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
   renameVibe: (id: string, name: string) =>
     request<{ ok: boolean; id: string; name: string }>("/api/vibes/rename", {
       method: "POST",
@@ -208,14 +221,16 @@ export const api = {
     strength: number;
     information_extracted?: number | null;
     model: string;
+    folder?: string;
   }) =>
     request<{ ok: boolean; id: string; name: string }>("/api/vibes/import", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  importVibeFile: (file: File) => {
+  importVibeFile: (file: File, folder = "") => {
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("folder", folder);
     return request<{ ok: boolean; id: string; name: string }>("/api/vibes/import-file", {
       method: "POST",
       body: fd,

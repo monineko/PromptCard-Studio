@@ -14,6 +14,7 @@ import { Gallery } from "./pages/Gallery";
 import { Home } from "./pages/Home";
 import { Publish } from "./pages/Publish";
 import { Settings } from "./pages/Settings";
+import { VibeManager } from "./pages/VibeManager";
 import { useSidebarStore } from "./sidebarStore";
 import { useStore } from "./store";
 import { useGalleryVisual } from "./store/galleryVisual";
@@ -98,6 +99,7 @@ function Shell() {
                 <Routes location={location}>
                   <Route path="/" element={<Home />} />
                   <Route path="/settings" element={<Settings />} />
+                  <Route path="/vibes" element={<VibeManager />} />
                   <Route path="/library" element={<Gallery />} />
                   <Route path="/publish" element={<Publish />} />
                 </Routes>

@@ -27,6 +27,7 @@ import type {
   GenerateResolution,
   GenerateStatus,
   GenerateVibe,
+  VibeFolder,
   VibeItem,
 } from "../types";
 import { Button, IconBtn } from "./UI";
@@ -452,6 +453,7 @@ export function GenerationPanel() {
   const [meta, setMeta] = useState<GenerateMeta | null>(null);
   const [status, setStatus] = useState<GenerateStatus | null>(null);
   const [vibeItems, setVibeItems] = useState<VibeItem[]>([]);
+  const [vibeFolders, setVibeFolders] = useState<VibeFolder[]>([]);
   const [vibeModalOpen, setVibeModalOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -479,9 +481,11 @@ export function GenerationPanel() {
   }, [multiCharacter, posSplit.base, rolePositive]);
 
   const reloadVibes = useCallback(() => {
-    api
-      .vibes()
-      .then(setVibeItems)
+    Promise.all([api.vibes(), api.vibeFolders()])
+      .then(([items, folders]) => {
+        setVibeItems(items);
+        setVibeFolders(folders);
+      })
       .catch((e) => addToast(`读取 Vibe 库失败: ${(e as Error).message}`, "err"));
   }, [addToast]);
 
@@ -561,6 +565,10 @@ export function GenerationPanel() {
       addToast("正面提示词为空，请先在工作区添加内容", "err");
       return;
     }
+    if ((params.model === "nai-diffusion-5-full" || params.model === "nai-diffusion-5-curated") && vibes.length) {
+      addToast("NAI 5 当前不支持 Vibe，请先移除 Vibe 后再生成", "err");
+      return;
+    }
     setGenerating(true);
     setResult(null);
     try {
@@ -611,7 +619,11 @@ export function GenerationPanel() {
           >
             {meta?.models.map((m) => (
               <option key={m} value={m}>
-                {m}
+                {m === "nai-diffusion-5-full"
+                  ? "NAI Diffusion V5 Full"
+                  : m === "nai-diffusion-5-curated"
+                    ? "NAI Diffusion V5 Curated"
+                    : m}
               </option>
             ))}
           </select>
@@ -712,12 +724,12 @@ export function GenerationPanel() {
               <span className="ml-1.5 font-normal text-[var(--muted)]">{vibes.length} 个</span>
             </span>
             <Button size="sm" variant="ghost" onClick={() => setVibeModalOpen(true)} title="打开 Vibe 库">
-              <Sparkles size={13} /> 导入 Vibe
+              <Sparkles size={13} /> 添加 Vibe
             </Button>
           </div>
           {vibes.length === 0 ? (
             <p className="text-[10px] leading-relaxed text-[var(--muted)]">
-              未添加 Vibe；点击「导入 Vibe」从库中添加，每个可独立调节强度与信息提取度。
+              未添加 Vibe；点击「添加 Vibe」从库中添加，每个可独立调节强度与信息提取度。
             </p>
           ) : (
             <div className="space-y-2">
@@ -947,6 +959,7 @@ export function GenerationPanel() {
         open={vibeModalOpen}
         onClose={() => setVibeModalOpen(false)}
         items={vibeItems}
+        folders={vibeFolders}
         onReload={reloadVibes}
       />
     </div>

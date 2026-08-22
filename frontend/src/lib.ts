@@ -95,15 +95,16 @@ export function extractRoleUnits(sections: Section[]): string[] {
 
 export type WeightedTerm = { text: string; weight: number };
 
-/** 顶层按分隔符切分（括号/方括号/花括号内的分隔符不生效）。 */
-export function splitTopLevel(input: string, sep: string): string[] {
+/** 顶层按一个或多个分隔符切分（括号/方括号/花括号内的分隔符不生效）。 */
+export function splitTopLevel(input: string, separators: string | string[]): string[] {
   const out: string[] = [];
+  const separatorSet = new Set(Array.from(separators));
   let depth = 0;
   let cur = "";
   for (const ch of input) {
     if ("([{".includes(ch)) depth++;
     else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
-    if (ch === sep && depth === 0) {
+    if (separatorSet.has(ch) && depth === 0) {
       out.push(cur);
       cur = "";
     } else {
@@ -115,7 +116,7 @@ export function splitTopLevel(input: string, sep: string): string[] {
 }
 
 /**
- * 按 NovelAI 系数语法分词：
+ * 按 NovelAI 系数语法分词；支持英文逗号、中文逗号和中文句号作为块分隔符：
  * - 冒号本身不参与分词（不会把 "::" 当成提示词）；
  * - `2::ibuki,0.5::standing,` 与 `2::ibuki::,0.5::standing::,` 均解析为
  *   ibuki(2) 与 standing(0.5)；
@@ -123,7 +124,7 @@ export function splitTopLevel(input: string, sep: string): string[] {
  */
 export function splitWeightedPrompt(input: string): WeightedTerm[] {
   const terms: WeightedTerm[] = [];
-  for (const raw of splitTopLevel(input, ",")) {
+  for (const raw of splitTopLevel(input, [",", "，", "。"])) {
     let seg = raw.trim();
     if (!seg) continue;
     let weight = 1;

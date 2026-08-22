@@ -10,7 +10,7 @@ import json
 import hashlib
 import os
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .config import VIBES_DIR
 
@@ -21,6 +21,9 @@ MODEL_VIBE_KEYS = {
     "nai-diffusion-4-full": "v4full",
     "nai-diffusion-4-curated-preview": "v4curated",
 }
+
+DEFAULT_VIBE_FOLDERS = ["nai4.5", "nai4", "其他", "nai5"]
+VIBE_FOLDER_LABELS = {"nai4.5": "NAI 4.5", "nai4": "NAI 4", "其他": "其他", "nai5": "NAI 5（占位）"}
 
 _THUMB_PREFIX = "data:image/jpeg;base64,"
 
@@ -36,11 +39,93 @@ def _load(file: Path) -> dict | None:
 
 
 def _safe_id(vibe_id: str) -> str:
-    """防路径穿越：只允许纯文件名（不含分隔符）。"""
-    cleaned = str(vibe_id or "").strip()
-    if not cleaned or Path(cleaned).name != cleaned or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+    """防路径穿越：允许 vibes 目录下的相对路径，统一使用 /。"""
+    cleaned = str(vibe_id or "").strip().replace("\\", "/")
+    path = PurePosixPath(cleaned)
+    if (
+        not cleaned
+        or path.is_absolute()
+        or any(part in ("", ".", "..") for part in path.parts)
+        or ":" in cleaned
+    ):
         raise ValueError(f"非法的 vibe id: {vibe_id!r}")
     return cleaned
+
+
+def _safe_folder(folder: str, allow_empty: bool = True) -> str:
+    cleaned = str(folder or "").strip().replace("\\", "/").strip("/")
+    if not cleaned and allow_empty:
+        return ""
+    path = PurePosixPath(cleaned)
+    if not cleaned or path.is_absolute() or any(part in ("", ".", "..") for part in path.parts) or ":" in cleaned:
+        raise ValueError(f"非法的 Vibe 文件夹: {folder!r}")
+    return "/".join(path.parts)
+
+
+def _file_for_id(vibe_id: str) -> Path:
+    safe = _safe_id(vibe_id)
+    file = (VIBES_DIR / Path(*PurePosixPath(safe).parts)).with_suffix(".naiv4vibe")
+    try:
+        file.relative_to(VIBES_DIR)
+    except ValueError as e:
+        raise ValueError(f"非法的 vibe id: {vibe_id!r}") from e
+    return file
+
+
+def ensure_vibe_folders() -> None:
+    VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    for folder in DEFAULT_VIBE_FOLDERS:
+        (VIBES_DIR / folder).mkdir(parents=True, exist_ok=True)
+
+
+def list_vibe_folders() -> list[dict]:
+    ensure_vibe_folders()
+    folders = {folder for folder in DEFAULT_VIBE_FOLDERS}
+    for path in VIBES_DIR.rglob("*"):
+        if path.is_dir():
+            folders.add(path.relative_to(VIBES_DIR).as_posix())
+    return [
+        {"name": name, "label": VIBE_FOLDER_LABELS.get(name, name), "default": name in DEFAULT_VIBE_FOLDERS}
+        for name in sorted(folders, key=lambda x: (DEFAULT_VIBE_FOLDERS.index(x) if x in DEFAULT_VIBE_FOLDERS else 99, x.casefold()))
+    ]
+
+
+def create_vibe_folder(name: str) -> dict:
+    folder = _safe_folder(name, allow_empty=False)
+    target = VIBES_DIR / Path(*PurePosixPath(folder).parts)
+    if target.exists():
+        raise FileExistsError(f"已存在同名文件夹: {folder}")
+    target.mkdir(parents=True)
+    return {"ok": True, "name": folder, "label": folder}
+
+
+def rename_vibe_folder(folder: str, new_name: str) -> dict:
+    old = _safe_folder(folder, allow_empty=False)
+    new = _safe_folder(new_name, allow_empty=False)
+    if old in DEFAULT_VIBE_FOLDERS:
+        raise ValueError("默认 Vibe 文件夹不能重命名")
+    old_path = VIBES_DIR / Path(*PurePosixPath(old).parts)
+    new_path = VIBES_DIR / Path(*PurePosixPath(new).parts)
+    if not old_path.is_dir():
+        raise FileNotFoundError(f"Vibe 文件夹不存在: {old}")
+    if new_path.exists():
+        raise FileExistsError(f"已存在同名文件夹: {new}")
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.rename(new_path)
+    return {"ok": True, "name": new, "label": new}
+
+
+def delete_vibe_folder(folder: str) -> dict:
+    import shutil
+
+    name = _safe_folder(folder, allow_empty=False)
+    if name in DEFAULT_VIBE_FOLDERS:
+        raise ValueError("默认 Vibe 文件夹不能删除")
+    target = VIBES_DIR / Path(*PurePosixPath(name).parts)
+    if not target.is_dir():
+        raise FileNotFoundError(f"Vibe 文件夹不存在: {name}")
+    shutil.rmtree(target)
+    return {"ok": True, "name": name}
 
 
 def _safe_new_name(name: str) -> str:
@@ -70,7 +155,7 @@ def open_vibes_folder() -> dict:
     return {"ok": True, "path": str(VIBES_DIR)}
 
 
-def import_vibe_file_upload(filename: str, content: bytes) -> dict:
+def import_vibe_file_upload(filename: str, content: bytes, folder: str = "") -> dict:
     """把用户选择的 .naiv4vibe 文件复制进 Vibe 目录（重名自动加序号）。"""
     if not str(filename or "").lower().endswith(".naiv4vibe"):
         raise ValueError("仅支持 .naiv4vibe 文件")
@@ -81,15 +166,18 @@ def import_vibe_file_upload(filename: str, content: bytes) -> dict:
     if not isinstance(data, dict) or data.get("type") != "image":
         raise ValueError("文件不是有效的 Vibe（缺少 type=image 字段）")
 
-    VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_vibe_folders()
+    target_folder = _safe_folder(folder)
+    folder_path = VIBES_DIR / Path(*PurePosixPath(target_folder).parts) if target_folder else VIBES_DIR
+    folder_path.mkdir(parents=True, exist_ok=True)
     stem = Path(filename).stem.strip() or "vibe"
     base = _safe_new_name(stem)
     name, n = base, 1
-    while (VIBES_DIR / f"{name}.naiv4vibe").exists():
+    while (folder_path / f"{name}.naiv4vibe").exists():
         n += 1
         name = f"{base}_{n}"
-    (VIBES_DIR / f"{name}.naiv4vibe").write_bytes(content)
-    return {"ok": True, "id": name, "name": name}
+    (folder_path / f"{name}.naiv4vibe").write_bytes(content)
+    return {"ok": True, "id": f"{target_folder}/{name}" if target_folder else name, "name": name, "folder": target_folder or "其他"}
 
 
 def rename_vibe(vibe_id: str, new_name: str) -> dict:
@@ -97,25 +185,29 @@ def rename_vibe(vibe_id: str, new_name: str) -> dict:
     old = _safe_id(vibe_id)
     new = _safe_new_name(new_name)
     if new == old:
-        return {"ok": True, "id": new, "name": new}
-    old_file = VIBES_DIR / f"{old}.naiv4vibe"
+        return {"ok": True, "id": old, "name": new}
+    old_file = _file_for_id(old)
     if not old_file.exists():
         raise FileNotFoundError(f"Vibe 不存在: {old}")
-    new_file = VIBES_DIR / f"{new}.naiv4vibe"
+    new_file = old_file.with_name(f"{new}.naiv4vibe")
     if new_file.exists():
         raise FileExistsError(f"已存在同名 Vibe: {new}")
     old_file.rename(new_file)
-    return {"ok": True, "id": new, "name": new}
+    return {"ok": True, "id": f"{PurePosixPath(old).parent}/{new}" if str(PurePosixPath(old).parent) != "." else new, "name": new}
 
 
 def list_vibes() -> list[dict]:
-    """枚举 vibes/*.naiv4vibe，返回前端可用的摘要列表。"""
+    """枚举 vibes 目录下各文件夹的 .naiv4vibe，返回前端可用的摘要列表。"""
+    ensure_vibe_folders()
     items = []
-    for file in sorted(VIBES_DIR.glob("*.naiv4vibe")):
+    for file in sorted(VIBES_DIR.rglob("*.naiv4vibe")):
         data = _load(file)
         if data is None:
             continue
+        relative = file.relative_to(VIBES_DIR)
         name = file.stem
+        folder = relative.parent.as_posix() if relative.parent != Path(".") else "其他"
+        vibe_id = relative.with_suffix("").as_posix()
         encodings = data.get("encodings") or {}
         import_info = data.get("importInfo") or {}
         thumbnail = data.get("thumbnail") or ""
@@ -123,9 +215,11 @@ def list_vibes() -> list[dict]:
             thumbnail = _THUMB_PREFIX + thumbnail
         items.append(
             {
-                "id": name,
+                "id": vibe_id,
                 "name": name,
                 "file": file.name,
+                "folder": folder,
+                "folder_label": VIBE_FOLDER_LABELS.get(folder, folder),
                 "thumbnail": thumbnail,
                 "models": [m for m, k in MODEL_VIBE_KEYS.items() if k in encodings],
                 "default_strength": float(import_info.get("strength") or 0.7),
@@ -153,7 +247,7 @@ def resolve_vibe(
         safe = _safe_id(vibe_id)
     except ValueError:
         return None
-    file = VIBES_DIR / f"{safe}.naiv4vibe"
+    file = _file_for_id(safe)
     if not file.exists():
         return None
     data = _load(file)
@@ -199,6 +293,7 @@ def import_vibe_file(
     info: float,
     model: str,
     name_hint: str = "",
+    folder: str = "",
 ) -> dict:
     """把编码保存为新的 .naiv4vibe 文件（用户主动导入），返回 {id, name}。"""
     encoding = _normalize_encoding(encoding)
@@ -207,12 +302,15 @@ def import_vibe_file(
     key = MODEL_VIBE_KEYS.get(model)
     if not key:
         raise ValueError(f"模型 {model} 不支持 Vibe 导入")
-    VIBES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_vibe_folders()
+    target_folder = _safe_folder(folder) or ("nai4.5" if model.startswith("nai-diffusion-4-5") else "nai4" if model.startswith("nai-diffusion-4") else "其他")
+    folder_path = VIBES_DIR / Path(*PurePosixPath(target_folder).parts)
+    folder_path.mkdir(parents=True, exist_ok=True)
     hint = str(name_hint or "").strip()
     base = hint or f"图片导入_{datetime.now():%Y%m%d_%H%M%S}"
     base = _safe_new_name(base)
     name, n = base, 1
-    while (VIBES_DIR / f"{name}.naiv4vibe").exists():
+    while (folder_path / f"{name}.naiv4vibe").exists():
         n += 1
         name = f"{base}_{n}"
     digest = hashlib.md5(encoding.encode("utf-8")).hexdigest()[:16]
@@ -228,7 +326,7 @@ def import_vibe_file(
         },
         "importInfo": {"model": key, "information_extracted": info, "strength": strength},
     }
-    (VIBES_DIR / f"{name}.naiv4vibe").write_text(
+    (folder_path / f"{name}.naiv4vibe").write_text(
         json.dumps(data, ensure_ascii=False), encoding="utf-8"
     )
-    return {"ok": True, "id": name, "name": name}
+    return {"ok": True, "id": f"{target_folder}/{name}", "name": name, "folder": target_folder}

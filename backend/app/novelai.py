@@ -29,6 +29,8 @@ SHORT_TIMEOUT = 30  # 点数查询
 # ---------- 参数表（与 ANR utils/variable.py 一致） ----------
 
 MODELS = [
+    "nai-diffusion-5-full",
+    "nai-diffusion-5-curated",
     "nai-diffusion-4-5-full",
     "nai-diffusion-4-5-curated",
     "nai-diffusion-4-full",
@@ -70,6 +72,18 @@ _BASE_SAMPLERS = [s for s in SAMPLERS if s != "ddim_v3"]
 _BASE_NOISE = [n for n in NOISE_SCHEDULES if n != "native"]
 
 MODEL_RULES: dict[str, dict] = {
+    "nai-diffusion-5-full": {
+        "samplers": _BASE_SAMPLERS,
+        "noise_schedules": _BASE_NOISE,
+        "uc_presets": ["Heavy", "Light", "None"],
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True},
+    },
+    "nai-diffusion-5-curated": {
+        "samplers": _BASE_SAMPLERS,
+        "noise_schedules": _BASE_NOISE,
+        "uc_presets": ["Heavy", "Light", "None"],
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True},
+    },
     "nai-diffusion-4-5-full": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
@@ -109,6 +123,8 @@ MODEL_RULES: dict[str, dict] = {
 }
 
 QUALITY_TAGS = {
+    "nai-diffusion-5-full": "",
+    "nai-diffusion-5-curated": "",
     "nai-diffusion-4-5-full": ", very aesthetic, masterpiece, no text",
     "nai-diffusion-4-5-curated": ", very aesthetic, masterpiece, no text, -0.8::feet::, rating:general",
     "nai-diffusion-4-full": ", no text, best quality, very aesthetic, absurdres",
@@ -155,6 +171,8 @@ UNDESIRED_PRESETS = {
 }
 
 _UC_PRESET_INDEX = {
+    "nai-diffusion-5-full": {"Heavy": 0, "Light": 1, "None": 2},
+    "nai-diffusion-5-curated": {"Heavy": 0, "Light": 1, "None": 2},
     "nai-diffusion-4-5-full": {"Heavy": 0, "Light": 1, "Furry Focus": 2, "Human Focus": 3, "None": 4},
     "nai-diffusion-4-5-curated": {"Heavy": 0, "Light": 1, "Human Focus": 2, "None": 3},
     "nai-diffusion-3": {"Heavy": 0, "Light": 1, "Human Focus": 2, "None": 3},
@@ -327,6 +345,10 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
     model = params.model
     rules = MODEL_RULES[model]
     is_v3 = model in ("nai-diffusion-3", "nai-diffusion-furry-3")
+    is_v5 = model in ("nai-diffusion-5-full", "nai-diffusion-5-curated")
+
+    if is_v5 and params.vibes:
+        raise ValueError("NAI 5 当前不支持 Vibe，请移除 Vibe 后再生成")
 
     _input = prompt.strip()
     if params.furry_mode and not is_v3:
@@ -437,7 +459,7 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
                 v["information_extracted"] for v in vibes
             ]
 
-    if not is_v3:
+    if not is_v3 and not is_v5:
         base["parameters"]["noise_schedule"] = params.noise_schedule
         base["parameters"]["use_coords"] = params.use_coords
         base["parameters"]["normalize_reference_strength_multiple"] = True
@@ -463,7 +485,7 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
         }
         base["parameters"]["legacy_uc"] = params.legacy_uc
         base["parameters"]["stream"] = "msgpack"
-    else:
+    elif is_v3:
         base["parameters"]["sm"] = params.sm
         base["parameters"]["sm_dyn"] = params.sm_dyn
         if params.sampler != "ddim_v3":
