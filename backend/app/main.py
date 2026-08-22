@@ -4,7 +4,7 @@ import threading
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from . import png_send as png_send_service
 from . import plugins as plugin_service
 from . import publish as publish_service
 from . import library as library_service
+from . import migration as migration_service
 from . import vibes as vibes_service
 from . import workspace as workspace_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
@@ -96,6 +97,16 @@ def system_shutdown(request: Request):
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.post("/api/migration/user-data")
+async def migration_user_data(files: list[UploadFile] = File(...), paths: str = Form(...)):
+    try:
+        return await migration_service.migrate_uploads(files, migration_service.parse_paths(paths))
+    except ValueError as e:
+        raise _as_http(e, 400)
+    except Exception as e:
+        raise _as_http(e)
 
 
 # ---------- 分类 ----------
