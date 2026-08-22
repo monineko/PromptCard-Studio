@@ -236,6 +236,8 @@ export const api = {
   },
   systemShutdown: () =>
     request<{ ok: boolean; message: string }>("/api/system/shutdown", { method: "POST" }),
+  systemRestart: () =>
+    request<{ ok: boolean; message: string }>("/api/system/restart", { method: "POST" }),
   publishEngine: () => request<PublishEngineStatus>("/api/publish/engine"),
   publishEngineInstall: () =>
     request<{ ok: boolean; installing: boolean; message: string }>("/api/publish/engine/install", {
