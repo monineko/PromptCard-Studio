@@ -5,7 +5,7 @@
 **一款本地优先的 NovelAI 提示词管理工具 —— 卡片化工作区 · NovelAI 生图 · 批量生成 · 发布前处理**
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square)](./LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-9cf?style=flat-square)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-9cf?style=flat-square)]()
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square)]()
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2F%20TS%20%2F%20Tailwind%20v4-61dafb?style=flat-square)]()
 [![For](https://img.shields.io/badge/For-NovelAI-8b5cf6?style=flat-square)]()
@@ -22,6 +22,8 @@
 
 一款本地优先的 NovelAI 提示词管理工具。把提示词整理成可复用的「卡片」，在工作区里快速组合、分类、拖拽，管理图片库与参考图 Vibe，并支持卡片组合批量生成和发布前处理（超分降噪 / 自动打码 / 数据抹除 / 批量重命名）。下载解压即可使用，所有数据只保存在你自己的电脑上。
 
+> 平台支持声明：目前主要测试和正式支持 Windows 10/11 64 位。macOS/Linux 仍保留启动脚本，但属于实验性支持，未经充分验证，不能保证全部功能正常，也不能保证后续版本持续兼容。
+
 ## 演示预览
 
 点击图片或标题可跳到对应的教程章节。
@@ -37,7 +39,7 @@
 
 1. 安装 Python 3.10 或更高版本（https://www.python.org/downloads/ ，安装时勾选 Add Python to PATH；请使用标准版 CPython，暂不支持 free-threading / 无 GIL 实验性构建）。
 2. 下载并解压本项目。
-3. 双击 **run.bat**（Windows）或运行 **run.sh**（macOS / Linux）：首次会自动创建运行环境并安装依赖，然后启动服务并打开浏览器；以后每次也用它。
+3. Windows 双击 **run.bat**；macOS/Linux 可尝试运行 **run.sh**（实验性支持）：首次会自动创建运行环境并安装依赖，然后启动服务并打开浏览器；以后每次也用它。
 4. 停止服务：应用内「设置 → 关闭本地服务」。
 
 ### 升级与数据迁移
@@ -48,7 +50,7 @@
 
 脚本说明：
 
-- `run.bat`（Windows）/ `run.sh`（macOS / Linux）：唯一启动入口，自动完成环境准备、依赖安装与启动，端口被占用时自动更换。
+- `run.bat`（Windows）/ `run.sh`（macOS / Linux 实验性）：唯一启动入口，自动完成环境准备、依赖安装与启动，端口被占用时自动更换。
 
 小提示：
 - 如果环境安装遇到问题，可尝试下载release中的“便携整合包”，解压即用。
@@ -293,7 +295,7 @@ vibes/            参考图 Vibe 库（内置演示 vibe）
 images/           README 教程截图（仅文档用）
 LICENSE           开源协议（GPL-3.0）
 README.md         项目说明
-run.bat / run.sh  启动入口（Windows / macOS、Linux）：自动初始化并打开浏览器
+run.bat / run.sh  启动入口（Windows；macOS/Linux 为实验性支持）：自动初始化并打开浏览器
 start.py          服务启动器（由 run.bat / run.sh 调用）
 .gitignore        忽略用户数据，防止误提交
 ```
