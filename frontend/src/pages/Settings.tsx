@@ -37,6 +37,7 @@ export function Settings() {
     show_chinese: true,
     auto_note: true,
     hide_backend_panel: false,
+    hide_style_explore_top_nav: false,
   });
   const [dictStatus, setDictStatus] = useState<DictionaryStatus | null>(null);
   const [bgImages, setBgImages] = useState<{ name: string; url: string }[]>([]);
@@ -156,6 +157,7 @@ export function Settings() {
       show_chinese: settings.show_chinese,
       auto_note: settings.auto_note,
       hide_backend_panel: settings.hide_backend_panel,
+      hide_style_explore_top_nav: settings.hide_style_explore_top_nav,
     });
   }, [settings]);
 
@@ -659,6 +661,21 @@ export function Settings() {
           </span>
         </label>
 
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.hide_style_explore_top_nav}
+            onChange={(e) => setForm({ ...form, hide_style_explore_top_nav: e.target.checked })}
+            className="mt-0.5 accent-[var(--accent)]"
+          />
+          <span>
+            隐藏顶部画风探索入口
+            <span className="block text-xs text-[var(--muted)]">
+              仅隐藏顶部导航中的入口；左侧导航仍会保留，已创建的探索任务和数据不会受影响。
+            </span>
+          </span>
+        </label>
+
         <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
           <div className="mb-1 flex items-center gap-2">
             <span className="text-sm font-medium">提示词词典</span>
@@ -714,6 +731,7 @@ export function Settings() {
                 show_chinese: form.show_chinese,
                 auto_note: form.auto_note,
                 hide_backend_panel: form.hide_backend_panel,
+                hide_style_explore_top_nav: form.hide_style_explore_top_nav,
               })
             }
           >

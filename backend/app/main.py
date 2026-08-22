@@ -16,6 +16,7 @@ from . import cards as cards_service
 from . import batch as batch_service
 from . import backgrounds as backgrounds_service
 from . import dictionary as dictionary_service
+from . import generation_coordinator as generation_coordinator_service
 from . import novelai as novelai_service
 from . import png_send as png_send_service
 from . import plugins as plugin_service
@@ -24,6 +25,7 @@ from . import library as library_service
 from . import migration as migration_service
 from . import vibes as vibes_service
 from . import workspace as workspace_service
+from . import style_explore as style_explore_service
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
     BatchStartIn,
@@ -52,6 +54,11 @@ from .schemas import (
     ReviewApplyIn,
     ReviewUndoIn,
     SetCoverIn,
+    StyleExploreCandidateUpdateIn,
+    StyleExploreCandidatesIn,
+    StyleExplorePoolIn,
+    StyleExplorePoolUpdateIn,
+    StyleExploreRunIn,
     Text2ImageIn,
     VibeRenameIn,
     VibeFolderIn,
@@ -527,6 +534,7 @@ def batch_status():
 @app.post("/api/generate/batch")
 def batch_start(body: BatchStartIn):
     try:
+        generation_coordinator_service.assert_available_for_batch()
         return batch_service.start_batch(
             body.base_positive,
             body.negative,
@@ -538,6 +546,148 @@ def batch_start(body: BatchStartIn):
         raise _as_http(e, 400)
     except RuntimeError as e:
         raise _as_http(e, 502)
+
+
+# ---------- 画风探索（首轮基础设施） ----------
+
+
+@app.get("/api/style-explore/pools")
+def style_explore_pools():
+    return style_explore_service.list_pools()
+
+
+@app.get("/api/style-explore/pools/{pool_id}")
+def style_explore_pool(pool_id: str):
+    try:
+        return style_explore_service.get_pool(pool_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+
+
+@app.post("/api/style-explore/pools")
+def style_explore_pool_create(body: StyleExplorePoolIn):
+    try:
+        return style_explore_service.create_pool(body.name, body.content)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/pools/import")
+async def style_explore_pool_import(file: UploadFile = File(...), name: str = Form("")):
+    try:
+        content = (await file.read()).decode("utf-8-sig")
+        return style_explore_service.create_pool(name or Path(file.filename or "ArtistPool").stem, content, file.filename or "")
+    except UnicodeDecodeError as e:
+        raise _as_http(ValueError("ArtistPool 文件必须为 UTF-8 编码"), 400)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.put("/api/style-explore/pools/{pool_id}")
+def style_explore_pool_update(pool_id: str, body: StyleExplorePoolUpdateIn):
+    try:
+        return style_explore_service.update_pool(pool_id, body.content, body.name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.get("/api/style-explore/runs")
+def style_explore_runs():
+    return style_explore_service.list_runs()
+
+
+@app.get("/api/style-explore/runs/{run_id}")
+def style_explore_run(run_id: str):
+    try:
+        return style_explore_service.get_run(run_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs")
+def style_explore_run_create(body: StyleExploreRunIn):
+    try:
+        return style_explore_service.create_run(
+            body.pool_id, body.target_count, body.positive, body.negative, body.params, body.algorithm, body.phase, body.name
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/start")
+def style_explore_run_start(run_id: str):
+    try:
+        return style_explore_service.start_run(run_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/pause")
+def style_explore_run_pause(run_id: str):
+    try:
+        return style_explore_service.pause_run(run_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/resume")
+def style_explore_run_resume(run_id: str):
+    try:
+        return style_explore_service.start_run(run_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/cancel")
+def style_explore_run_cancel(run_id: str):
+    try:
+        return style_explore_service.cancel_run(run_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/candidates")
+def style_explore_candidates_add(run_id: str, body: StyleExploreCandidatesIn):
+    try:
+        return style_explore_service.add_candidates(run_id, body.candidates)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.patch("/api/style-explore/runs/{run_id}/candidates/{candidate_id}")
+def style_explore_candidate_update(run_id: str, candidate_id: str, body: StyleExploreCandidateUpdateIn):
+    try:
+        return style_explore_service.update_candidate(run_id, candidate_id, body.model_dump(exclude_none=True))
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.get("/api/style-explore/runs/{run_id}/image")
+def style_explore_candidate_image(run_id: str, candidate_id: str):
+    try:
+        return FileResponse(style_explore_service.candidate_image_file(run_id, candidate_id))
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
 
 
 @app.post("/api/generate/batch/pause")

@@ -25,6 +25,7 @@ DEFAULT_SETTINGS = {
     "show_chinese": True,        # 显示中文翻译（词典标注）；关闭后块上不显示，备注不受影响
     "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）
     "hide_backend_panel": False, # 勾选后下次启动自动隐藏后端命令行窗口（Windows）
+    "hide_style_explore_top_nav": False,  # 仅隐藏顶部画风探索入口，侧边栏入口保留
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
     "effects": {                 # 特效开关（界面个性化）

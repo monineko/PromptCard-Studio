@@ -140,6 +140,36 @@ class BatchStartIn(BaseModel):
     stop_anlas: int = 0
 
 
+class StyleExplorePoolIn(BaseModel):
+    name: str = ""
+    content: str = ""
+
+
+class StyleExplorePoolUpdateIn(BaseModel):
+    content: str = ""
+    name: Optional[str] = None
+
+
+class StyleExploreRunIn(BaseModel):
+    name: str = ""
+    pool_id: str = ""
+    target_count: int = 1
+    positive: str = ""
+    negative: str = ""
+    params: dict = {}
+    algorithm: dict = {}
+    phase: str = "basic"
+
+
+class StyleExploreCandidatesIn(BaseModel):
+    candidates: list[dict] = []
+
+
+class StyleExploreCandidateUpdateIn(BaseModel):
+    generation: Optional[dict] = None
+    review: Optional[dict] = None
+
+
 class PngSendIn(BaseModel):
     png: dict = {}
     model: str = ""

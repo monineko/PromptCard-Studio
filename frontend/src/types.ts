@@ -49,6 +49,8 @@ export type Settings = {
   auto_note: boolean;
   /** 隐藏后端面板：勾选后下次启动自动隐藏后端命令行窗口 */
   hide_backend_panel: boolean;
+  /** 仅隐藏顶部画风探索入口，侧边栏入口始终保留 */
+  hide_style_explore_top_nav: boolean;
   effects: {
     background_rotation: boolean;
     review_particles: boolean;
@@ -336,6 +338,81 @@ export type BatchStartPayload = {
   dimensions: BatchDimension[];
   params: Record<string, unknown>;
   stop_anlas: number;
+};
+
+export type StyleExplorePhase = "basic" | "deep";
+export type StyleExploreRunStatus =
+  | "draft"
+  | "running"
+  | "paused"
+  | "generated"
+  | "reviewing"
+  | "completed"
+  | "cancelled";
+export type StyleExploreCandidateStatus = "pending" | "generating" | "done" | "failed" | "skipped";
+export type StyleExploreReviewLabel = "treasure" | "reject" | "special" | null;
+
+export type StyleExplorePoolSummary = {
+  id: string;
+  name: string;
+  source_name?: string;
+  created_at: string;
+  updated_at: string;
+  count: number;
+};
+
+export type StyleExplorePool = StyleExplorePoolSummary & {
+  content: string;
+  ids: string[];
+  skipped: number;
+};
+
+export type StyleExploreRunPool = {
+  id: string;
+  name: string;
+  ids: string[];
+};
+
+export type StyleExploreCandidate = {
+  id: string;
+  artist_string: string;
+  ids: unknown[];
+  generation: { status: StyleExploreCandidateStatus; [key: string]: unknown };
+  review: { heart?: boolean; rating?: number | null; label: StyleExploreReviewLabel; [key: string]: unknown };
+  lineage: Record<string, unknown>;
+};
+
+export type StyleExploreRunSummary = {
+  id: string;
+  name: string;
+  phase: StyleExplorePhase;
+  status: StyleExploreRunStatus;
+  status_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  target_count: number;
+  pool: StyleExploreRunPool;
+  candidate_count: number;
+  done_count: number;
+  reviewed_count: number;
+};
+
+export type StyleExploreRun = StyleExploreRunSummary & {
+  random_seed: number | null;
+  prompt_snapshot: { positive: string; negative: string; params: Record<string, unknown> };
+  algorithm: Record<string, unknown>;
+  candidates: StyleExploreCandidate[];
+};
+
+export type StyleExploreRunCreatePayload = {
+  name?: string;
+  pool_id: string;
+  target_count: number;
+  positive: string;
+  negative: string;
+  params?: Record<string, unknown>;
+  algorithm?: Record<string, unknown>;
+  phase: StyleExplorePhase;
 };
 
 export type PngSendCharacter = {

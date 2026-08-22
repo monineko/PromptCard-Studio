@@ -17,9 +17,10 @@ export function TopBar() {
   const links = [
     { to: "/", label: "提示词工作区" },
     { to: "/library", label: "图片库" },
+    { to: "/style-explore", label: "画风探索" },
     { to: "/publish", label: "发布处理" },
     { to: "/settings", label: "设置" },
-  ];
+  ].filter((link) => link.to !== "/style-explore" || !settings?.hide_style_explore_top_nav);
 
   return (
     <motion.header

@@ -13,6 +13,7 @@ config.json
 batch_runs/
 publish_runs/
 publish_staging/
+style_explore/
 outputs/
 backend/app/engines/runtime/
 plugins/*/models/runtime/

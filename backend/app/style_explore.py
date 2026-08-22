@@ -1,0 +1,568 @@
+"""画风探索的首轮持久化基础设施。
+
+本模块只管理 ArtistPool、任务快照和候选状态；候选算法与实际生图线程会在
+后续里程碑接入。所有用户可见状态都保存在项目内 ``style_explore/``，以便
+项目整体迁移和任务中断后的恢复。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import random
+import re
+import shutil
+import threading
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from . import generation_coordinator
+from . import cards as cards_service
+from . import novelai as novelai_service
+from . import style_explore_algorithm
+from .config import PROJECT_ROOT
+
+
+STYLE_EXPLORE_DIR = PROJECT_ROOT / "style_explore"
+POOLS_DIR = STYLE_EXPLORE_DIR / "pools"
+POOL_BACKUPS_DIR = STYLE_EXPLORE_DIR / "pool_backups"
+RUNS_DIR = STYLE_EXPLORE_DIR / "runs"
+POOLS_INDEX_FILE = POOLS_DIR / "index.json"
+
+_lock = threading.RLock()
+_VALID_RUN_STATES = {"draft", "running", "paused", "generated", "reviewing", "completed", "cancelled"}
+_VALID_CANDIDATE_STATES = {"pending", "generating", "done", "failed", "skipped"}
+_VALID_REVIEW_LABELS = {None, "treasure", "reject", "special"}
+_workers: dict[str, threading.Thread] = {}
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def ensure_storage() -> None:
+    POOLS_DIR.mkdir(parents=True, exist_ok=True)
+    POOL_BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _write_json(path: Path, value: dict | list) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temp, path)
+
+
+def _read_json(path: Path, fallback):
+    if not path.exists():
+        return fallback
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data
+    except (OSError, json.JSONDecodeError):
+        return fallback
+
+
+def _normalize_ids(content: str) -> tuple[list[str], int]:
+    """兼容每行一个 ID 与逗号分隔 ID，保序去重并保留标签转义字符。"""
+    raw = (content or "").lstrip("\ufeff")
+    seen: set[str] = set()
+    ids: list[str] = []
+    skipped = 0
+    for part in re.split(r"[,\r\n]+", raw):
+        value = part.strip()
+        if not value or value.startswith("#"):
+            if value:
+                skipped += 1
+            continue
+        if value in seen:
+            skipped += 1
+            continue
+        seen.add(value)
+        ids.append(value)
+    return ids, skipped
+
+
+def _pool_text(ids: list[str]) -> str:
+    return "\n".join(ids) + ("\n" if ids else "")
+
+
+def _load_pool_index() -> list[dict]:
+    ensure_storage()
+    data = _read_json(POOLS_INDEX_FILE, [])
+    return data if isinstance(data, list) else []
+
+
+def _save_pool_index(items: list[dict]) -> None:
+    _write_json(POOLS_INDEX_FILE, items)
+
+
+def _pool_by_id(pool_id: str) -> dict:
+    for pool in _load_pool_index():
+        if pool.get("id") == pool_id:
+            return pool
+    raise FileNotFoundError(f"ArtistPool 不存在: {pool_id}")
+
+
+def _pool_file(pool_id: str) -> Path:
+    return POOLS_DIR / f"{pool_id}.txt"
+
+
+def _public_pool(pool: dict, ids: list[str] | None = None) -> dict:
+    result = dict(pool)
+    if ids is None:
+        ids, _ = _normalize_ids(_pool_file(pool["id"]).read_text(encoding="utf-8") if _pool_file(pool["id"]).exists() else "")
+    result["count"] = len(ids)
+    return result
+
+
+def list_pools() -> list[dict]:
+    with _lock:
+        return [_public_pool(pool) for pool in _load_pool_index()]
+
+
+def get_pool(pool_id: str) -> dict:
+    with _lock:
+        pool = _pool_by_id(pool_id)
+        content = _pool_file(pool_id).read_text(encoding="utf-8") if _pool_file(pool_id).exists() else ""
+        ids, skipped = _normalize_ids(content)
+        return {**_public_pool(pool, ids), "content": _pool_text(ids), "ids": ids, "skipped": skipped}
+
+
+def create_pool(name: str, content: str, source_name: str = "") -> dict:
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("ArtistPool 名称不能为空")
+    ids, skipped = _normalize_ids(content)
+    if not ids:
+        raise ValueError("ArtistPool 至少需要一个有效 ID")
+    with _lock:
+        ensure_storage()
+        pool_id = uuid.uuid4().hex[:12]
+        now = _now()
+        pool = {
+            "id": pool_id,
+            "name": clean_name[:120],
+            "source_name": (source_name or "").strip()[:200],
+            "created_at": now,
+            "updated_at": now,
+        }
+        _pool_file(pool_id).write_text(_pool_text(ids), encoding="utf-8")
+        index = _load_pool_index()
+        index.append(pool)
+        _save_pool_index(index)
+        return {**_public_pool(pool, ids), "skipped": skipped}
+
+
+def _backup_pool(pool_id: str) -> Path | None:
+    source = _pool_file(pool_id)
+    if not source.exists():
+        return None
+    folder = POOL_BACKUPS_DIR / pool_id
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{datetime.now():%Y%m%d_%H%M%S_%f}.txt"
+    shutil.copy2(source, target)
+    return target
+
+
+def update_pool(pool_id: str, content: str, name: str | None = None) -> dict:
+    ids, skipped = _normalize_ids(content)
+    if not ids:
+        raise ValueError("ArtistPool 至少需要一个有效 ID")
+    with _lock:
+        pool = _pool_by_id(pool_id)
+        _backup_pool(pool_id)
+        _pool_file(pool_id).write_text(_pool_text(ids), encoding="utf-8")
+        index = _load_pool_index()
+        for item in index:
+            if item.get("id") == pool_id:
+                if name is not None:
+                    clean_name = name.strip()
+                    if not clean_name:
+                        raise ValueError("ArtistPool 名称不能为空")
+                    item["name"] = clean_name[:120]
+                item["updated_at"] = _now()
+                pool = item
+                break
+        _save_pool_index(index)
+        return {**_public_pool(pool, ids), "skipped": skipped}
+
+
+def _run_file(run_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{12}", run_id or ""):
+        raise ValueError("探索任务 ID 非法")
+    return RUNS_DIR / run_id / "run.json"
+
+
+def _active_dir(run_id: str) -> Path:
+    return _run_file(run_id).parent / "active"
+
+
+def _label_dir(run_id: str, label: str | None) -> Path:
+    return _run_file(run_id).parent / (label or "active")
+
+
+def _load_run(run_id: str) -> dict:
+    path = _run_file(run_id)
+    record = _read_json(path, None)
+    if not isinstance(record, dict):
+        raise FileNotFoundError(f"探索任务不存在: {run_id}")
+    return record
+
+
+def _save_run(record: dict) -> None:
+    record["updated_at"] = _now()
+    _write_json(_run_file(record["id"]), record)
+
+
+def _public_run(record: dict) -> dict:
+    candidates = record.get("candidates") or []
+    return {
+        "id": record.get("id"),
+        "name": record.get("name"),
+        "phase": record.get("phase"),
+        "status": record.get("status"),
+        "status_reason": record.get("status_reason"),
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+        "target_count": record.get("target_count"),
+        "pool": record.get("pool"),
+        "candidate_count": len(candidates),
+        "done_count": sum(1 for item in candidates if item.get("generation", {}).get("status") == "done"),
+        "reviewed_count": sum(1 for item in candidates if item.get("review", {}).get("label") is not None),
+    }
+
+
+def _full_run(record: dict) -> dict:
+    """完整任务详情同时携带列表视图需要的统计字段。"""
+    return {**record, **_public_run(record)}
+
+
+def list_runs() -> list[dict]:
+    with _lock:
+        ensure_storage()
+        records: list[dict] = []
+        for path in RUNS_DIR.glob("*/run.json"):
+            record = _read_json(path, None)
+            if isinstance(record, dict):
+                records.append(_public_run(record))
+        return sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
+
+
+def get_run(run_id: str) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        # 进程重启后没有实际 worker，不能把旧 running 任务误报为继续执行。
+        reservation = generation_coordinator.status().get("reservation")
+        if record.get("status") == "running" and (
+            not reservation
+            or reservation.get("owner") != "style_explore"
+            or reservation.get("task_id") != run_id
+        ):
+            record["status"] = "paused"
+            record["status_reason"] = "服务重启，探索任务已暂停"
+            _save_run(record)
+        return _full_run(record)
+
+
+def create_run(
+    pool_id: str,
+    target_count: int,
+    positive: str,
+    negative: str,
+    params: dict | None = None,
+    algorithm: dict | None = None,
+    phase: str = "basic",
+    name: str = "",
+) -> dict:
+    if phase not in {"basic", "deep"}:
+        raise ValueError("探索阶段必须是 basic 或 deep")
+    if not 1 <= int(target_count) <= 10000:
+        raise ValueError("目标生成数量需在 1~10000 之间")
+    with _lock:
+        pool = get_pool(pool_id)
+        run_id = uuid.uuid4().hex[:12]
+        now = _now()
+        record = {
+            "id": run_id,
+            "name": (name or "").strip()[:120] or f"{pool['name']} 探索 {now[:10]}",
+            "phase": phase,
+            "status": "draft",
+            "status_reason": None,
+            "created_at": now,
+            "updated_at": now,
+            "target_count": int(target_count),
+            "random_seed": None,
+            "pool": {"id": pool["id"], "name": pool["name"], "ids": pool["ids"]},
+            "prompt_snapshot": {"positive": positive or "", "negative": negative or "", "params": params or {}},
+            "algorithm": algorithm or {},
+            "candidates": [],
+        }
+        _active_dir(run_id).mkdir(parents=True, exist_ok=True)
+        _save_run(record)
+        return _full_run(record)
+
+
+def _assert_batch_idle() -> None:
+    # 延迟导入避免服务之间的初始化环；普通批量的 active 记录存在即视为占用。
+    from . import batch
+
+    if batch.status().get("active"):
+        raise ValueError("已有未结束的普通批量生成任务，请先结束该任务后再开始画风探索")
+
+
+def start_run(run_id: str) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") not in {"draft", "paused"}:
+            raise ValueError("只有草稿或已暂停的探索任务可以开始")
+        _assert_batch_idle()
+        if not novelai_service.is_configured():
+            raise ValueError("尚未配置 NovelAI token，请先在「设置」中配置")
+        generation_coordinator.acquire("style_explore", run_id)
+        if not record.get("candidates"):
+            _create_basic_candidates(record)
+        record["status"] = "running"
+        record["status_reason"] = None
+        _save_run(record)
+        worker = _workers.get(run_id)
+        if worker is None or not worker.is_alive():
+            worker = threading.Thread(target=_worker_loop, args=(run_id,), daemon=True)
+            _workers[run_id] = worker
+            worker.start()
+        return _full_run(record)
+
+
+def pause_run(run_id: str) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") != "running":
+            raise ValueError("探索任务当前不在运行中")
+        generation_coordinator.release("style_explore", run_id)
+        record["status"] = "paused"
+        record["status_reason"] = "用户已暂停"
+        _save_run(record)
+        return _full_run(record)
+
+
+def cancel_run(run_id: str) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") in {"completed", "cancelled"}:
+            raise ValueError("探索任务已经结束")
+        generation_coordinator.release("style_explore", run_id)
+        record["status"] = "cancelled"
+        record["status_reason"] = "用户已结束"
+        _save_run(record)
+        return _full_run(record)
+
+
+def add_candidates(run_id: str, candidates: list[dict]) -> dict:
+    """供后续算法层写入候选；首轮可由测试或前端预览调用。"""
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") not in {"draft", "running", "paused"}:
+            raise ValueError("当前任务状态不能添加候选")
+        existing = {item.get("id") for item in record.get("candidates") or []}
+        added: list[dict] = []
+        for raw in candidates:
+            artist_string = str((raw or {}).get("artist_string") or "").strip()
+            if not artist_string:
+                raise ValueError("候选缺少 artist_string")
+            candidate_id = str((raw or {}).get("id") or uuid.uuid4().hex[:12])
+            if candidate_id in existing:
+                raise ValueError(f"候选 ID 重复: {candidate_id}")
+            generation = dict((raw or {}).get("generation") or {})
+            generation["status"] = generation.get("status") or "pending"
+            if generation["status"] not in _VALID_CANDIDATE_STATES:
+                raise ValueError("候选 generation.status 非法")
+            item = {
+                "id": candidate_id,
+                "artist_string": artist_string,
+                "ids": list((raw or {}).get("ids") or []),
+                "generation": generation,
+                "review": {"heart": False, "rating": None, "label": None},
+                "lineage": dict((raw or {}).get("lineage") or {"parent_ids": [], "operations": []}),
+            }
+            record.setdefault("candidates", []).append(item)
+            existing.add(candidate_id)
+            added.append(item)
+        _save_run(record)
+        return {"ok": True, "added": added, "run": _public_run(record)}
+
+
+def update_candidate(run_id: str, candidate_id: str, patch: dict) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        candidate = next((item for item in record.get("candidates") or [] if item.get("id") == candidate_id), None)
+        if candidate is None:
+            raise FileNotFoundError(f"候选不存在: {candidate_id}")
+        if "generation" in patch:
+            generation = dict(patch.get("generation") or {})
+            status = generation.get("status", candidate.get("generation", {}).get("status"))
+            if status not in _VALID_CANDIDATE_STATES:
+                raise ValueError("候选 generation.status 非法")
+            candidate["generation"] = {**candidate.get("generation", {}), **generation, "status": status}
+        if "review" in patch:
+            review = dict(patch.get("review") or {})
+            label = review.get("label", candidate.get("review", {}).get("label"))
+            if label not in _VALID_REVIEW_LABELS:
+                raise ValueError("候选 review.label 非法")
+            if "rating" in review and review["rating"] is not None and not 0 <= float(review["rating"]) <= 5:
+                raise ValueError("候选评分需在 0~5 之间")
+            candidate["review"] = {**candidate.get("review", {}), **review, "label": label}
+            _move_candidate_for_label(run_id, candidate, label)
+        _save_run(record)
+        return candidate
+
+
+def _move_candidate_for_label(run_id: str, candidate: dict, label: str | None) -> None:
+    """筛选状态与任务内物理目录同步；未生成候选仅记录标签。"""
+    generation = candidate.get("generation") or {}
+    raw_path = generation.get("path")
+    if generation.get("status") != "done" or not raw_path:
+        return
+    source = Path(str(raw_path)).resolve()
+    task_root = _run_file(run_id).parent.resolve()
+    if not source.is_relative_to(task_root) or not source.is_file():
+        return
+    destination_dir = _label_dir(run_id, label)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / source.name
+    if source == destination:
+        return
+    if destination.exists():
+        destination = destination_dir / f"{candidate['id']}_{source.name}"
+    shutil.move(str(source), str(destination))
+    generation["path"] = str(destination)
+
+
+def candidate_image_file(run_id: str, candidate_id: str) -> Path:
+    with _lock:
+        record = _load_run(run_id)
+        candidate = next((item for item in record.get("candidates") or [] if item.get("id") == candidate_id), None)
+        if candidate is None:
+            raise FileNotFoundError("候选不存在")
+        path = Path(str((candidate.get("generation") or {}).get("path") or "")).resolve()
+        task_root = _run_file(run_id).parent.resolve()
+        if not path.is_relative_to(task_root) or not path.is_file():
+            raise FileNotFoundError("候选图片不存在")
+        return path
+
+
+def _create_basic_candidates(record: dict) -> None:
+    """首次开始基础任务时，把可复现随机候选直接固化到任务记录。"""
+    if record.get("phase") != "basic":
+        raise ValueError("深度探索候选将在深度算法接入后创建")
+    raw = record.get("algorithm") or {}
+    config = style_explore_algorithm.WeightSamplingConfig(
+        lower=float(raw.get("lower", 0.1)),
+        upper=float(raw.get("upper", 2.0)),
+        mode=float(raw.get("mode", 0.8)),
+        left_dispersion=float(raw.get("left_dispersion", 0.4)),
+        right_dispersion=float(raw.get("right_dispersion", 0.4)),
+        soft_balance_strength=float(raw.get("soft_balance_strength", 0.0)),
+    )
+    artist_count = int(raw.get("artist_count", 2))
+    seed = int(raw.get("random_seed", random.SystemRandom().randrange(1, 2**63)))
+    generated = style_explore_algorithm.generate_basic_candidates(
+        record["pool"]["ids"], artist_count, int(record["target_count"]), config, random.Random(seed)
+    )
+    record["random_seed"] = seed
+    record["algorithm"] = {
+        **raw,
+        "lower": config.lower,
+        "upper": config.upper,
+        "mode": config.mode,
+        "left_dispersion": config.left_dispersion,
+        "right_dispersion": config.right_dispersion,
+        "soft_balance_strength": config.soft_balance_strength,
+        "artist_count": artist_count,
+    }
+    record["candidates"] = [
+        {
+            "id": uuid.uuid4().hex[:12],
+            "artist_string": candidate.artist_string,
+            "ids": [{"id": item.artist_id, "weight": item.weight} for item in candidate.artist_weights],
+            "generation": {"status": "pending"},
+            "review": {"heart": False, "rating": None, "label": None},
+            "lineage": {"parent_ids": [], "operations": ["basic_split_beta"]},
+        }
+        for candidate in generated
+    ]
+
+
+def _worker_loop(run_id: str) -> None:
+    """探索专属串行 worker：一张完成即写入任务记录与专属 active 目录。"""
+    try:
+        while True:
+            with _lock:
+                record = _load_run(run_id)
+                if record.get("status") != "running":
+                    return
+                candidate = next(
+                    (item for item in record.get("candidates") or [] if item.get("generation", {}).get("status") == "pending"),
+                    None,
+                )
+                if candidate is None:
+                    record["status"] = "generated"
+                    record["status_reason"] = None
+                    _save_run(record)
+                    generation_coordinator.release("style_explore", run_id)
+                    return
+                candidate["generation"] = {**candidate.get("generation", {}), "status": "generating"}
+                _save_run(record)
+
+            try:
+                snapshot = record.get("prompt_snapshot") or {}
+                prompt = ", ".join(
+                    part.strip().rstrip(",")
+                    for part in [str(snapshot.get("positive") or ""), str(candidate["artist_string"])]
+                    if part and part.strip()
+                )
+                params = dict(snapshot.get("params") or {})
+                base_seed = int(params.get("seed") or -1)
+                if base_seed >= 0:
+                    index = next(i for i, item in enumerate(record["candidates"]) if item["id"] == candidate["id"])
+                    params["seed"] = base_seed + index
+                else:
+                    params["seed"] = -1
+                saved = novelai_service.generate_text2image(
+                    cards_service.expand(prompt),
+                    cards_service.expand(str(snapshot.get("negative") or "")),
+                    params,
+                    output_dir=_active_dir(run_id),
+                )
+            except Exception as exc:
+                with _lock:
+                    latest = _load_run(run_id)
+                    item = next(x for x in latest["candidates"] if x["id"] == candidate["id"])
+                    item["generation"] = {**item.get("generation", {}), "status": "failed", "error": str(exc)[:500]}
+                    _save_run(latest)
+                continue
+
+            with _lock:
+                latest = _load_run(run_id)
+                item = next(x for x in latest["candidates"] if x["id"] == candidate["id"])
+                item["generation"] = {
+                    **item.get("generation", {}),
+                    "status": "done",
+                    "path": saved.get("path"),
+                    "name": saved.get("name"),
+                    "seed": saved.get("seed"),
+                    "width": saved.get("width"),
+                    "height": saved.get("height"),
+                    "elapsed_ms": saved.get("elapsed_ms"),
+                    "anlas": saved.get("anlas"),
+                    "error": None,
+                }
+                _save_run(latest)
+    finally:
+        with _lock:
+            try:
+                record = _load_run(run_id)
+            except (FileNotFoundError, ValueError):
+                return
+            if record.get("status") != "running":
+                generation_coordinator.release("style_explore", run_id)

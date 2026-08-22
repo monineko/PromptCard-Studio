@@ -459,7 +459,8 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
                 v["information_extracted"] for v in vibes
             ]
 
-    if not is_v3 and not is_v5:
+    # V5 也沿用 v4 条件对象承载角色定位；省略该对象会导致 NovelAI 返回 HTTP 500。
+    if not is_v3:
         base["parameters"]["noise_schedule"] = params.noise_schedule
         base["parameters"]["use_coords"] = params.use_coords
         base["parameters"]["normalize_reference_strength_multiple"] = True
@@ -519,10 +520,10 @@ def _random_str(length: int = 6) -> str:
     return "".join(random.choice(base) for _ in range(length))
 
 
-def _save_to_library(data: bytes, seed: int, payload: dict) -> dict:
+def _save_to_library(data: bytes, seed: int, payload: dict, output_dir: Path | None = None) -> dict:
     """保存到图库未评分目录 library/<日期>/<种子>_<随机6位>.png，并回填元数据。"""
     root = _library_root()
-    folder = root / date.today().isoformat()
+    folder = output_dir if output_dir is not None else root / date.today().isoformat()
     folder.mkdir(parents=True, exist_ok=True)
     name = f"{seed}_{_random_str(6)}.png"
     dest = folder / name
@@ -530,7 +531,8 @@ def _save_to_library(data: bytes, seed: int, payload: dict) -> dict:
 
     _ensure_png_metadata(dest, payload)
     return {
-        "path": dest.relative_to(root).as_posix(),
+        # 常规生成保持图库相对路径；专属任务输出返回绝对路径，由调用方记录。
+        "path": dest.relative_to(root).as_posix() if output_dir is None else str(dest),
         "name": name,
         "seed": seed,
         "width": payload["parameters"]["width"],
@@ -577,7 +579,12 @@ def _ensure_png_metadata(path: Path, payload: dict) -> None:
         pass
 
 
-def generate_text2image(prompt: str, negative_prompt: str, params_data: dict) -> dict:
+def generate_text2image(
+    prompt: str,
+    negative_prompt: str,
+    params_data: dict,
+    output_dir: Path | None = None,
+) -> dict:
     """单张文生图完整流程：校验 → 构造 → 调用 → 存图。返回结果摘要。"""
     token = get_token()
     if not token:
@@ -592,7 +599,7 @@ def generate_text2image(prompt: str, negative_prompt: str, params_data: dict) ->
     start = time.monotonic()
     payload = build_text2image_payload(params, prompt, negative_prompt)
     image_data = generate_image(token, payload)
-    saved = _save_to_library(image_data, payload["parameters"]["seed"], payload)
+    saved = _save_to_library(image_data, payload["parameters"]["seed"], payload, output_dir)
     saved["ok"] = True
     saved["elapsed_ms"] = int((time.monotonic() - start) * 1000)
     anlas, _ = inquire_anlas(token)
