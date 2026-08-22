@@ -78,18 +78,25 @@ function SplitBetaPreview({ lower, upper, mode, leftDispersion, rightDispersion 
     const peak = Math.max(...values, 1);
     return { lo, hi, center, values: values.map((value) => value / peak) };
   }, [leftDispersion, lower, mode, rightDispersion, upper]);
-  const line = preview.values.map((value, index) => `${((index + 0.5) / preview.values.length) * 100},${88 - value * 72}`).join(" ");
-  const modePosition = preview.hi === preview.lo ? 50 : ((preview.center - preview.lo) / (preview.hi - preview.lo)) * 100;
+  const chart = { width: 760, height: 300, left: 62, right: 22, top: 18, bottom: 48 };
+  const plotWidth = chart.width - chart.left - chart.right;
+  const plotHeight = chart.height - chart.top - chart.bottom;
+  const xAt = (value: number) => chart.left + ((value - preview.lo) / Math.max(preview.hi - preview.lo, 0.1)) * plotWidth;
+  const yAt = (value: number) => chart.top + (1 - value) * plotHeight;
+  const line = preview.values.map((value, index) => `${xAt(preview.lo + ((index + 0.5) / preview.values.length) * (preview.hi - preview.lo))},${yAt(value)}`).join(" ");
+  const modePosition = xAt(preview.center);
   return <section className="mt-5 border-t border-[var(--border)] pt-4" aria-labelledby="split-beta-preview-title">
     <div className="flex flex-wrap items-center gap-2"><h3 id="split-beta-preview-title" className="text-sm font-medium">Split-Beta 概率预览</h3><span className="text-xs text-[var(--muted)]">显示单个权重采样后、0.1 离散化前的相对概率密度</span></div>
     <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/30 p-3">
-      <svg viewBox="0 0 100 108" preserveAspectRatio="none" className="h-36 w-full" role="img" aria-label={`权重 ${preview.lo.toFixed(1)} 到 ${preview.hi.toFixed(1)} 的 Split-Beta 概率分布，众数 ${preview.center.toFixed(1)}`}>
+      <svg viewBox={`0 0 ${chart.width} ${chart.height}`} preserveAspectRatio="xMidYMid meet" className="h-64 w-full sm:h-72" role="img" aria-label={`权重 ${preview.lo.toFixed(1)} 到 ${preview.hi.toFixed(1)} 的 Split-Beta 概率分布，众数 ${preview.center.toFixed(1)}`}>
         <title>Split-Beta 权重概率分布</title><desc>柱形和曲线越高，代表该权重附近越容易被随机抽样。</desc>
-        <line x1="0" y1="89" x2="100" y2="89" stroke="var(--border)" strokeWidth="0.6" />
-        {preview.values.map((value, index) => <rect key={index} x={(index / preview.values.length) * 100 + 0.25} y={88 - value * 72} width={100 / preview.values.length - 0.5} height={value * 72} fill="var(--accent)" opacity="0.42" />)}
-        <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
-        <line x1={modePosition} y1="8" x2={modePosition} y2="90" stroke="var(--text)" strokeWidth="0.7" strokeDasharray="2 2" opacity="0.7" />
-        <text x="0" y="103" fill="var(--muted)" fontSize="7">{preview.lo.toFixed(1)}</text><text x={modePosition} y="103" textAnchor="middle" fill="var(--text)" fontSize="7">众数 {preview.center.toFixed(1)}</text><text x="100" y="103" textAnchor="end" fill="var(--muted)" fontSize="7">{preview.hi.toFixed(1)}</text>
+        {[0, 0.25, 0.5, 0.75, 1].map((tick) => <g key={tick}><line x1={chart.left} y1={yAt(tick)} x2={chart.width - chart.right} y2={yAt(tick)} stroke="var(--border)" strokeWidth="1" /><text x={chart.left - 10} y={yAt(tick) + 4} textAnchor="end" fill="var(--muted)" fontSize="12">{tick.toFixed(2)}</text></g>)}
+        <line x1={chart.left} y1={chart.top} x2={chart.left} y2={chart.height - chart.bottom} stroke="var(--text)" strokeWidth="1.2" /><line x1={chart.left} y1={chart.height - chart.bottom} x2={chart.width - chart.right} y2={chart.height - chart.bottom} stroke="var(--text)" strokeWidth="1.2" />
+        {preview.values.map((value, index) => { const x = chart.left + (index / preview.values.length) * plotWidth; const width = plotWidth / preview.values.length - 3; return <rect key={index} x={x + 1.5} y={yAt(value)} width={Math.max(1, width)} height={chart.height - chart.bottom - yAt(value)} fill="var(--accent)" opacity="0.34" />; })}
+        <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth="2.4" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <line x1={modePosition} y1={chart.top} x2={modePosition} y2={chart.height - chart.bottom} stroke="var(--text)" strokeWidth="1.4" strokeDasharray="6 4" opacity="0.8" />
+        <text x={chart.left} y={chart.height - 20} fill="var(--muted)" fontSize="13">{preview.lo.toFixed(1)}</text><text x={modePosition} y={chart.height - 20} textAnchor="middle" fill="var(--text)" fontSize="13">众数 {preview.center.toFixed(1)}</text><text x={chart.width - chart.right} y={chart.height - 20} textAnchor="end" fill="var(--muted)" fontSize="13">{preview.hi.toFixed(1)}</text>
+        <text x={chart.width / 2} y={chart.height - 4} textAnchor="middle" fill="var(--muted)" fontSize="13">权重</text><text x="16" y={chart.height / 2} textAnchor="middle" fill="var(--muted)" fontSize="13" transform={`rotate(-90 16 ${chart.height / 2})`}>相对概率密度</text>
       </svg>
     </div>
     <p className="mt-2 text-xs text-[var(--muted)]">左右离散程度分别改变众数两侧的扩散；软平衡属于一条 Artist String 内的组合级修正，因此不显示在这张单权重分布图中。</p>
@@ -142,7 +149,7 @@ export function StyleExplore() {
   }, []);
 
   useEffect(() => { void refresh().catch((e) => addToast(`读取画风探索数据失败：${(e as Error).message}`, "err")); }, [addToast, refresh]);
-  useEffect(() => { void loadPool(poolId).catch((e) => addToast(`读取池子失败：${(e as Error).message}`, "err")); }, [addToast, loadPool, poolId]);
+  useEffect(() => { void loadPool(poolId).catch((e) => addToast(`读取 ArtistPool 失败：${(e as Error).message}`, "err")); }, [addToast, loadPool, poolId]);
   useEffect(() => { void loadRun(selectedRunId).catch((e) => addToast(`读取任务失败：${(e as Error).message}`, "err")); }, [addToast, loadRun, selectedRunId]);
   useEffect(() => {
     if (run?.status !== "running") return;
@@ -160,16 +167,16 @@ export function StyleExplore() {
   };
   const createPool = () => void withBusy(async () => {
     const created = await api.styleExploreCreatePool(newPoolName, newPoolText);
-    setNewPoolName(""); setNewPoolText(""); setPoolId(created.id); await refresh(); addToast(`已创建池子：${created.input_count ?? created.count} 项输入，${created.count} 个有效 ID，${created.duplicate_count ?? 0} 项重复`);
+    setNewPoolName(""); setNewPoolText(""); setPoolId(created.id); await refresh(); addToast(`已创建 ArtistPool：${created.input_count ?? created.count} 项输入，${created.count} 个有效 ID，${created.duplicate_count ?? 0} 项重复`);
   });
   const savePool = () => void withBusy(async () => {
     if (!pool) return;
     const updated = await api.styleExploreUpdatePool(pool.id, poolText, poolName);
-    await refresh(); await loadPool(updated.id); addToast(`已保存池子，共 ${updated.count} 个 ID；旧版本已备份`);
+    await refresh(); await loadPool(updated.id); addToast(`已保存 ArtistPool，共 ${updated.count} 个 ID；旧版本已备份`);
   });
   const importPoolFile = (file: File | undefined) => void withBusy(async () => {
     if (!file) return;
-    const imported = await api.styleExploreImportPool(file); setPoolId(imported.id); await refresh(); addToast(`已导入并规范化：${imported.input_count ?? imported.count} 项输入，${imported.count} 个有效 ID，${imported.duplicate_count ?? 0} 项重复`);
+    const imported = await api.styleExploreImportPool(file); setPoolId(imported.id); await refresh(); addToast(`已导入并规范化 ArtistPool：${imported.input_count ?? imported.count} 项输入，${imported.count} 个有效 ID，${imported.duplicate_count ?? 0} 项重复`);
   });
   const createRun = () => void withBusy(async () => {
     if (!poolId) throw new Error("请先选择 ArtistPool");
@@ -199,9 +206,9 @@ export function StyleExplore() {
     <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
       <aside className="space-y-5">
         <section className="glass rounded-2xl p-4"><h2 className="mb-3 font-semibold">ArtistPool</h2>
-          <select className={inputClass} value={poolId} onChange={(e) => setPoolId(e.target.value)}>{pools.length === 0 && <option value="">暂无池子</option>}{pools.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.count} ID</option>)}</select>
-          {pool && <><input className={`${inputClass} mt-3`} value={poolName} onChange={(e) => setPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-52 font-mono text-xs`} value={poolText} onChange={(e) => setPoolText(e.target.value)} /><p className="mt-1 text-xs text-[var(--muted)]">本次文本：{pool.input_count} 项输入，{pool.ids.length} 个有效 ID，{pool.duplicate_count} 项重复，{pool.skipped_count} 项跳过。保存时会规范为一行一个 ID，并保留备份。</p><button className={`${buttonClass} mt-3 w-full`} onClick={savePool} disabled={busy}><Save size={14} />保存池子</button></>}
-          <div className="mt-4 border-t border-[var(--border)] pt-4"><input className={inputClass} placeholder="新池子名称" value={newPoolName} onChange={(e) => setNewPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-20 text-xs`} placeholder="换行或逗号分隔的 ID" value={newPoolText} onChange={(e) => setNewPoolText(e.target.value)} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={createPool} disabled={busy}><FolderPlus size={14} />新建池子</button><input ref={fileRef} className="hidden" type="file" accept=".txt,text/plain" onChange={(e) => { importPoolFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={14} />导入 TXT</button></div>
+          <select className={inputClass} value={poolId} onChange={(e) => setPoolId(e.target.value)}>{pools.length === 0 && <option value="">暂无 ArtistPool</option>}{pools.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.count} ID</option>)}</select>
+          {pool && <><input className={`${inputClass} mt-3`} value={poolName} onChange={(e) => setPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-52 font-mono text-xs`} value={poolText} onChange={(e) => setPoolText(e.target.value)} /><p className="mt-1 text-xs text-[var(--muted)]">本次文本：{pool.input_count} 项输入，{pool.ids.length} 个有效 ID，{pool.duplicate_count} 项重复，{pool.skipped_count} 项跳过。保存时会规范为一行一个 ID，并保留备份。</p><button className={`${buttonClass} mt-3 w-full`} onClick={savePool} disabled={busy}><Save size={14} />保存 ArtistPool</button></>}
+          <div className="mt-4 border-t border-[var(--border)] pt-4"><input className={inputClass} placeholder="新 ArtistPool 名称" value={newPoolName} onChange={(e) => setNewPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-20 text-xs`} placeholder="换行或逗号分隔的 ID" value={newPoolText} onChange={(e) => setNewPoolText(e.target.value)} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={createPool} disabled={busy}><FolderPlus size={14} />新建 ArtistPool</button><input ref={fileRef} className="hidden" type="file" accept=".txt,text/plain" onChange={(e) => { importPoolFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={14} />导入 TXT</button></div>
         </section>
         <section className="glass rounded-2xl p-4"><h2 className="mb-3 font-semibold">探索任务</h2><select className={inputClass} value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)}><option value="">新建任务 / 未选择</option>{runs.map((item) => <option key={item.id} value={item.id}>{item.name} · {statusLabel(item.status)} · {item.done_count}/{item.target_count}</option>)}</select>{run && <div className="mt-3 rounded-xl border border-[var(--border)] p-3 text-xs"><div className="font-medium">{run.name} · {statusLabel(run.status)} · {run.done_count}/{run.target_count}</div><div className="mt-1 break-all text-[var(--muted)]">任务 {run.id}</div>{run.status_reason && <div className="mt-1 text-amber-500">{run.status_reason}</div>}</div>}</section>
       </aside>
@@ -210,13 +217,13 @@ export function StyleExplore() {
           <div className="mt-4 grid gap-4 lg:grid-cols-2"><label className="text-sm">任务名称<input className={`${inputClass} mt-1`} value={taskName} onChange={(e) => setTaskName(e.target.value)} placeholder="例如：厚涂水彩画风" /></label><div className="text-xs leading-relaxed text-[var(--muted)]">任务名称只用于识别专属图库；系统会额外保存不可变任务 ID。切换任务后只显示该任务的候选。</div><label className="text-sm">正面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={positive} onChange={(e) => setPositive(e.target.value)} placeholder="可直接粘贴或导入工作区内容" /></label><label className="text-sm">负面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={negative} onChange={(e) => setNegative(e.target.value)} placeholder="可选" /></label></div>
           <div className="mt-4 grid gap-x-4 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
             <ParameterControl label="目标图片数" help={{ title: "目标图片数", description: "本次基础探索要生成的候选图片数。数值越大，覆盖的 Artist String 组合越多，也会增加生成耗时和消耗。" }} value={targetCount} onChange={setTargetCount} min={1} max={10000} step={1} defaultValue={20} integer onOpenHelp={setHelpEntry} />
-            <ParameterControl label="每串 ID 数" help={{ title: "每串 ID 数", description: "每一条 Artist String 从池子中无放回选取的画师 ID 数量。数量越多，画风融合越明显；较少时更容易辨认单个画师的影响。" }} value={artistCount} onChange={setArtistCount} min={1} max={10} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} />
+            <ParameterControl label="每串 ID 数" help={{ title: "每串 ID 数", description: "每一条 Artist String 从 ArtistPool 中无放回选取的画师 ID 数量。数量越多，画风融合越明显；较少时更容易辨认单个画师的影响。" }} value={artistCount} onChange={setArtistCount} min={1} max={10} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} />
             <ParameterControl label="权重下界" help={{ title: "权重下界", description: "本轮随机权重不会低于这个值。它与上界共同限定可出现的权重范围，必须不大于众数。" }} value={lower} onChange={setLower} min={-3} max={3} step={0.1} defaultValue={0.1} onOpenHelp={setHelpEntry} />
             <ParameterControl label="权重上界" help={{ title: "权重上界", description: "本轮随机权重不会高于这个值。它与下界共同限定可出现的权重范围，必须不小于众数。" }} value={upper} onChange={setUpper} min={-3} max={3} step={0.1} defaultValue={2} onOpenHelp={setHelpEntry} />
             <ParameterControl label="众数" help={{ title: "众数", description: "Split-Beta 分布的中心。随机采样最倾向于靠近它，但不会保证每个画师 ID 都取该权重。众数必须落在上下界之间。" }} value={mode} onChange={setMode} min={Math.min(lower, upper)} max={Math.max(lower, upper)} step={0.1} defaultValue={0.8} onOpenHelp={setHelpEntry} />
             <ParameterControl label="左侧离散" help={{ title: "左侧离散", description: "控制低于众数一侧的扩散程度。0.0 会让权重高度靠近众数；1.0 会让该侧区间更接近均匀抽样。" }} value={leftDispersion} onChange={setLeftDispersion} min={0} max={1} step={0.1} defaultValue={0.4} onOpenHelp={setHelpEntry} />
             <ParameterControl label="右侧离散" help={{ title: "右侧离散", description: "控制高于众数一侧的扩散程度。0.0 会让权重高度靠近众数；1.0 会让该侧区间更接近均匀抽样。" }} value={rightDispersion} onChange={setRightDispersion} min={0} max={1} step={0.1} defaultValue={0.4} onOpenHelp={setHelpEntry} />
-            <div className="min-w-0 text-sm"><div className="mb-1 flex items-center justify-between gap-2"><span>启用软平衡<ParameterHelp entry={{ title: "软平衡", description: "对同一条 Artist String 的所有权重做轻微的整体回拉，减少整串同时偏高或偏低的情况。它不会改变各 ID 的相对权重差；默认关闭。" }} onOpen={setHelpEntry} /></span><button type="button" className="shrink-0 rounded-md p-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]" aria-label="恢复软平衡默认值" title="恢复默认值" onClick={() => { setSoftBalance(false); setSoftBalanceStrength(0.5); }}><RotateCcw size={14} /></button></div><label className="flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--input)] px-3"><input type="checkbox" checked={softBalance} onChange={(event) => setSoftBalance(event.target.checked)} />启用</label>{softBalance && <div className="mt-2"><ParameterControl label="平衡强度" help={{ title: "平衡强度", description: "0.0 不产生修正；1.0 会把整串权重均值完全拉回众数。建议从较低的强度开始，保留随机组合差异。" }} value={softBalanceStrength} onChange={setSoftBalanceStrength} min={0} max={1} step={0.1} defaultValue={0.5} onOpenHelp={setHelpEntry} /></div>}</div>
+            <div className="min-w-0 min-h-[180px] text-sm"><div className="mb-1 flex items-center justify-between gap-2"><span>启用软平衡<ParameterHelp entry={{ title: "软平衡", description: "对同一条 Artist String 的所有权重做轻微的整体回拉，减少整串同时偏高或偏低的情况。它不会改变各 ID 的相对权重差；默认关闭。" }} onOpen={setHelpEntry} /></span><button type="button" className="shrink-0 rounded-md p-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]" aria-label="恢复软平衡默认值" title="恢复默认值" onClick={() => { setSoftBalance(false); setSoftBalanceStrength(0.5); }}><RotateCcw size={14} /></button></div><label className="flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--input)] px-3"><input type="checkbox" checked={softBalance} onChange={(event) => setSoftBalance(event.target.checked)} />启用</label><div className={softBalance ? "mt-2" : "pointer-events-none invisible mt-2"}><ParameterControl label="平衡强度" help={{ title: "平衡强度", description: "0.0 不产生修正；1.0 会把整串权重均值完全拉回众数。建议从较低的强度开始，保留随机组合差异。" }} value={softBalanceStrength} onChange={setSoftBalanceStrength} min={0} max={1} step={0.1} defaultValue={0.5} onOpenHelp={setHelpEntry} /></div></div>
           </div>
           <SplitBetaPreview lower={lower} upper={upper} mode={mode} leftDispersion={leftDispersion} rightDispersion={rightDispersion} />
           {!run ? <button className={`${buttonClass} mt-5`} onClick={createRun} disabled={busy}><WandSparkles size={15} />创建基础探索任务</button> : <div className="mt-5 flex flex-wrap gap-2">{(run.status === "draft" || run.status === "paused") && <button className={buttonClass} onClick={() => controlRun(run.status === "draft" ? "start" : "resume")} disabled={busy}><Play size={15} />{run.status === "draft" ? "开始生成" : "继续生成"}</button>}{run.status === "running" && <button className={ghostButtonClass} onClick={() => controlRun("pause")} disabled={busy}><Pause size={15} />暂停</button>}{!(["completed", "cancelled"] as string[]).includes(run.status) && <button className={ghostButtonClass} onClick={() => controlRun("cancel")} disabled={busy}><Square size={15} />结束任务</button>}</div>}
