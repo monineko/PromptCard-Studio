@@ -35,6 +35,8 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.generate_gate = __import__("threading").Event()
         self.old_is_configured = explore.novelai_service.is_configured
         self.old_generate = explore.novelai_service.generate_text2image
+        self.old_library_root = explore.library_service._library_root
+        explore.library_service._library_root = lambda: root / "library"
         explore.novelai_service.is_configured = lambda: True
 
         def fake_generate(_prompt, _negative, _params, output_dir=None):
@@ -62,6 +64,7 @@ class StyleExploreServiceTest(unittest.TestCase):
         explore._assert_batch_idle = self.old_batch_check
         explore.novelai_service.is_configured = self.old_is_configured
         explore.novelai_service.generate_text2image = self.old_generate
+        explore.library_service._library_root = self.old_library_root
         (
             explore.STYLE_EXPLORE_DIR,
             explore.POOLS_DIR,
@@ -92,6 +95,19 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(run["pool"]["ids"], ["a", "b"])
         loaded = explore.get_run(run["id"])
         self.assertEqual(loaded["prompt_snapshot"]["params"]["model"], "nai")
+
+    def test_pool_backup_can_be_restored_and_referenced_pool_cannot_be_deleted(self):
+        pool = explore.create_pool("原池", "a\nb\n")
+        explore.update_pool(pool["id"], "changed\n")
+        backups = explore.list_pool_backups(pool["id"])
+        self.assertEqual(len(backups), 1)
+        restored = explore.restore_pool_backup(pool["id"], backups[0]["name"])
+        self.assertEqual(restored["ids"], ["a", "b"])
+        run = explore.create_run(pool["id"], 1, "base", "neg")
+        with self.assertRaises(ValueError):
+            explore.delete_pool(pool["id"])
+        explore.delete_run(run["id"])
+        self.assertTrue(explore.delete_pool(pool["id"])["ok"])
 
     def test_run_state_uses_generation_reservation_and_candidate_reviews(self):
         pool = explore.create_pool("池", "a\n")
@@ -141,6 +157,44 @@ class StyleExploreServiceTest(unittest.TestCase):
         moved = explore.get_run(run["id"])["candidates"][0]
         self.assertIn("treasure", Path(moved["generation"]["path"]).parts)
         self.assertTrue(explore.candidate_image_file(run["id"], candidate["id"]).is_file())
+
+    def test_task_can_be_renamed_and_append_round_keeps_its_own_snapshot(self):
+        pool = explore.create_pool("池", "a\nb\n")
+        run = explore.create_run(pool["id"], 1, "first", "neg", {"seed": 11}, {"artist_count": 1}, name="原任务")
+        renamed = explore.rename_run(run["id"], "新任务")
+        self.assertEqual(renamed["name"], "新任务")
+
+        appended = explore.append_basic_round(
+            run["id"], 2, "second", "other-neg", {"seed": 22}, {"artist_count": 1, "random_seed": 7}
+        )
+        self.assertEqual(appended["status"], "draft")
+        self.assertEqual(len(appended["rounds"]), 1)
+        self.assertEqual(len(appended["candidates"]), 2)
+        self.assertEqual(appended["candidates"][0]["prompt_snapshot"]["positive"], "second")
+        self.assertEqual(appended["candidates"][0]["round_id"], appended["rounds"][0]["id"])
+
+        explore.archive_run(run["id"])
+        self.assertNotIn(run["id"], [item["id"] for item in explore.list_runs()])
+        self.assertIn(run["id"], [item["id"] for item in explore.list_runs(include_archived=True)])
+        self.assertIsNone(explore.archive_run(run["id"], False)["archived_at"])
+
+    def test_copy_candidate_to_library_preserves_exploration_original_and_delete_removes_task(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        self.generate_gate.set()
+        explore.start_run(run["id"])
+        for _ in range(50):
+            current = explore.get_run(run["id"])
+            if current["status"] == "generated":
+                break
+            time.sleep(0.02)
+        candidate = current["candidates"][0]
+        original = Path(candidate["generation"]["path"])
+        copied = explore.copy_candidate_to_library(run["id"], candidate["id"])
+        self.assertTrue(original.is_file())
+        self.assertTrue((explore.library_service._library_root() / copied["path"]).is_file())
+        explore.delete_run(run["id"])
+        self.assertFalse(original.parent.parent.exists())
 
 
 if __name__ == "__main__":

@@ -150,6 +150,10 @@ class StyleExplorePoolUpdateIn(BaseModel):
     name: Optional[str] = None
 
 
+class StyleExplorePoolBackupRestoreIn(BaseModel):
+    name: str = ""
+
+
 class StyleExploreRunIn(BaseModel):
     name: str = ""
     pool_id: str = ""
@@ -159,6 +163,18 @@ class StyleExploreRunIn(BaseModel):
     params: dict = {}
     algorithm: dict = {}
     phase: str = "basic"
+
+
+class StyleExploreRunUpdateIn(BaseModel):
+    name: str = ""
+
+
+class StyleExploreBasicRoundIn(BaseModel):
+    target_count: int = 1
+    positive: str = ""
+    negative: str = ""
+    params: dict = {}
+    algorithm: dict = {}
 
 
 class StyleExploreCandidatesIn(BaseModel):

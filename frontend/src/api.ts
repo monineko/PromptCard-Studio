@@ -233,10 +233,23 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ content, ...(name === undefined ? {} : { name }) }),
     }),
-  styleExploreRuns: () => request<StyleExploreRunSummary[]>("/api/style-explore/runs"),
+  styleExploreDeletePool: (poolId: string) => request<{ ok: boolean }>(`/api/style-explore/pools/${encodeURIComponent(poolId)}`, { method: "DELETE" }),
+  styleExplorePoolBackups: (poolId: string) => request<{ name: string; created_at: string; count: number }[]>(`/api/style-explore/pools/${encodeURIComponent(poolId)}/backups`),
+  styleExploreRestorePoolBackup: (poolId: string, name: string) => request<StyleExplorePool>(`/api/style-explore/pools/${encodeURIComponent(poolId)}/backups/restore`, { method: "POST", body: JSON.stringify({ name }) }),
+  styleExploreRuns: (archived = false) => request<StyleExploreRunSummary[]>(`/api/style-explore/runs${archived ? "?archived=true" : ""}`),
   styleExploreRun: (runId: string) => request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}`),
   styleExploreCreateRun: (payload: StyleExploreRunCreatePayload) =>
     request<StyleExploreRun>("/api/style-explore/runs", { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreRenameRun: (runId: string, name: string) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  styleExploreArchiveRun: (runId: string, archived = true) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/archive?archived=${archived}`, { method: "POST" }),
+  styleExploreDeleteRun: (runId: string) =>
+    request<{ ok: boolean; deleted_images: number }>(`/api/style-explore/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
+  styleExploreAppendBasicRound: (runId: string, payload: Omit<StyleExploreRunCreatePayload, "pool_id" | "name" | "phase">) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/rounds/basic`, { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreRetryFailed: (runId: string) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/retry-failed`, { method: "POST" }),
   styleExploreStartRun: (runId: string) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/start`, { method: "POST" }),
   styleExplorePauseRun: (runId: string) =>
@@ -251,6 +264,8 @@ export const api = {
     }),
   styleExploreCandidateImageUrl: (runId: string, candidateId: string) =>
     `/api/style-explore/runs/${encodeURIComponent(runId)}/image?candidate_id=${encodeURIComponent(candidateId)}`,
+  styleExploreCopyCandidateToLibrary: (runId: string, candidateId: string) =>
+    request<{ ok: boolean; path: string; name: string }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}/copy-to-library`, { method: "POST" }),
   pngSend: (png: unknown, model: string) =>
     request<PngSendResult>("/api/generate/from-png", {
       method: "POST",

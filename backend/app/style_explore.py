@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import generation_coordinator
 from . import cards as cards_service
+from . import library as library_service
 from . import novelai as novelai_service
 from . import style_explore_algorithm
 from .config import PROJECT_ROOT
@@ -210,6 +211,46 @@ def update_pool(pool_id: str, content: str, name: str | None = None) -> dict:
         return {**_public_pool(pool, ids), **report}
 
 
+def list_pool_backups(pool_id: str) -> list[dict]:
+    with _lock:
+        _pool_by_id(pool_id)
+        folder = POOL_BACKUPS_DIR / pool_id
+        return [
+            {"name": path.name, "created_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"), "count": len(_normalize_ids(path.read_text(encoding="utf-8"))[0])}
+            for path in sorted(folder.glob("*.txt"), reverse=True)
+        ]
+
+
+def restore_pool_backup(pool_id: str, backup_name: str) -> dict:
+    with _lock:
+        _pool_by_id(pool_id)
+        safe_name = Path(backup_name or "").name
+        if not safe_name or safe_name != backup_name or not safe_name.endswith(".txt"):
+            raise ValueError("ArtistPool 备份名称非法")
+        source = POOL_BACKUPS_DIR / pool_id / safe_name
+        if not source.is_file():
+            raise FileNotFoundError("ArtistPool 备份不存在")
+        pool = update_pool(pool_id, source.read_text(encoding="utf-8"))
+        return get_pool(pool["id"])
+
+
+def delete_pool(pool_id: str) -> dict:
+    with _lock:
+        pool = _pool_by_id(pool_id)
+        for path in RUNS_DIR.glob("*/run.json"):
+            record = _read_json(path, {})
+            if isinstance(record, dict) and record.get("pool", {}).get("id") == pool_id:
+                raise ValueError("已有探索任务保留该 ArtistPool 快照，删除前请先删除这些任务")
+        source = _pool_file(pool_id)
+        if source.exists():
+            source.unlink()
+        backup_dir = POOL_BACKUPS_DIR / pool_id
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        _save_pool_index([item for item in _load_pool_index() if item.get("id") != pool["id"]])
+        return {"ok": True, "id": pool_id}
+
+
 def _run_file(run_id: str) -> Path:
     if not re.fullmatch(r"[a-f0-9]{12}", run_id or ""):
         raise ValueError("探索任务 ID 非法")
@@ -252,6 +293,8 @@ def _public_run(record: dict) -> dict:
         "candidate_count": len(candidates),
         "done_count": sum(1 for item in candidates if item.get("generation", {}).get("status") == "done"),
         "reviewed_count": sum(1 for item in candidates if item.get("review", {}).get("label") is not None),
+        "round_count": len(record.get("rounds") or []),
+        "archived_at": record.get("archived_at"),
     }
 
 
@@ -260,13 +303,13 @@ def _full_run(record: dict) -> dict:
     return {**record, **_public_run(record)}
 
 
-def list_runs() -> list[dict]:
+def list_runs(include_archived: bool = False) -> list[dict]:
     with _lock:
         ensure_storage()
         records: list[dict] = []
         for path in RUNS_DIR.glob("*/run.json"):
             record = _read_json(path, None)
-            if isinstance(record, dict):
+            if isinstance(record, dict) and (include_archived or not record.get("archived_at")):
                 records.append(_public_run(record))
         return sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
 
@@ -318,11 +361,49 @@ def create_run(
             "pool": {"id": pool["id"], "name": pool["name"], "ids": pool["ids"]},
             "prompt_snapshot": {"positive": positive or "", "negative": negative or "", "params": params or {}},
             "algorithm": algorithm or {},
+            "rounds": [],
+            "archived_at": None,
             "candidates": [],
         }
         _active_dir(run_id).mkdir(parents=True, exist_ok=True)
         _save_run(record)
         return _full_run(record)
+
+
+def rename_run(run_id: str, name: str) -> dict:
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("探索任务名称不能为空")
+    with _lock:
+        record = _load_run(run_id)
+        record["name"] = clean_name[:120]
+        _save_run(record)
+        return _full_run(record)
+
+
+def archive_run(run_id: str, archived: bool = True) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再归档")
+        record["archived_at"] = _now() if archived else None
+        _save_run(record)
+        return _full_run(record)
+
+
+def delete_run(run_id: str) -> dict:
+    """永久删除一个已停止任务及其专属图片；调用方必须先经明确确认。"""
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再删除")
+        task_dir = _run_file(record["id"]).parent.resolve()
+        runs_root = RUNS_DIR.resolve()
+        if not task_dir.is_relative_to(runs_root):
+            raise ValueError("探索任务目录非法")
+        image_count = sum(1 for path in task_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"})
+        shutil.rmtree(task_dir)
+        return {"ok": True, "deleted_images": image_count}
 
 
 def _assert_batch_idle() -> None:
@@ -375,6 +456,46 @@ def cancel_run(run_id: str) -> dict:
         generation_coordinator.release("style_explore", run_id)
         record["status"] = "cancelled"
         record["status_reason"] = "用户已结束"
+        _save_run(record)
+        return _full_run(record)
+
+
+def append_basic_round(
+    run_id: str,
+    target_count: int,
+    positive: str,
+    negative: str,
+    params: dict | None = None,
+    algorithm: dict | None = None,
+) -> dict:
+    """在既有探索任务中追加一轮基础探索，不改写历史候选的条件快照。"""
+    if not 1 <= int(target_count) <= 10000:
+        raise ValueError("目标生成数量需在 1~10000 之间")
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("phase") != "basic":
+            raise ValueError("当前仅支持为基础探索任务追加轮次")
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再追加新一轮")
+        _append_basic_round_to_record(record, int(target_count), positive, negative, params or {}, algorithm or {})
+        record["status"] = "draft"
+        record["status_reason"] = None
+        _save_run(record)
+        return _full_run(record)
+
+
+def retry_failed_candidates(run_id: str) -> dict:
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("探索任务正在生成中")
+        failed = [item for item in record.get("candidates") or [] if item.get("generation", {}).get("status") == "failed"]
+        if not failed:
+            raise ValueError("当前任务没有可重试的失败候选")
+        for candidate in failed:
+            candidate["generation"] = {"status": "pending"}
+        record["status"] = "draft"
+        record["status_reason"] = None
         _save_run(record)
         return _full_run(record)
 
@@ -472,11 +593,26 @@ def candidate_image_file(run_id: str, candidate_id: str) -> Path:
         return path
 
 
-def _create_basic_candidates(record: dict) -> None:
-    """首次开始基础任务时，把可复现随机候选直接固化到任务记录。"""
+def copy_candidate_to_library(run_id: str, candidate_id: str) -> dict:
+    """将探索图片复制到普通 Image Library，绝不移动探索原图。"""
+    with _lock:
+        source = candidate_image_file(run_id, candidate_id)
+        copied = library_service.copy_image_from_source(source)
+        return {"ok": True, **copied}
+
+
+def _append_basic_round_to_record(
+    record: dict,
+    target_count: int,
+    positive: str,
+    negative: str,
+    params: dict,
+    algorithm: dict,
+) -> dict:
+    """把一轮候选和每张候选的不可变生成快照一起写入任务记录。"""
     if record.get("phase") != "basic":
         raise ValueError("深度探索候选将在深度算法接入后创建")
-    raw = record.get("algorithm") or {}
+    raw = dict(algorithm or {})
     config = style_explore_algorithm.WeightSamplingConfig(
         lower=float(raw.get("lower", 0.1)),
         upper=float(raw.get("upper", 2.0)),
@@ -487,11 +623,7 @@ def _create_basic_candidates(record: dict) -> None:
     )
     artist_count = int(raw.get("artist_count", 2))
     seed = int(raw.get("random_seed", random.SystemRandom().randrange(1, 2**63)))
-    generated = style_explore_algorithm.generate_basic_candidates(
-        record["pool"]["ids"], artist_count, int(record["target_count"]), config, random.Random(seed)
-    )
-    record["random_seed"] = seed
-    record["algorithm"] = {
+    normalized_algorithm = {
         **raw,
         "lower": config.lower,
         "upper": config.upper,
@@ -501,17 +633,58 @@ def _create_basic_candidates(record: dict) -> None:
         "soft_balance_strength": config.soft_balance_strength,
         "artist_count": artist_count,
     }
-    record["candidates"] = [
+    round_id = uuid.uuid4().hex[:12]
+    rounds = record.setdefault("rounds", [])
+    snapshot = {"positive": positive or "", "negative": negative or "", "params": dict(params or {})}
+    round_record = {
+        "id": round_id,
+        "number": len(rounds) + 1,
+        "phase": "basic",
+        "status": "pending",
+        "created_at": _now(),
+        "target_count": target_count,
+        "random_seed": seed,
+        "prompt_snapshot": snapshot,
+        "algorithm": normalized_algorithm,
+        "candidate_ids": [],
+    }
+    generated = style_explore_algorithm.generate_basic_candidates(
+        record["pool"]["ids"], artist_count, target_count, config, random.Random(seed)
+    )
+    candidates = [
         {
             "id": uuid.uuid4().hex[:12],
+            "round_id": round_id,
             "artist_string": candidate.artist_string,
             "ids": [{"id": item.artist_id, "weight": item.weight} for item in candidate.artist_weights],
             "generation": {"status": "pending"},
             "review": {"heart": False, "rating": None, "label": None},
             "lineage": {"parent_ids": [], "operations": ["basic_split_beta"]},
+            "prompt_snapshot": {"positive": snapshot["positive"], "negative": snapshot["negative"], "params": dict(snapshot["params"])},
+            "algorithm_snapshot": dict(normalized_algorithm),
         }
         for candidate in generated
     ]
+    round_record["candidate_ids"] = [candidate["id"] for candidate in candidates]
+    rounds.append(round_record)
+    record.setdefault("candidates", []).extend(candidates)
+    record["target_count"] = len(record["candidates"])
+    record["random_seed"] = seed
+    record["prompt_snapshot"] = snapshot
+    record["algorithm"] = normalized_algorithm
+    return round_record
+
+
+def _create_basic_candidates(record: dict) -> None:
+    """兼容首轮任务：第一次开始时创建第一个基础探索轮次。"""
+    _append_basic_round_to_record(
+        record,
+        int(record["target_count"]),
+        str((record.get("prompt_snapshot") or {}).get("positive") or ""),
+        str((record.get("prompt_snapshot") or {}).get("negative") or ""),
+        dict((record.get("prompt_snapshot") or {}).get("params") or {}),
+        dict(record.get("algorithm") or {}),
+    )
 
 
 def _worker_loop(run_id: str) -> None:
@@ -529,6 +702,9 @@ def _worker_loop(run_id: str) -> None:
                 if candidate is None:
                     record["status"] = "generated"
                     record["status_reason"] = None
+                    for round_record in record.get("rounds") or []:
+                        if round_record.get("status") == "pending":
+                            round_record["status"] = "generated"
                     _save_run(record)
                     generation_coordinator.release("style_explore", run_id)
                     return
@@ -536,7 +712,7 @@ def _worker_loop(run_id: str) -> None:
                 _save_run(record)
 
             try:
-                snapshot = record.get("prompt_snapshot") or {}
+                snapshot = candidate.get("prompt_snapshot") or record.get("prompt_snapshot") or {}
                 prompt = ", ".join(
                     part.strip().rstrip(",")
                     for part in [str(snapshot.get("positive") or ""), str(candidate["artist_string"])]

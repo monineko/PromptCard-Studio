@@ -57,7 +57,10 @@ from .schemas import (
     StyleExploreCandidateUpdateIn,
     StyleExploreCandidatesIn,
     StyleExplorePoolIn,
+    StyleExplorePoolBackupRestoreIn,
     StyleExplorePoolUpdateIn,
+    StyleExploreRunUpdateIn,
+    StyleExploreBasicRoundIn,
     StyleExploreRunIn,
     Text2ImageIn,
     VibeRenameIn,
@@ -593,9 +596,37 @@ def style_explore_pool_update(pool_id: str, body: StyleExplorePoolUpdateIn):
         raise _as_http(e, 400)
 
 
+@app.delete("/api/style-explore/pools/{pool_id}")
+def style_explore_pool_delete(pool_id: str):
+    try:
+        return style_explore_service.delete_pool(pool_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.get("/api/style-explore/pools/{pool_id}/backups")
+def style_explore_pool_backups(pool_id: str):
+    try:
+        return style_explore_service.list_pool_backups(pool_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+
+
+@app.post("/api/style-explore/pools/{pool_id}/backups/restore")
+def style_explore_pool_restore_backup(pool_id: str, body: StyleExplorePoolBackupRestoreIn):
+    try:
+        return style_explore_service.restore_pool_backup(pool_id, body.name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
 @app.get("/api/style-explore/runs")
-def style_explore_runs():
-    return style_explore_service.list_runs()
+def style_explore_runs(archived: bool = False):
+    return style_explore_service.list_runs(archived)
 
 
 @app.get("/api/style-explore/runs/{run_id}")
@@ -614,6 +645,58 @@ def style_explore_run_create(body: StyleExploreRunIn):
         return style_explore_service.create_run(
             body.pool_id, body.target_count, body.positive, body.negative, body.params, body.algorithm, body.phase, body.name
         )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.patch("/api/style-explore/runs/{run_id}")
+def style_explore_run_rename(run_id: str, body: StyleExploreRunUpdateIn):
+    try:
+        return style_explore_service.rename_run(run_id, body.name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/archive")
+def style_explore_run_archive(run_id: str, archived: bool = True):
+    try:
+        return style_explore_service.archive_run(run_id, archived)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.delete("/api/style-explore/runs/{run_id}")
+def style_explore_run_delete(run_id: str):
+    try:
+        return style_explore_service.delete_run(run_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/rounds/basic")
+def style_explore_round_append(run_id: str, body: StyleExploreBasicRoundIn):
+    try:
+        return style_explore_service.append_basic_round(
+            run_id, body.target_count, body.positive, body.negative, body.params, body.algorithm
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/retry-failed")
+def style_explore_run_retry_failed(run_id: str):
+    try:
+        return style_explore_service.retry_failed_candidates(run_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except ValueError as e:
@@ -684,6 +767,16 @@ def style_explore_candidate_update(run_id: str, candidate_id: str, body: StyleEx
 def style_explore_candidate_image(run_id: str, candidate_id: str):
     try:
         return FileResponse(style_explore_service.candidate_image_file(run_id, candidate_id))
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/candidates/{candidate_id}/copy-to-library")
+def style_explore_candidate_copy_to_library(run_id: str, candidate_id: str):
+    try:
+        return style_explore_service.copy_candidate_to_library(run_id, candidate_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except ValueError as e:

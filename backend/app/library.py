@@ -385,6 +385,16 @@ def import_from_path(path_str: str) -> dict:
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
+def copy_image_from_source(source: Path) -> dict:
+    """供项目内模块安全地复制一张已验证图片到普通图库的未评分区域。"""
+    source = source.resolve()
+    if not _is_image(source):
+        raise ValueError("只能复制存在的图片文件")
+    destination = _unique_dest(_library_root(), _safe_filename(source.name))
+    shutil.copy2(str(source), str(destination))
+    return {"path": str(destination.relative_to(_library_root())), "name": destination.name}
+
+
 def open_library_folder() -> dict:
     """用系统资源管理器打开图库目录。"""
     root = _library_root()

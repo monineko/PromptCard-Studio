@@ -380,11 +380,13 @@ export type StyleExploreRunPool = {
 
 export type StyleExploreCandidate = {
   id: string;
+  round_id?: string;
   artist_string: string;
   ids: unknown[];
   generation: { status: StyleExploreCandidateStatus; [key: string]: unknown };
   review: { heart?: boolean; rating?: number | null; label: StyleExploreReviewLabel; [key: string]: unknown };
   lineage: Record<string, unknown>;
+  prompt_snapshot?: { positive: string; negative: string; params: Record<string, unknown> };
 };
 
 export type StyleExploreRunSummary = {
@@ -400,6 +402,8 @@ export type StyleExploreRunSummary = {
   candidate_count: number;
   done_count: number;
   reviewed_count: number;
+  round_count?: number;
+  archived_at?: string | null;
 };
 
 export type StyleExploreRun = StyleExploreRunSummary & {
@@ -407,6 +411,7 @@ export type StyleExploreRun = StyleExploreRunSummary & {
   prompt_snapshot: { positive: string; negative: string; params: Record<string, unknown> };
   algorithm: Record<string, unknown>;
   candidates: StyleExploreCandidate[];
+  rounds?: { id: string; number: number; status: string; target_count: number; created_at: string }[];
 };
 
 export type StyleExploreRunCreatePayload = {
