@@ -49,6 +49,7 @@ export function Settings() {
   const [naiSaving, setNaiSaving] = useState(false);
   const [naiChecking, setNaiChecking] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
+  const [restartBusy, setRestartBusy] = useState(false);
   const [release, setRelease] = useState<LatestRelease | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateError, setUpdateError] = useState("");
@@ -93,7 +94,7 @@ export function Settings() {
     try {
       const result = await api.migrateUserData(selected.map((item) => item.file), selected.map((item) => item.path));
       setMigrationResult(result);
-      addToast(result.errors.length ? `迁移完成，但有 ${result.errors.length} 个文件失败，请检查结果` : `迁移完成：${result.copied} 个文件，请重启应用使迁移内容全部生效`);
+      addToast(result.errors.length ? `迁移完成，但有 ${result.errors.length} 个文件失败，请检查结果` : `迁移完成：${result.copied} 个文件，请使用快速重启使迁移内容全部生效`);
     } catch (e) {
       addToast(`迁移失败: ${(e as Error).message}`, "err");
     } finally {
@@ -102,11 +103,40 @@ export function Settings() {
     }
   };
 
+  const waitForRestart = async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const response = await fetch("/api/health", { cache: "no-store" });
+        if (response.ok) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // 服务重启期间连接失败是预期现象，继续等待。
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    window.location.reload();
+  };
+
+  const doRestart = async () => {
+    setRestartBusy(true);
+    try {
+      await api.systemRestart();
+      addToast("正在快速重启项目，请稍候…");
+      void waitForRestart();
+    } catch (e) {
+      setRestartBusy(false);
+      addToast(`重启失败：${(e as Error).message}`, "err");
+    }
+  };
+
   const doShutdown = async () => {
     try {
       await api.systemShutdown();
       setShutdownOpen(false);
-      addToast("本地服务已关闭，可关闭本页面；重新使用请运行 start_local.cmd");
+      addToast("本地服务已关闭，可关闭本页面；再次使用请运行 run.bat 或 run.sh");
     } catch (e) {
       addToast(`关闭失败：${(e as Error).message}`, "err");
       setShutdownOpen(false);
@@ -226,7 +256,7 @@ export function Settings() {
           <div className="mb-1 text-sm font-medium">迁移旧项目数据</div>
           <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
             下载新项目并运行后，选择旧项目文件夹即可迁移卡片、图库、Vibe、设置、词典自定义内容、背景图和已安装插件数据。
-            程序文件与依赖不会迁移，同名用户文件会先备份再覆盖。
+            程序文件与依赖不会迁移，同名用户文件会先备份再覆盖，备份保存在新项目的 .migration-backups 文件夹内。
           </p>
           <input
             ref={migrationInputRef}
@@ -243,8 +273,19 @@ export function Settings() {
           {migrationResult && (
             <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3 text-xs leading-relaxed text-[var(--muted)]">
               <div>已迁移 {migrationResult.copied} 个文件；覆盖 {migrationResult.overwritten} 个文件；忽略 {migrationResult.ignored} 个非用户文件。</div>
-              {migrationResult.backup && <div>原文件备份：{migrationResult.backup}</div>}
+              {migrationResult.backup ? (
+                <div className="mt-1 text-amber-300">
+                  迁移备份位置：{migrationResult.backup}。确认新项目没有问题后，可手动删除此备份目录。
+                </div>
+              ) : (
+                <div className="mt-1">本次没有覆盖已有文件，因此没有生成迁移备份。</div>
+              )}
               {migrationResult.errors.length > 0 && <div className="mt-1 text-red-400">失败：{migrationResult.errors.join("；")}</div>}
+              {migrationResult.errors.length === 0 && (
+                <Button size="sm" className="mt-3" onClick={() => void doRestart()} disabled={restartBusy}>
+                  <RefreshCw size={13} /> {restartBusy ? "重启中…" : "现在快速重启"}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -685,16 +726,20 @@ export function Settings() {
       <div className="glass space-y-4 rounded-2xl p-5">
         <h2 className="border-b border-[var(--border)] pb-2 text-sm font-semibold">本地服务</h2>
         <p className="text-xs leading-relaxed text-[var(--muted)]">
-          前端页面由本机后端服务托管。点击关闭后服务立即停止，本页面将无法继续访问；再次使用请运行
-          start_local.cmd。
+          前端页面由本机后端服务托管。快速重启会重新启动当前项目，适合迁移数据、更新背景或修改运行时配置后使用；不会删除用户数据。
         </p>
-        <Button variant="danger" onClick={() => setShutdownOpen(true)}>
-          <Power size={14} /> 关闭本地服务
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => void doRestart()} disabled={restartBusy}>
+            <RefreshCw size={14} /> {restartBusy ? "重启中…" : "快速重启项目"}
+          </Button>
+          <Button variant="danger" onClick={() => setShutdownOpen(true)}>
+            <Power size={14} /> 关闭本地服务
+          </Button>
+        </div>
         <ConfirmDialog
           open={shutdownOpen}
           title="关闭本地服务"
-          message="确定关闭本机后端服务吗？关闭后页面将无法访问，需重新运行 start_local.cmd 才能恢复；若有批量生成正在运行也会中断。"
+          message="确定关闭本机后端服务吗？关闭后页面将无法访问，需重新运行 run.bat 或 run.sh 才能恢复；若有批量生成正在运行也会中断。"
           danger
           onConfirm={() => void doShutdown()}
           onCancel={() => setShutdownOpen(false)}
