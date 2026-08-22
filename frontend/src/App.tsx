@@ -8,6 +8,7 @@ import { FireworksCanvas } from "./components/ambient/FireworksCanvas";
 import { AppSidebar } from "./components/AppSidebar";
 import { ToastHost } from "./components/UI";
 import { TopBar } from "./components/TopBar";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { cn } from "./lib";
 import { Gallery } from "./pages/Gallery";
 import { Home } from "./pages/Home";
@@ -110,6 +111,7 @@ function Shell() {
         </main>
       </div>
       <ToastHost />
+      <UpdateNotice />
     </>
   );
 }
