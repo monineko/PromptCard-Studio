@@ -1,7 +1,7 @@
 import { Archive, CircleHelp, Compass, Copy, FileUp, FolderPlus, Heart, Pause, Play, RotateCcw, Save, Square, Trash2, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { Modal } from "../components/UI";
+import { ConfirmDialog, Modal } from "../components/UI";
 import { StyleExploreParamsPanel } from "../components/StyleExploreParamsPanel";
 import { serializeSections } from "../lib";
 import { useStore } from "../store";
@@ -25,6 +25,8 @@ function toExplorePrompt(sections: Section[]) {
 }
 
 type HelpEntry = { title: string; description: ReactNode };
+type ConfirmState = { title: string; message: string; danger?: boolean; onConfirm: () => void } | null;
+type CardDialogState = { artistString: string; addToWorkspace: boolean; name: string } | null;
 
 function ParameterHelp({ entry, onOpen }: { entry: HelpEntry; onOpen: (entry: HelpEntry) => void }) {
   return <span className="group relative inline-flex align-middle">
@@ -140,7 +142,6 @@ export function StyleExplore() {
   const [pool, setPool] = useState<StyleExplorePool | null>(null);
   const [poolName, setPoolName] = useState("");
   const [poolText, setPoolText] = useState("");
-  const [poolSearch, setPoolSearch] = useState("");
   const [poolBackups, setPoolBackups] = useState<{ name: string; created_at: string; count: number }[]>([]);
   const [newPoolName, setNewPoolName] = useState("");
   const [newPoolText, setNewPoolText] = useState("");
@@ -158,6 +159,8 @@ export function StyleExplore() {
   const [run, setRun] = useState<StyleExploreRun | null>(null);
   const [editRunName, setEditRunName] = useState("");
   const [previewCandidateId, setPreviewCandidateId] = useState<string | null>(null);
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const [cardDialog, setCardDialog] = useState<CardDialogState>(null);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -200,15 +203,14 @@ export function StyleExplore() {
     const updated = await api.styleExploreUpdatePool(pool.id, poolText, poolName);
     await refresh(); await loadPool(updated.id); addToast(`已保存 ArtistPool，共 ${updated.count} 个 ID；旧版本已备份`);
   });
-  const removePoolId = (id: string) => setPoolText((text) => text.split(/\r?\n/).filter((item) => item.trim() !== id).join("\n") + "\n");
-  const restorePoolBackup = (name: string) => void withBusy(async () => {
-    if (!pool || !window.confirm("恢复此备份会先备份当前池子，是否继续？")) return;
-    await api.styleExploreRestorePoolBackup(pool.id, name); await loadPool(pool.id); await refresh(); addToast("ArtistPool 已从备份恢复");
-  });
-  const deletePool = () => void withBusy(async () => {
-    if (!pool || !window.confirm(`删除 ArtistPool「${pool.name}」及其备份？已有任务引用该池子时会拒绝删除。`)) return;
-    await api.styleExploreDeletePool(pool.id); setPool(null); setPoolId(""); await refresh(); addToast("ArtistPool 已删除");
-  });
+  const restorePoolBackup = (name: string) => {
+    if (!pool) return;
+    setConfirmState({ title: "恢复 ArtistPool 备份", message: "将直接使用所选备份 TXT 覆写当前 ArtistPool；当前编辑区中尚未保存的内容会丢失，且不会新增备份。", onConfirm: () => void withBusy(async () => { await api.styleExploreRestorePoolBackup(pool.id, name); await loadPool(pool.id); await refresh(); addToast("ArtistPool 已从备份恢复"); setConfirmState(null); }) });
+  };
+  const deletePool = () => {
+    if (!pool) return;
+    setConfirmState({ title: "删除 ArtistPool", message: `将删除「${pool.name}」及其全部备份。已有探索任务引用该池子时将拒绝删除。`, danger: true, onConfirm: () => void withBusy(async () => { await api.styleExploreDeletePool(pool.id); setPool(null); setPoolId(""); await refresh(); addToast("ArtistPool 已删除"); setConfirmState(null); }) });
+  };
   const importPoolFile = (file: File | undefined) => void withBusy(async () => {
     if (!file) return;
     const imported = await api.styleExploreImportPool(file); setPoolId(imported.id); await refresh(); addToast(`已导入并规范化 ArtistPool：${imported.input_count ?? imported.count} 项输入，${imported.count} 个有效 ID，${imported.duplicate_count ?? 0} 项重复`);
@@ -241,14 +243,14 @@ export function StyleExplore() {
     if (!run) return;
     const next = await api.styleExploreRenameRun(run.id, editRunName); setRun(next); await refresh(); addToast("探索任务已重命名");
   });
-  const archiveRun = () => void withBusy(async () => {
-    if (!run || !window.confirm(run.archived_at ? `取消归档「${run.name}」？` : `归档「${run.name}」？归档不会删除专属图片。`)) return;
-    await api.styleExploreArchiveRun(run.id, !run.archived_at); setRun(null); setSelectedRunId(""); await refresh(); addToast(run.archived_at ? "任务已恢复到活动列表" : "任务已归档，专属图片与记录仍被保留");
-  });
-  const deleteRun = () => void withBusy(async () => {
-    if (!run || !window.confirm(`永久删除「${run.name}」及其 ${run.done_count} 张探索图片？此操作不可恢复。`)) return;
-    const result = await api.styleExploreDeleteRun(run.id); setRun(null); setSelectedRunId(""); await refresh(); addToast(`任务已永久删除，并删除 ${result.deleted_images} 张专属图片`);
-  });
+  const archiveRun = () => {
+    if (!run) return;
+    setConfirmState({ title: run.archived_at ? "取消归档任务" : "归档任务", message: run.archived_at ? `确认将「${run.name}」恢复到活动任务列表吗？` : `归档「${run.name}」不会删除专属图片和记录。`, onConfirm: () => void withBusy(async () => { await api.styleExploreArchiveRun(run.id, !run.archived_at); setRun(null); setSelectedRunId(""); await refresh(); addToast(run.archived_at ? "任务已恢复到活动列表" : "任务已归档，专属图片与记录仍被保留"); setConfirmState(null); }) });
+  };
+  const deleteRun = () => {
+    if (!run) return;
+    setConfirmState({ title: "永久删除探索任务", message: `将永久删除「${run.name}」及其 ${run.done_count} 张探索图片，此操作不可恢复。`, danger: true, onConfirm: () => void withBusy(async () => { const result = await api.styleExploreDeleteRun(run.id); setRun(null); setSelectedRunId(""); await refresh(); addToast(`任务已永久删除，并删除 ${result.deleted_images} 张专属图片`); setConfirmState(null); }) });
+  };
   const retryFailed = () => void withBusy(async () => {
     if (!run) return;
     const next = await api.styleExploreRetryFailed(run.id); setRun(next); await refresh(); addToast("失败候选已恢复为待生成状态");
@@ -256,23 +258,19 @@ export function StyleExplore() {
   const copyArtistString = async (text: string) => {
     try { await navigator.clipboard.writeText(text); addToast("已复制 Artist String"); } catch { addToast("复制失败，请检查浏览器权限", "err"); }
   };
-  const createArtistCard = (candidateId: string, artistString: string) => void withBusy(async () => {
-    const name = window.prompt("画师串 Card 名称", run ? `${run.name} 画师串` : "画师串");
-    if (!name?.trim()) return;
-    await api.createCard("画师串", name.trim(), artistString); addToast(`已创建画师串 Card：${name.trim()}`);
+  const createArtistCard = (artistString: string, addToWorkspace = false) => setCardDialog({ artistString, addToWorkspace, name: run ? `${run.name} 画师串` : "画师串" });
+  const submitCardDialog = () => void withBusy(async () => {
+    if (!cardDialog?.name.trim()) return;
+    await api.createCard("画师串", cardDialog.name.trim(), cardDialog.artistString);
+    if (cardDialog.addToWorkspace) addWorkspaceCard("画师串", cardDialog.name.trim());
+    addToast(cardDialog.addToWorkspace ? "已创建 Card 并加入工作区" : `已创建画师串 Card：${cardDialog.name.trim()}`); setCardDialog(null);
   });
   const sendArtistToWorkspace = (artistString: string) => {
     const workbench = workspacePositive.find((section) => section.name === "提示词工作台") ?? workspacePositive[0];
     if (!workbench) return addToast("工作区尚未初始化", "err");
-    if (!window.confirm("将此 Artist String 作为新的自定义提示词块添加到工作区？不会覆盖现有内容。")) return;
-    addWorkspacePrompt(workbench.id, artistString); addToast("已作为自定义提示词块添加到工作区");
+    setConfirmState({ title: "回填到提示词工作区", message: "将此 Artist String 作为新的自定义提示词块添加到工作区，不会覆盖现有内容。", onConfirm: () => { addWorkspacePrompt(workbench.id, artistString); addToast("已作为自定义提示词块添加到工作区"); setConfirmState(null); } });
   };
-  const sendCardToWorkspace = (artistString: string) => void withBusy(async () => {
-    const name = window.prompt("先创建并加入工作区的 Card 名称", run ? `${run.name} 画师串` : "画师串");
-    if (!name?.trim()) return;
-    if (!window.confirm("将创建 Card 并作为 Card Reference 添加到工作区，不会覆盖现有内容。")) return;
-    await api.createCard("画师串", name.trim(), artistString); addWorkspaceCard("画师串", name.trim()); addToast("已创建 Card 并加入工作区");
-  });
+  const sendCardToWorkspace = (artistString: string) => createArtistCard(artistString, true);
 
   return <><div className="mx-auto w-full max-w-7xl space-y-5 px-4 py-5">
     <section className="glass flex flex-wrap items-center gap-3 rounded-2xl p-4">
@@ -286,26 +284,30 @@ export function StyleExplore() {
       </>}
       {run && <span className="w-full text-xs text-[var(--muted)]">当前：{run.name} · {statusLabel(run.status)} · {run.done_count}/{run.target_count} · {run.round_count ?? run.rounds?.length ?? 0} 轮。追加时会使用页面当前条件，旧候选不会变化。</span>}
     </section>
-    <div className="grid items-stretch gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
-      <aside>
-        <section className="glass rounded-2xl p-4"><h2 className="mb-3 font-semibold">ArtistPool</h2>
+    <div className="grid items-stretch gap-5 xl:h-[620px] xl:grid-cols-[340px_minmax(0,1fr)]">
+      <aside className="min-h-0">
+        <section className="glass h-full overflow-y-auto rounded-2xl p-4"><h2 className="mb-3 font-semibold">ArtistPool</h2>
           <select className={inputClass} value={poolId} onChange={(e) => setPoolId(e.target.value)}>{pools.length === 0 && <option value="">暂无 ArtistPool</option>}{pools.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.count} ID</option>)}</select>
-          {pool && <><input className={`${inputClass} mt-3`} value={poolName} onChange={(e) => setPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-52 font-mono text-xs`} value={poolText} onChange={(e) => setPoolText(e.target.value)} /><p className="mt-1 text-xs text-[var(--muted)]">本次文本：{pool.input_count} 项输入，{pool.ids.length} 个有效 ID，{pool.duplicate_count} 项重复，{pool.skipped_count} 项跳过。保存时会规范为一行一个 ID，并保留备份。</p><div className="mt-2"><input className={inputClass} value={poolSearch} onChange={(e) => setPoolSearch(e.target.value)} placeholder="搜索并逐条删除 ID" /><div className="mt-2 max-h-28 overflow-auto rounded-lg border border-[var(--border)] text-xs">{pool.ids.filter((id) => id.toLowerCase().includes(poolSearch.trim().toLowerCase())).map((id) => <div key={id} className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2 py-1 last:border-0"><code className="break-all">{id}</code><button className="shrink-0 text-[var(--muted)] hover:text-red-500" onClick={() => removePoolId(id)} aria-label={`删除 ${id}`}>删除</button></div>)}{poolSearch && !pool.ids.some((id) => id.toLowerCase().includes(poolSearch.trim().toLowerCase())) && <div className="p-2 text-[var(--muted)]">未找到 ID</div>}</div></div><button className={`${buttonClass} mt-3 w-full`} onClick={savePool} disabled={busy}><Save size={14} />保存 ArtistPool</button><div className="mt-2 flex flex-wrap gap-2"><button className={ghostButtonClass} onClick={deletePool} disabled={busy}><Trash2 size={14} />删除池子</button>{poolBackups.length > 0 && <select className={inputClass} defaultValue="" onChange={(e) => { if (e.target.value) { restorePoolBackup(e.target.value); e.currentTarget.value = ""; } }}><option value="">恢复备份（{poolBackups.length}）</option>{poolBackups.map((backup) => <option key={backup.name} value={backup.name}>{backup.created_at} · {backup.count} ID</option>)}</select>}</div></>}
+          {pool && <><input className={`${inputClass} mt-3`} value={poolName} onChange={(e) => setPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-52 font-mono text-xs`} value={poolText} onChange={(e) => setPoolText(e.target.value)} /><p className="mt-1 text-xs text-[var(--muted)]">本次文本：{pool.input_count} 项输入，{pool.ids.length} 个有效 ID，{pool.duplicate_count} 项重复，{pool.skipped_count} 项跳过。保存时会规范为一行一个 ID，并保留备份。</p><button className={`${buttonClass} mt-3 w-full`} onClick={savePool} disabled={busy}><Save size={14} />保存 ArtistPool</button><button className={`${ghostButtonClass} mt-2 w-full`} onClick={deletePool} disabled={busy}><Trash2 size={14} />删除该 ArtistPool 及其备份</button>{poolBackups.length > 0 && <select className={`${inputClass} mt-2`} defaultValue="" onChange={(e) => { if (e.target.value) { restorePoolBackup(e.target.value); e.currentTarget.value = ""; } }}><option value="">恢复备份（{poolBackups.length}）</option>{poolBackups.map((backup) => <option key={backup.name} value={backup.name}>{backup.created_at} · {backup.count} ID</option>)}</select>}</>}
           <div className="mt-4 border-t border-[var(--border)] pt-4"><input className={inputClass} placeholder="新 ArtistPool 名称" value={newPoolName} onChange={(e) => setNewPoolName(e.target.value)} /><textarea className={`${inputClass} mt-2 min-h-20 text-xs`} placeholder="换行或逗号分隔的 ID" value={newPoolText} onChange={(e) => setNewPoolText(e.target.value)} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={createPool} disabled={busy}><FolderPlus size={14} />新建 ArtistPool</button><input ref={fileRef} className="hidden" type="file" accept=".txt,text/plain" onChange={(e) => { importPoolFile(e.target.files?.[0]); e.currentTarget.value = ""; }} /><button className={`${ghostButtonClass} mt-2 w-full`} onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={14} />导入 TXT</button></div>
         </section>
       </aside>
-      <main className="flex flex-col gap-5">
-        <section className="glass rounded-2xl p-5"><div className="flex flex-wrap items-center gap-2"><div><h2 className="font-semibold">基础画风探索</h2><p className="mt-1 text-xs text-[var(--muted)]">提示词与生成参数可从工作区复制一次，也可在此独立编辑。Artist String 是本轮主要随机变量。</p></div><button className={`${ghostButtonClass} ml-auto`} onClick={importWorkspace}><WandSparkles size={14} />导入工作区提示词与参数</button></div>
+      <main className="min-h-0">
+        <section className="glass h-full overflow-y-auto rounded-2xl p-5"><div className="flex flex-wrap items-center gap-2"><div><h2 className="font-semibold">基础画风探索</h2><p className="mt-1 text-xs text-[var(--muted)]">提示词与生成参数可从工作区复制一次，也可在此独立编辑。Artist String 是本轮主要随机变量。</p></div><button className={`${ghostButtonClass} ml-auto`} onClick={importWorkspace}><WandSparkles size={14} />导入工作区提示词与参数</button></div>
           <div className="mt-4 grid gap-4 lg:grid-cols-2"><div className="text-xs leading-relaxed text-[var(--muted)] lg:col-span-2">提示词与探索参数会自动保存在本机，切换页面或刷新后仍会保留。创建任务时会将当前内容固化为本轮生成快照。</div><label className="text-sm">正面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={positive} onChange={(e) => setPrompts(e.target.value, negative)} placeholder="可直接粘贴或导入工作区内容" /></label><label className="text-sm">负面提示词<textarea className={`${inputClass} mt-1 min-h-32`} value={negative} onChange={(e) => setPrompts(positive, e.target.value)} placeholder="可选" /></label></div>
           <div className="mt-5"><StyleExploreParamsPanel /></div>
         </section>
-        {run && <section className="glass rounded-2xl p-5"><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">先标记心动嘉宾或正式筛选；复制到普通图库会保留探索原图。每张候选均可回看自己生成时的条件。</p><div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{run.candidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">{candidate.generation.status === "done" && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}<div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div><code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}{candidate.generation.status === "done" && <div className="mt-3 flex flex-wrap gap-1"><button className={ghostButtonClass} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title="心动嘉宾"><Heart size={14} fill={candidate.review.heart ? "currentColor" : "none"} />心动</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "treasure")} disabled={busy}>Treasure</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "special")} disabled={busy}>Special</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "reject")} disabled={busy}>Reject</button><button className={ghostButtonClass} onClick={() => void copyArtistString(candidate.artist_string)}><Copy size={14} />复制串</button><button className={ghostButtonClass} onClick={() => createArtistCard(candidate.id, candidate.artist_string)} disabled={busy}>建 Card</button><button className={ghostButtonClass} onClick={() => sendArtistToWorkspace(candidate.artist_string)}>回填文本</button><button className={ghostButtonClass} onClick={() => sendCardToWorkspace(candidate.artist_string)} disabled={busy}>回填 Card</button><button className={ghostButtonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, candidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div>}{candidate.review.heart && <div className="mt-2 text-xs text-[var(--accent)]">心动嘉宾</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">已标记：{candidate.review.label}</div>}</div>)}{run.candidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div></section>}
       </main>
     </div>
     <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} artistCount={artistCount} setArtistCount={setArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} />
+    {run && <section className="glass h-[760px] rounded-2xl p-5"><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">先标记心动嘉宾或正式筛选；复制到普通图库会保留探索原图。每张候选均可回看自己的生成条件。</p><div className="mt-4 grid h-[665px] auto-rows-fr gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">{run.candidates.map((candidate, index) => <div key={candidate.id} className="min-h-0 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">{candidate.generation.status === "done" && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="h-72 w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}<div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div><code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}{candidate.generation.status === "done" && <div className="mt-3 flex flex-wrap gap-1"><button className={ghostButtonClass} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title="心动嘉宾"><Heart size={14} fill={candidate.review.heart ? "currentColor" : "none"} />心动</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "treasure")} disabled={busy}>Treasure</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "special")} disabled={busy}>Special</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "reject")} disabled={busy}>Reject</button><button className={ghostButtonClass} onClick={() => void copyArtistString(candidate.artist_string)}><Copy size={14} />复制串</button><button className={ghostButtonClass} onClick={() => createArtistCard(candidate.artist_string)} disabled={busy}>建 Card</button><button className={ghostButtonClass} onClick={() => sendArtistToWorkspace(candidate.artist_string)}>回填文本</button><button className={ghostButtonClass} onClick={() => sendCardToWorkspace(candidate.artist_string)} disabled={busy}>回填 Card</button><button className={ghostButtonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, candidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div>}{candidate.review.heart && <div className="mt-2 text-xs text-[var(--accent)]">心动嘉宾</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">已标记：{candidate.review.label}</div>}</div>)}{run.candidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div></section>}
   </div><Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
   </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览">
     {run && previewCandidateId && <img className="max-h-[75vh] w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidateId)} alt="放大候选预览" />}
-  </Modal></>;
+  </Modal><Modal open={cardDialog !== null} onClose={() => setCardDialog(null)} title={cardDialog?.addToWorkspace ? "创建 Card 并回填工作区" : "创建画师串 Card"}>
+    <p className="mb-3 text-sm text-[var(--muted)]">{cardDialog?.addToWorkspace ? "Card 创建后会作为 Card Reference 添加到工作区，不会覆盖现有内容。" : "将当前 Artist String 保存为「画师串」Card。"}</p>
+    <input className={inputClass} value={cardDialog?.name ?? ""} onChange={(event) => setCardDialog((current) => current ? { ...current, name: event.target.value } : current)} placeholder="Card 名称" autoFocus />
+    <div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => setCardDialog(null)}>取消</button><button className={buttonClass} onClick={submitCardDialog} disabled={busy || !cardDialog?.name.trim()}>确认创建</button></div>
+  </Modal><ConfirmDialog open={confirmState !== null} title={confirmState?.title ?? "确认操作"} message={confirmState?.message ?? ""} danger={confirmState?.danger} onCancel={() => setConfirmState(null)} onConfirm={() => { const action = confirmState?.onConfirm; setConfirmState(null); action?.(); }} /></>;
 }

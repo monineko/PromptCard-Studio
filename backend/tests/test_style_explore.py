@@ -103,6 +103,7 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         restored = explore.restore_pool_backup(pool["id"], backups[0]["name"])
         self.assertEqual(restored["ids"], ["a", "b"])
+        self.assertEqual(len(explore.list_pool_backups(pool["id"])), 1)
         run = explore.create_run(pool["id"], 1, "base", "neg")
         with self.assertRaises(ValueError):
             explore.delete_pool(pool["id"])

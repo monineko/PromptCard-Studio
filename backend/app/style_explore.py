@@ -230,8 +230,17 @@ def restore_pool_backup(pool_id: str, backup_name: str) -> dict:
         source = POOL_BACKUPS_DIR / pool_id / safe_name
         if not source.is_file():
             raise FileNotFoundError("ArtistPool 备份不存在")
-        pool = update_pool(pool_id, source.read_text(encoding="utf-8"))
-        return get_pool(pool["id"])
+        ids, _ = _normalize_ids(source.read_text(encoding="utf-8"))
+        if not ids:
+            raise ValueError("ArtistPool 备份不含有效 ID")
+        _pool_file(pool_id).write_text(_pool_text(ids), encoding="utf-8")
+        index = _load_pool_index()
+        for item in index:
+            if item.get("id") == pool_id:
+                item["updated_at"] = _now()
+                break
+        _save_pool_index(index)
+        return get_pool(pool_id)
 
 
 def delete_pool(pool_id: str) -> dict:
