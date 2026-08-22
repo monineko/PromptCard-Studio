@@ -32,6 +32,18 @@ echo.
 rem ---------- 1/4 查找 Python ----------
 echo [1/4] 正在检查 Python 环境...
 set "PY="
+set "VPY="
+set "PORTABLE_MODE=0"
+
+rem 便携整合包优先使用内置 Python，不要求用户安装系统 Python 或创建 .venv。
+set "BUNDLED_PY=runtime\python\python.exe"
+if exist "%BUNDLED_PY%" (
+  set "PY=%BUNDLED_PY%"
+  set "VPY=%BUNDLED_PY%"
+  set "PORTABLE_MODE=1"
+  echo [OK] 检测到内置 Python：%BUNDLED_PY%
+  goto python_ready
+)
 
 rem 只接受标准 CPython 3.10+，跳过 free-threading / no-GIL 构建，
 rem 因为部分运行时依赖（例如 onnxruntime）尚未兼容这类 Python。
@@ -62,11 +74,16 @@ if not defined PY (
   pause
   exit /b 1
 )
+:python_ready
 for /f "delims=" %%V in ('%PY% --version 2^>^&1') do echo [OK] %%V
 
 rem ---------- 2/4 检查或创建虚拟环境 ----------
-echo [2/4] 正在检查项目虚拟环境 .venv...
-set "VPY=.venv\Scripts\python.exe"
+if "%PORTABLE_MODE%"=="1" (
+  echo [2/4] 正在检查整合包内置运行环境...
+) else (
+  echo [2/4] 正在检查项目虚拟环境 .venv...
+  set "VPY=.venv\Scripts\python.exe"
+)
 if not exist "%VPY%" goto create_venv
 "%VPY%" -c "import sys, sysconfig; raise SystemExit(0 if sys.version_info >= (3, 10) and sysconfig.get_config_var('Py_GIL_DISABLED') != 1 else 1)" >nul 2>nul
 if errorlevel 1 goto create_venv
