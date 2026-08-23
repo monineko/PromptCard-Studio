@@ -30,6 +30,8 @@ POOLS_DIR = STYLE_EXPLORE_DIR / "pools"
 POOL_BACKUPS_DIR = STYLE_EXPLORE_DIR / "pool_backups"
 RUNS_DIR = STYLE_EXPLORE_DIR / "runs"
 POOLS_INDEX_FILE = POOLS_DIR / "index.json"
+DEFAULT_POOL_ID = "artists_backup"
+DEFAULT_POOL_FILE = POOLS_DIR / f"{DEFAULT_POOL_ID}.txt"
 
 _lock = threading.RLock()
 _VALID_RUN_STATES = {"draft", "running", "paused", "generated", "reviewing", "completed", "cancelled"}
@@ -47,6 +49,24 @@ def ensure_storage() -> None:
     POOLS_DIR.mkdir(parents=True, exist_ok=True)
     POOL_BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    if DEFAULT_POOL_FILE.is_file():
+        index = _read_json(POOLS_INDEX_FILE, [])
+        if not isinstance(index, list):
+            index = []
+        if not any(item.get("id") == DEFAULT_POOL_ID for item in index if isinstance(item, dict)):
+            ids, _ = _normalize_ids(DEFAULT_POOL_FILE.read_text(encoding="utf-8"))
+            if ids:
+                now = _now()
+                index.append(
+                    {
+                        "id": DEFAULT_POOL_ID,
+                        "name": "artists_backup",
+                        "source_name": "artists_backup.txt",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                _save_pool_index(index)
 
 
 def _write_json(path: Path, value: dict | list) -> None:

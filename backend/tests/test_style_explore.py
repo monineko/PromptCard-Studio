@@ -106,6 +106,19 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(loaded["ids"], ["a", "b", "sakimori_\\(hououbds\\)", "name\\,with-comma"])
         self.assertEqual(loaded["content"], "a\nb\nsakimori_\\(hououbds\\)\nname\\,with-comma\n")
 
+    def test_default_artist_pool_seed_is_indexed_on_first_access(self):
+        default_file = explore.POOLS_DIR / "artists_backup.txt"
+        default_file.parent.mkdir(parents=True, exist_ok=True)
+        default_file.write_text("ciloranko\nwlop\n", encoding="utf-8")
+
+        pools = explore.list_pools()
+
+        self.assertEqual(len(pools), 1)
+        self.assertEqual(pools[0]["id"], "artists_backup")
+        self.assertEqual(pools[0]["name"], "artists_backup")
+        self.assertEqual(pools[0]["count"], 2)
+        self.assertEqual(explore.get_pool("artists_backup")["ids"], ["ciloranko", "wlop"])
+
     def test_pool_update_creates_backup_and_run_snapshots_ids(self):
         pool = explore.create_pool("原池", "a\nb\n")
         run = explore.create_run(pool["id"], 3, "base", "negative", {"model": "nai"})
