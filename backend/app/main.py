@@ -55,11 +55,13 @@ from .schemas import (
     ReviewUndoIn,
     SetCoverIn,
     StyleExploreCandidateUpdateIn,
+    StyleExploreCandidateCardIn,
     StyleExploreCandidatesIn,
     StyleExplorePoolIn,
     StyleExplorePoolBackupRestoreIn,
     StyleExplorePoolUpdateIn,
     StyleExploreRunUpdateIn,
+    StyleExploreResumeIn,
     StyleExploreBasicRoundIn,
     StyleExploreRunIn,
     Text2ImageIn,
@@ -724,9 +726,9 @@ def style_explore_run_pause(run_id: str):
 
 
 @app.post("/api/style-explore/runs/{run_id}/resume")
-def style_explore_run_resume(run_id: str):
+def style_explore_run_resume(run_id: str, body: StyleExploreResumeIn):
     try:
-        return style_explore_service.start_run(run_id)
+        return style_explore_service.resume_run(run_id, body.params)
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except ValueError as e:
@@ -779,6 +781,18 @@ def style_explore_candidate_copy_to_library(run_id: str, candidate_id: str):
         return style_explore_service.copy_candidate_to_library(run_id, candidate_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/candidates/{candidate_id}/card")
+def style_explore_candidate_create_card(run_id: str, candidate_id: str, body: StyleExploreCandidateCardIn):
+    try:
+        return style_explore_service.create_candidate_card(run_id, candidate_id, body.name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except FileExistsError as e:
+        raise _as_http(e, 409)
     except ValueError as e:
         raise _as_http(e, 400)
 

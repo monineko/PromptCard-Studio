@@ -1,4 +1,4 @@
-import { Archive, CircleHelp, Compass, Copy, FileUp, FolderPlus, Heart, Pause, Play, RotateCcw, Save, Square, Trash2, WandSparkles } from "lucide-react";
+import { Archive, CircleHelp, Compass, FileUp, FolderPlus, Heart, Pause, Play, RotateCcw, Save, Square, Trash2, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { ConfirmDialog, Modal } from "../components/UI";
@@ -26,7 +26,7 @@ function toExplorePrompt(sections: Section[]) {
 
 type HelpEntry = { title: string; description: ReactNode };
 type ConfirmState = { title: string; message: string; danger?: boolean; onConfirm: () => void } | null;
-type CardDialogState = { artistString: string; addToWorkspace: boolean; name: string } | null;
+type CardDialogState = { candidateId: string; name: string } | null;
 
 function ParameterHelp({ entry, onOpen }: { entry: HelpEntry; onOpen: (entry: HelpEntry) => void }) {
   return <span className="group relative inline-flex align-middle">
@@ -47,7 +47,10 @@ function ParameterControl({
   const displayValue = integer ? String(Math.round(safeValue)) : safeValue.toFixed(precision);
   const apply = (raw: string) => {
     const next = Number(raw);
-    if (Number.isFinite(next)) onChange(integer ? Math.round(next) : Math.round(next * 10) / 10);
+    if (Number.isFinite(next)) {
+      const bounded = Math.min(max, Math.max(min, next));
+      onChange(integer ? Math.round(bounded) : Math.round(bounded * 10) / 10);
+    }
   };
   return <div className="min-w-0 text-sm">
     <div className="mb-1 flex items-center justify-between gap-2"><label className="min-w-0">{label}<ParameterHelp entry={help} onOpen={onOpenHelp} /></label><button type="button" className="shrink-0 rounded-md p-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]" aria-label={`恢复“${label}”默认值`} title="恢复默认值" onClick={() => onChange(defaultValue)}><RotateCcw size={14} /></button></div>
@@ -107,10 +110,10 @@ function SplitBetaPreview({ lower, upper, mode, leftDispersion, rightDispersion 
   </section>;
 }
 
-function WeightParameters({ targetCount, setTargetCount, artistCount, setArtistCount, lower, setLower, upper, setUpper, mode, setMode, leftDispersion, setLeftDispersion, rightDispersion, setRightDispersion, softBalanceStrength, setSoftBalanceStrength, setHelpEntry }: { targetCount: number; setTargetCount: (value: number) => void; artistCount: number; setArtistCount: (value: number) => void; lower: number; setLower: (value: number) => void; upper: number; setUpper: (value: number) => void; mode: number; setMode: (value: number) => void; leftDispersion: number; setLeftDispersion: (value: number) => void; rightDispersion: number; setRightDispersion: (value: number) => void; softBalanceStrength: number; setSoftBalanceStrength: (value: number) => void; setHelpEntry: (entry: HelpEntry) => void }) {
+function WeightParameters({ targetCount, setTargetCount, minArtistCount, setMinArtistCount, lower, setLower, upper, setUpper, mode, setMode, leftDispersion, setLeftDispersion, rightDispersion, setRightDispersion, softBalanceStrength, setSoftBalanceStrength, setHelpEntry }: { targetCount: number; setTargetCount: (value: number) => void; minArtistCount: number; setMinArtistCount: (value: number) => void; lower: number; setLower: (value: number) => void; upper: number; setUpper: (value: number) => void; mode: number; setMode: (value: number) => void; leftDispersion: number; setLeftDispersion: (value: number) => void; rightDispersion: number; setRightDispersion: (value: number) => void; softBalanceStrength: number; setSoftBalanceStrength: (value: number) => void; setHelpEntry: (entry: HelpEntry) => void }) {
   return <section className="glass rounded-2xl p-5"><div><h2 className="font-semibold">权重参数</h2><p className="mt-1 text-xs text-[var(--muted)]">控制 Artist String 的随机权重分布；下方图表会即时反映当前的 Split-Beta 参数。</p></div><div className="mt-4 grid gap-x-4 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-    <ParameterControl label="目标图片数" help={{ title: "目标图片数", description: "本次基础探索要生成的候选图片数。数值越大，覆盖的 Artist String 组合越多，也会增加生成耗时和消耗。" }} value={targetCount} onChange={setTargetCount} min={1} max={10000} step={1} defaultValue={20} integer onOpenHelp={setHelpEntry} />
-    <ParameterControl label="每串 ID 数" help={{ title: "每串 ID 数", description: "每一条 Artist String 从 ArtistPool 中无放回选取的画师 ID 数量。数量越多，画风融合越明显；较少时更容易辨认单个画师的影响。" }} value={artistCount} onChange={setArtistCount} min={1} max={10} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} />
+    <ParameterControl label="目标图片数" help={{ title: "目标图片数", description: "本次基础探索要生成的候选图片数。数值越大，覆盖的 Artist String 组合越多，也会增加生成耗时和消耗。" }} value={targetCount} onChange={setTargetCount} min={1} max={1000} step={1} defaultValue={20} integer onOpenHelp={setHelpEntry} />
+    <ParameterControl label="最少抽取 ID 数目" help={{ title: "最少抽取 ID 数目", description: "每张候选图都会重新决定实际抽取数量，并从这个下限随机到 10；若池子不足 10 个，则随机到池子大小。例如设为 2 时，每次会随机抽取 2～10 个 ID，而非固定 2 个。" }} value={minArtistCount} onChange={setMinArtistCount} min={1} max={10} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} />
     <ParameterControl label="权重下界" help={{ title: "权重下界", description: "本轮随机权重不会低于这个值。它与上界共同限定可出现的权重范围，必须不大于众数。" }} value={lower} onChange={setLower} min={-3} max={3} step={0.1} defaultValue={0.1} onOpenHelp={setHelpEntry} />
     <ParameterControl label="权重上界" help={{ title: "权重上界", description: "本轮随机权重不会高于这个值。它与下界共同限定可出现的权重范围，必须不小于众数。" }} value={upper} onChange={setUpper} min={-3} max={3} step={0.1} defaultValue={2} onOpenHelp={setHelpEntry} />
     <ParameterControl label="众数" help={{ title: "众数", description: "Split-Beta 分布的中心。随机采样最倾向于靠近它，但不会保证每个画师 ID 都取该权重。众数必须落在上下界之间。" }} value={mode} onChange={setMode} min={Math.min(lower, upper)} max={Math.max(lower, upper)} step={0.1} defaultValue={0.8} onOpenHelp={setHelpEntry} />
@@ -124,8 +127,6 @@ export function StyleExplore() {
   const addToast = useStore((s) => s.addToast);
   const workspacePositive = useStore((s) => s.positive);
   const workspaceNegative = useStore((s) => s.negative);
-  const addWorkspacePrompt = useStore((s) => s.addPrompt);
-  const addWorkspaceCard = useStore((s) => s.addCardBlock);
   const workspaceParams = useGenerateStore((s) => s.params);
   const workspaceVibes = useGenerateStore((s) => s.vibes);
   const positive = useStyleExploreDraft((s) => s.positive);
@@ -147,7 +148,7 @@ export function StyleExplore() {
   const [newPoolText, setNewPoolText] = useState("");
   const [targetCount, setTargetCount] = useState(20);
   const [taskName, setTaskName] = useState("");
-  const [artistCount, setArtistCount] = useState(2);
+  const [minArtistCount, setMinArtistCount] = useState(2);
   const [lower, setLower] = useState(0.1);
   const [upper, setUpper] = useState(2);
   const [mode, setMode] = useState(0.8);
@@ -188,6 +189,7 @@ export function StyleExplore() {
   }, [loadRun, run?.id, run?.status]);
 
   const workspaceHasArtistCard = useMemo(() => workspacePositive.some((section) => section.blocks.some((block) => block.type === "card" && block.category === "画师串")), [workspacePositive]);
+  const previewCandidate = useMemo(() => run?.candidates.find((candidate) => candidate.id === previewCandidateId) ?? null, [previewCandidateId, run]);
   const withBusy = async (action: () => Promise<void>) => {
     setBusy(true); try { await action(); } catch (e) { addToast((e as Error).message, "err"); } finally { setBusy(false); }
   };
@@ -220,21 +222,21 @@ export function StyleExplore() {
     if (!poolId) throw new Error("请先选择 ArtistPool");
     const created = await api.styleExploreCreateRun({
       name: taskName, pool_id: poolId, target_count: targetCount, positive, negative, params: { ...params, vibes }, phase: "basic",
-      algorithm: { artist_count: artistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength },
+      algorithm: { min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength },
     });
     setTaskName(""); setSelectedRunId(created.id); setRun(created); setCreateRunDialogOpen(false); await refresh(); addToast("已创建基础探索任务；确认参数后即可开始生成");
   });
   const controlRun = (action: "start" | "pause" | "resume" | "cancel") => void withBusy(async () => {
     if (!run) return;
-    const next = action === "start" ? await api.styleExploreStartRun(run.id) : action === "pause" ? await api.styleExplorePauseRun(run.id) : action === "resume" ? await api.styleExploreResumeRun(run.id) : await api.styleExploreCancelRun(run.id);
+    const next = action === "start" ? await api.styleExploreStartRun(run.id) : action === "pause" ? await api.styleExplorePauseRun(run.id) : action === "resume" ? await api.styleExploreResumeRun(run.id, { ...params, vibes }) : await api.styleExploreCancelRun(run.id);
     setRun(next); await refresh();
   });
-  const setReview = (candidateId: string, label: "treasure" | "special" | "reject") => void withBusy(async () => {
+  const setPreliminaryReview = (candidateId: string, label: "treasure" | "special" | "reject", current: string | null | undefined) => void withBusy(async () => {
     if (!run) return;
-    await api.styleExploreUpdateCandidate(run.id, candidateId, { review: { label } });
+    await api.styleExploreUpdateCandidate(run.id, candidateId, { review: { preliminary_label: current === label ? null : label } });
     await loadRun(run.id);
   });
-  const currentRoundPayload = () => ({ target_count: targetCount, positive, negative, params: { ...params, vibes }, algorithm: { artist_count: artistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength } });
+  const currentRoundPayload = () => ({ target_count: targetCount, positive, negative, params: { ...params, vibes }, algorithm: { min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength } });
   const appendRound = () => void withBusy(async () => {
     if (!run) return;
     const next = await api.styleExploreAppendBasicRound(run.id, currentRoundPayload());
@@ -256,22 +258,20 @@ export function StyleExplore() {
     if (!run) return;
     const next = await api.styleExploreRetryFailed(run.id); setRun(next); await refresh(); addToast("失败候选已恢复为待生成状态");
   });
-  const copyArtistString = async (text: string) => {
-    try { await navigator.clipboard.writeText(text); addToast("已复制 Artist String"); } catch { addToast("复制失败，请检查浏览器权限", "err"); }
+  const createArtistCard = (candidateId: string) => {
+    setPreviewCandidateId(null);
+    setCardDialog({ candidateId, name: run ? `${run.name} 画师串` : "画师串" });
   };
-  const createArtistCard = (artistString: string, addToWorkspace = false) => setCardDialog({ artistString, addToWorkspace, name: run ? `${run.name} 画师串` : "画师串" });
   const submitCardDialog = () => void withBusy(async () => {
-    if (!cardDialog?.name.trim()) return;
-    await api.createCard("画师串", cardDialog.name.trim(), cardDialog.artistString);
-    if (cardDialog.addToWorkspace) addWorkspaceCard("画师串", cardDialog.name.trim());
-    addToast(cardDialog.addToWorkspace ? "已创建 Card 并加入工作区" : `已创建画师串 Card：${cardDialog.name.trim()}`); setCardDialog(null);
+    if (!run || !cardDialog?.name.trim()) return;
+    await api.styleExploreCreateCandidateCard(run.id, cardDialog.candidateId, cardDialog.name.trim());
+    addToast(`已创建画师串 Card，并将候选图复制到图库设为演示图：${cardDialog.name.trim()}`);
+    setCardDialog(null);
   });
-  const sendArtistToWorkspace = (artistString: string) => {
-    const workbench = workspacePositive.find((section) => section.name === "提示词工作台") ?? workspacePositive[0];
-    if (!workbench) return addToast("工作区尚未初始化", "err");
-    setConfirmState({ title: "回填到提示词工作区", message: "将此 Artist String 作为新的自定义提示词块添加到工作区，不会覆盖现有内容。", onConfirm: () => { addWorkspacePrompt(workbench.id, artistString); addToast("已作为自定义提示词块添加到工作区"); setConfirmState(null); } });
+  const confirmEndRun = () => {
+    if (!run) return;
+    setConfirmState({ title: "结束探索任务", message: `确认结束「${run.name}」吗？已生成的图片会保留，但剩余进度将永久无法继续。`, danger: true, onConfirm: () => controlRun("cancel") });
   };
-  const sendCardToWorkspace = (artistString: string) => createArtistCard(artistString, true);
 
   return <><div className="mx-auto w-full max-w-7xl space-y-5 px-4 py-5">
     <section className="glass relative min-h-[210px] rounded-2xl p-4 pb-14">
@@ -282,7 +282,7 @@ export function StyleExplore() {
         <input className={inputClass} value={run ? editRunName : taskName} onChange={(e) => run ? setEditRunName(e.target.value) : setTaskName(e.target.value)} placeholder="新任务名称，例如：厚涂水彩画风" aria-label="探索任务名称" />
         <button className={`${ghostButtonClass} w-full`} onClick={renameRun} disabled={busy || !run || !editRunName.trim()}><Save size={15} />重命名</button>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2"><button className={`${buttonClass} w-36`} onClick={() => controlRun(run?.status === "paused" ? "resume" : "start")} disabled={busy || !run || !!run.archived_at || !["draft", "paused"].includes(run.status)}><Play size={15} />{run?.status === "paused" ? "继续生成" : "开始生成"}</button><button className={`${ghostButtonClass} w-36`} onClick={() => controlRun("cancel")} disabled={busy || !run || !!run.archived_at || ["completed", "cancelled"].includes(run.status)}><Square size={15} />结束任务</button><button className={`${ghostButtonClass} w-36`} onClick={appendRound} disabled={busy || !run || run.status === "running" || !!run.archived_at}><WandSparkles size={15} />追加一轮</button><button className={`${ghostButtonClass} w-36`} onClick={retryFailed} disabled={busy || !run || !!run.archived_at || !run.candidates.some((candidate) => candidate.generation.status === "failed")}>重试失败项</button><button className={`${ghostButtonClass} w-28`} onClick={archiveRun} disabled={busy || !run || run.status === "running"}><Archive size={15} />{run?.archived_at ? "取消归档" : "归档"}</button><button className={`${ghostButtonClass} w-28`} onClick={deleteRun} disabled={busy || !run || run.status === "running"}><Trash2 size={15} />删除</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button className={`${buttonClass} w-36`} onClick={() => controlRun(run?.status === "paused" ? "resume" : "start")} disabled={busy || !run || !!run.archived_at || !["draft", "paused"].includes(run.status)}><Play size={15} />{run?.status === "paused" ? "继续生成" : "开始生成"}</button><button className={`${ghostButtonClass} w-36`} onClick={() => controlRun("pause")} disabled={busy || !run || !!run.archived_at || run.status !== "running"}><Pause size={15} />暂停生成</button><button className={`${ghostButtonClass} w-36`} onClick={confirmEndRun} disabled={busy || !run || !!run.archived_at || ["completed", "cancelled"].includes(run.status)}><Square size={15} />结束任务</button><button className={`${ghostButtonClass} w-36`} onClick={appendRound} disabled={busy || !run || run.status === "running" || !!run.archived_at}><WandSparkles size={15} />追加一轮</button><button className={`${ghostButtonClass} w-36`} onClick={retryFailed} disabled={busy || !run || !!run.archived_at || !run.candidates.some((candidate) => candidate.generation.status === "failed")}>重试失败项</button><button className={`${ghostButtonClass} w-28`} onClick={archiveRun} disabled={busy || !run || run.status === "running"}><Archive size={15} />{run?.archived_at ? "取消归档" : "归档"}</button><button className={`${ghostButtonClass} w-28`} onClick={deleteRun} disabled={busy || !run || run.status === "running"}><Trash2 size={15} />删除</button></div>
       <p className="mt-4 pr-52 text-xs text-[var(--muted)]">{run ? `当前：${run.name} · ${statusLabel(run.status)} · ${run.done_count}/${run.target_count} · ${run.round_count ?? run.rounds?.length ?? 0} 轮。追加时会使用页面当前条件，旧候选不会变化。` : "选择已有任务后可生成、结束、追加、重试、归档或删除；按钮位置始终固定。"}</p>
       <button className={`${buttonClass} absolute bottom-4 right-4`} onClick={() => setCreateRunDialogOpen(true)} disabled={busy || !poolId}><WandSparkles size={15} />创建基础探索任务</button>
     </section>
@@ -301,14 +301,23 @@ export function StyleExplore() {
         </section>
       </main>
     </div>
-    <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} artistCount={artistCount} setArtistCount={setArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} />
-    {run && <section className="glass rounded-2xl p-5"><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">先标记心动嘉宾或正式筛选；复制到普通图库会保留探索原图。每张候选均可回看自己的生成条件。</p><div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{run.candidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">{candidate.generation.status === "done" && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}<div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div><code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}{candidate.generation.status === "done" && <div className="mt-3 flex flex-wrap gap-1"><button className={ghostButtonClass} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title="心动嘉宾"><Heart size={14} fill={candidate.review.heart ? "currentColor" : "none"} />心动</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "treasure")} disabled={busy}>Treasure</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "special")} disabled={busy}>Special</button><button className={ghostButtonClass} onClick={() => setReview(candidate.id, "reject")} disabled={busy}>Reject</button><button className={ghostButtonClass} onClick={() => void copyArtistString(candidate.artist_string)}><Copy size={14} />复制串</button><button className={ghostButtonClass} onClick={() => createArtistCard(candidate.artist_string)} disabled={busy}>建 Card</button><button className={ghostButtonClass} onClick={() => sendArtistToWorkspace(candidate.artist_string)}>回填文本</button><button className={ghostButtonClass} onClick={() => sendCardToWorkspace(candidate.artist_string)} disabled={busy}>回填 Card</button><button className={ghostButtonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, candidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div>}{candidate.review.heart && <div className="mt-2 text-xs text-[var(--accent)]">心动嘉宾</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">已标记：{candidate.review.label}</div>}</div>)}{run.candidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div></section>}
+    <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} minArtistCount={minArtistCount} setMinArtistCount={setMinArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} />
+    {run && <section className="glass rounded-2xl p-5">
+      <div className="flex items-start gap-3"><div><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p></div><button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button></div>
+      <div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{run.candidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
+        {candidate.generation.status === "done" && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
+        <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
+        <code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}
+        {candidate.generation.status === "done" && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title={candidate.review.heart ? "取消心动标记" : "标记为心动"} aria-label={candidate.review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={candidate.review.heart ? "currentColor" : "none"} className={candidate.review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(candidate.id, label, candidate.review.preliminary_label)} disabled={busy} aria-pressed={candidate.review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
+        {candidate.review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{candidate.review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{candidate.review.preliminary_label}</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{candidate.review.label}</div>}
+      </div>)}{run.candidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
+    </section>}
   </div><Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
   </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览">
-    {run && previewCandidateId && <img className="max-h-[75vh] w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidateId)} alt="放大候选预览" />}
-  </Modal><Modal open={cardDialog !== null} onClose={() => setCardDialog(null)} title={cardDialog?.addToWorkspace ? "创建 Card 并回填工作区" : "创建画师串 Card"}>
-    <p className="mb-3 text-sm text-[var(--muted)]">{cardDialog?.addToWorkspace ? "Card 创建后会作为 Card Reference 添加到工作区，不会覆盖现有内容。" : "将当前 Artist String 保存为「画师串」Card。"}</p>
+    {run && previewCandidate && <><img className="max-h-[70vh] w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidate.id)} alt="放大候选预览" /><div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => createArtistCard(previewCandidate.id)} disabled={busy}>创建画师串 Card</button><button className={buttonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, previewCandidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div></>}
+  </Modal><Modal open={cardDialog !== null} onClose={() => setCardDialog(null)} title="创建画师串 Card">
+    <p className="mb-3 text-sm text-[var(--muted)]">将当前 Artist String 保存为「画师串」Card；候选图会自动复制到普通图库，并设为该 Card 的演示图。</p>
     <input className={inputClass} value={cardDialog?.name ?? ""} onChange={(event) => setCardDialog((current) => current ? { ...current, name: event.target.value } : current)} placeholder="Card 名称" autoFocus />
     <div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => setCardDialog(null)}>取消</button><button className={buttonClass} onClick={submitCardDialog} disabled={busy || !cardDialog?.name.trim()}>确认创建</button></div>
   </Modal><Modal open={createRunDialogOpen} onClose={() => setCreateRunDialogOpen(false)} title="确认创建基础探索任务" wide>
@@ -316,7 +325,7 @@ export function StyleExplore() {
     <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-[var(--border)] p-3 text-sm"><div className="text-xs text-[var(--muted)]">任务名称</div><div className="mt-1 break-all">{taskName.trim() || `${pool?.name ?? "ArtistPool"} 探索`}</div></div><div className="rounded-xl border border-[var(--border)] p-3 text-sm"><div className="text-xs text-[var(--muted)]">ArtistPool</div><div className="mt-1 break-all">{pool ? `${pool.name} · ${pool.count} 个 ID` : "尚未选择 ArtistPool"}</div></div></div>
     <div className="mt-3 grid gap-3 lg:grid-cols-2"><div className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">正面提示词</div><code className="mt-1 block max-h-24 overflow-y-auto break-all text-xs">{positive || "（无）"}</code></div><div className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">负面提示词</div><code className="mt-1 block max-h-24 overflow-y-auto break-all text-xs">{negative || "（无）"}</code></div></div>
     <div className="mt-3 rounded-xl border border-[var(--border)] p-3"><div className="text-sm font-medium">生图参数</div><div className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">{Object.entries(params).map(([key, value]) => <div key={key} className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">{key}</span><span className="break-all text-right">{String(value)}</span></div>)}<div className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">vibes</span><span>{vibes.length} 个</span></div></div></div>
-    <div className="mt-3 rounded-xl border border-[var(--border)] p-3"><div className="text-sm font-medium">权重参数</div><div className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">{[["目标图片数", targetCount], ["每串 ID 数", artistCount], ["权重下界", lower], ["权重上界", upper], ["众数", mode], ["左侧离散", leftDispersion], ["右侧离散", rightDispersion], ["软平衡强度", softBalanceStrength]].map(([label, value]) => <div key={String(label)} className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">{label}</span><span>{value}</span></div>)}</div></div>
+    <div className="mt-3 rounded-xl border border-[var(--border)] p-3"><div className="text-sm font-medium">权重参数</div><div className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">{[["目标图片数", targetCount], ["最少抽取 ID 数目", minArtistCount], ["权重下界", lower], ["权重上界", upper], ["众数", mode], ["左侧离散", leftDispersion], ["右侧离散", rightDispersion], ["软平衡强度", softBalanceStrength]].map(([label, value]) => <div key={String(label)} className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">{label}</span><span>{value}</span></div>)}</div></div>
     <div className="mt-5 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => setCreateRunDialogOpen(false)}>取消</button><button className={buttonClass} onClick={createRun} disabled={busy || !poolId}><WandSparkles size={15} />确认创建任务</button></div>
   </Modal><ConfirmDialog open={confirmState !== null} title={confirmState?.title ?? "确认操作"} message={confirmState?.message ?? ""} danger={confirmState?.danger} onCancel={() => setConfirmState(null)} onConfirm={() => { const action = confirmState?.onConfirm; setConfirmState(null); action?.(); }} /></>;
 }

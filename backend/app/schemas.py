@@ -169,6 +169,10 @@ class StyleExploreRunUpdateIn(BaseModel):
     name: str = ""
 
 
+class StyleExploreResumeIn(BaseModel):
+    params: dict = {}
+
+
 class StyleExploreBasicRoundIn(BaseModel):
     target_count: int = 1
     positive: str = ""
@@ -184,6 +188,10 @@ class StyleExploreCandidatesIn(BaseModel):
 class StyleExploreCandidateUpdateIn(BaseModel):
     generation: Optional[dict] = None
     review: Optional[dict] = None
+
+
+class StyleExploreCandidateCardIn(BaseModel):
+    name: str = ""
 
 
 class PngSendIn(BaseModel):

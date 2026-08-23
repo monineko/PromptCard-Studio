@@ -41,6 +41,15 @@ class StyleExploreAlgorithmTest(unittest.TestCase):
         self.assertEqual(candidate.artist_string.count("::"), 6)
         self.assertTrue(all(part.endswith("::") for part in candidate.artist_string.split(", ")))
 
+    def test_min_artist_count_randomizes_each_candidate_up_to_ten(self):
+        pool = [f"artist_{index}" for index in range(12)]
+        candidates = generate_basic_candidates(
+            pool, 2, 120, WeightSamplingConfig(), random.Random(20260823)
+        )
+        lengths = [len(candidate.artist_weights) for candidate in candidates]
+        self.assertTrue(all(2 <= length <= 10 for length in lengths))
+        self.assertGreater(len(set(lengths)), 1)
+
     def test_all_samples_stay_in_range_and_on_tenth_grid(self):
         config = WeightSamplingConfig(
             lower=-2.4, upper=1.7, mode=-0.3, left_dispersion=0.9, right_dispersion=0.8

@@ -35,6 +35,7 @@ _lock = threading.RLock()
 _VALID_RUN_STATES = {"draft", "running", "paused", "generated", "reviewing", "completed", "cancelled"}
 _VALID_CANDIDATE_STATES = {"pending", "generating", "done", "failed", "skipped"}
 _VALID_REVIEW_LABELS = {None, "treasure", "reject", "special"}
+_VALID_PRELIMINARY_LABELS = {None, "treasure", "reject", "special"}
 _workers: dict[str, threading.Thread] = {}
 
 
@@ -351,8 +352,8 @@ def create_run(
 ) -> dict:
     if phase not in {"basic", "deep"}:
         raise ValueError("探索阶段必须是 basic 或 deep")
-    if not 1 <= int(target_count) <= 10000:
-        raise ValueError("目标生成数量需在 1~10000 之间")
+    if not 1 <= int(target_count) <= 1000:
+        raise ValueError("目标生成数量需在 1~1000 之间")
     with _lock:
         pool = get_pool(pool_id)
         run_id = uuid.uuid4().hex[:12]
@@ -457,6 +458,27 @@ def pause_run(run_id: str) -> dict:
         return _full_run(record)
 
 
+def resume_run(run_id: str, params: dict | None = None) -> dict:
+    """以当前生图参数继续暂停任务，只改写尚未发起请求的候选快照。"""
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") != "paused":
+            raise ValueError("只有已暂停的探索任务可以继续")
+        next_params = dict(params or {})
+        for candidate in record.get("candidates") or []:
+            if (candidate.get("generation") or {}).get("status") != "pending":
+                continue
+            snapshot = dict(candidate.get("prompt_snapshot") or record.get("prompt_snapshot") or {})
+            snapshot["params"] = dict(next_params)
+            candidate["prompt_snapshot"] = snapshot
+        prompt_snapshot = dict(record.get("prompt_snapshot") or {})
+        prompt_snapshot["params"] = dict(next_params)
+        record["prompt_snapshot"] = prompt_snapshot
+        record.setdefault("resume_events", []).append({"at": _now(), "params": dict(next_params)})
+        _save_run(record)
+        return start_run(run_id)
+
+
 def cancel_run(run_id: str) -> dict:
     with _lock:
         record = _load_run(run_id)
@@ -478,8 +500,8 @@ def append_basic_round(
     algorithm: dict | None = None,
 ) -> dict:
     """在既有探索任务中追加一轮基础探索，不改写历史候选的条件快照。"""
-    if not 1 <= int(target_count) <= 10000:
-        raise ValueError("目标生成数量需在 1~10000 之间")
+    if not 1 <= int(target_count) <= 1000:
+        raise ValueError("目标生成数量需在 1~1000 之间")
     with _lock:
         record = _load_run(run_id)
         if record.get("phase") != "basic":
@@ -533,7 +555,7 @@ def add_candidates(run_id: str, candidates: list[dict]) -> dict:
                 "artist_string": artist_string,
                 "ids": list((raw or {}).get("ids") or []),
                 "generation": generation,
-                "review": {"heart": False, "rating": None, "label": None},
+                "review": {"heart": False, "rating": None, "label": None, "preliminary_label": None},
                 "lineage": dict((raw or {}).get("lineage") or {"parent_ids": [], "operations": []}),
             }
             record.setdefault("candidates", []).append(item)
@@ -560,10 +582,21 @@ def update_candidate(run_id: str, candidate_id: str, patch: dict) -> dict:
             label = review.get("label", candidate.get("review", {}).get("label"))
             if label not in _VALID_REVIEW_LABELS:
                 raise ValueError("候选 review.label 非法")
+            preliminary_label = review.get(
+                "preliminary_label", candidate.get("review", {}).get("preliminary_label")
+            )
+            if preliminary_label not in _VALID_PRELIMINARY_LABELS:
+                raise ValueError("候选初步判断非法")
             if "rating" in review and review["rating"] is not None and not 0 <= float(review["rating"]) <= 5:
                 raise ValueError("候选评分需在 0~5 之间")
-            candidate["review"] = {**candidate.get("review", {}), **review, "label": label}
-            _move_candidate_for_label(run_id, candidate, label)
+            candidate["review"] = {
+                **candidate.get("review", {}),
+                **review,
+                "label": label,
+                "preliminary_label": preliminary_label,
+            }
+            if "label" in review:
+                _move_candidate_for_label(run_id, candidate, label)
         _save_run(record)
         return candidate
 
@@ -610,6 +643,28 @@ def copy_candidate_to_library(run_id: str, candidate_id: str) -> dict:
         return {"ok": True, **copied}
 
 
+def create_candidate_card(run_id: str, candidate_id: str, name: str) -> dict:
+    """从候选创建画师串 Card，并把普通图库副本绑定为演示图。"""
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("Card 名称不能为空")
+    with _lock:
+        record = _load_run(run_id)
+        candidate = next(
+            (item for item in record.get("candidates") or [] if item.get("id") == candidate_id),
+            None,
+        )
+        if candidate is None:
+            raise FileNotFoundError("候选不存在")
+        if cards_service.get_card("画师串", clean_name) is not None:
+            raise FileExistsError(f"卡片已存在: <画师串:{clean_name}>")
+        source = candidate_image_file(run_id, candidate_id)
+        copied = library_service.copy_image_from_source(source)
+        card = cards_service.create_card("画师串", clean_name, str(candidate.get("artist_string") or ""))
+        cards_service.set_card_image("画师串", card["name"], copied["path"])
+        return {"ok": True, "card": card, "image_path": copied["path"], "image_name": copied["name"]}
+
+
 def _append_basic_round_to_record(
     record: dict,
     target_count: int,
@@ -630,7 +685,8 @@ def _append_basic_round_to_record(
         right_dispersion=float(raw.get("right_dispersion", 0.4)),
         soft_balance_strength=float(raw.get("soft_balance_strength", 0.0)),
     )
-    artist_count = int(raw.get("artist_count", 2))
+    min_artist_count = int(raw.get("min_artist_count", raw.get("artist_count", 2)))
+    raw.pop("artist_count", None)
     seed = int(raw.get("random_seed", random.SystemRandom().randrange(1, 2**63)))
     normalized_algorithm = {
         **raw,
@@ -640,7 +696,7 @@ def _append_basic_round_to_record(
         "left_dispersion": config.left_dispersion,
         "right_dispersion": config.right_dispersion,
         "soft_balance_strength": config.soft_balance_strength,
-        "artist_count": artist_count,
+        "min_artist_count": min_artist_count,
     }
     round_id = uuid.uuid4().hex[:12]
     rounds = record.setdefault("rounds", [])
@@ -658,7 +714,7 @@ def _append_basic_round_to_record(
         "candidate_ids": [],
     }
     generated = style_explore_algorithm.generate_basic_candidates(
-        record["pool"]["ids"], artist_count, target_count, config, random.Random(seed)
+        record["pool"]["ids"], min_artist_count, target_count, config, random.Random(seed)
     )
     candidates = [
         {
@@ -667,7 +723,7 @@ def _append_basic_round_to_record(
             "artist_string": candidate.artist_string,
             "ids": [{"id": item.artist_id, "weight": item.weight} for item in candidate.artist_weights],
             "generation": {"status": "pending"},
-            "review": {"heart": False, "rating": None, "label": None},
+            "review": {"heart": False, "rating": None, "label": None, "preliminary_label": None},
             "lineage": {"parent_ids": [], "operations": ["basic_split_beta"]},
             "prompt_snapshot": {"positive": snapshot["positive"], "negative": snapshot["negative"], "params": dict(snapshot["params"])},
             "algorithm_snapshot": dict(normalized_algorithm),

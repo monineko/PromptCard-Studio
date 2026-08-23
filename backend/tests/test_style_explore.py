@@ -37,6 +37,19 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.old_generate = explore.novelai_service.generate_text2image
         self.old_library_root = explore.library_service._library_root
         explore.library_service._library_root = lambda: root / "library"
+        self.old_card_paths = (
+            explore.cards_service.PROMPTCARDS_DIR,
+            explore.cards_service.CARD_IMAGES_FILE,
+            explore.cards_service.CARD_META_FILE,
+            explore.cards_service.CARD_PINS_FILE,
+            explore.cards_service.resolve_image,
+        )
+        cards_root = root / "promptcards"
+        explore.cards_service.PROMPTCARDS_DIR = cards_root
+        explore.cards_service.CARD_IMAGES_FILE = cards_root / ".card-images.json"
+        explore.cards_service.CARD_META_FILE = cards_root / ".card-meta.json"
+        explore.cards_service.CARD_PINS_FILE = cards_root / ".card-pins.json"
+        explore.cards_service.resolve_image = lambda path: explore.library_service._library_root() / path
         explore.novelai_service.is_configured = lambda: True
 
         def fake_generate(_prompt, _negative, _params, output_dir=None):
@@ -65,6 +78,13 @@ class StyleExploreServiceTest(unittest.TestCase):
         explore.novelai_service.is_configured = self.old_is_configured
         explore.novelai_service.generate_text2image = self.old_generate
         explore.library_service._library_root = self.old_library_root
+        (
+            explore.cards_service.PROMPTCARDS_DIR,
+            explore.cards_service.CARD_IMAGES_FILE,
+            explore.cards_service.CARD_META_FILE,
+            explore.cards_service.CARD_PINS_FILE,
+            explore.cards_service.resolve_image,
+        ) = self.old_card_paths
         (
             explore.STYLE_EXPLORE_DIR,
             explore.POOLS_DIR,
@@ -95,6 +115,11 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(run["pool"]["ids"], ["a", "b"])
         loaded = explore.get_run(run["id"])
         self.assertEqual(loaded["prompt_snapshot"]["params"]["model"], "nai")
+
+    def test_target_image_count_is_limited_to_one_thousand(self):
+        pool = explore.create_pool("池", "a\n")
+        with self.assertRaisesRegex(ValueError, "1000"):
+            explore.create_run(pool["id"], 1001, "base", "negative")
 
     def test_pool_backup_can_be_restored_and_referenced_pool_cannot_be_deleted(self):
         pool = explore.create_pool("原池", "a\nb\n")
@@ -154,6 +179,9 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(current["status"], "generated")
         candidate = current["candidates"][0]
         self.assertTrue(Path(candidate["generation"]["path"]).is_file())
+        explore.update_candidate(run["id"], candidate["id"], {"review": {"preliminary_label": "treasure"}})
+        preliminary = explore.get_run(run["id"])["candidates"][0]
+        self.assertEqual(preliminary["generation"]["path"], candidate["generation"]["path"])
         explore.update_candidate(run["id"], candidate["id"], {"review": {"label": "treasure"}})
         moved = explore.get_run(run["id"])["candidates"][0]
         self.assertIn("treasure", Path(moved["generation"]["path"]).parts)
@@ -179,6 +207,23 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertIn(run["id"], [item["id"] for item in explore.list_runs(include_archived=True)])
         self.assertIsNone(explore.archive_run(run["id"], False)["archived_at"])
 
+    def test_resume_replaces_generation_params_only_for_unfinished_candidates(self):
+        pool = explore.create_pool("池", "a\nb\n")
+        run = explore.create_run(pool["id"], 2, "base", "neg", {"steps": 20}, {"artist_count": 1})
+        prepared = explore.append_basic_round(
+            run["id"], 2, "base", "neg", {"steps": 20}, {"artist_count": 1, "random_seed": 9}
+        )
+        record = explore._load_run(run["id"])
+        record["status"] = "paused"
+        record["candidates"][0]["generation"] = {"status": "done"}
+        explore._save_run(record)
+
+        resumed = explore.resume_run(run["id"], {"steps": 31, "sampler": "new"})
+
+        self.assertEqual(resumed["candidates"][0]["prompt_snapshot"]["params"], {"steps": 20})
+        self.assertEqual(resumed["candidates"][1]["prompt_snapshot"]["params"], {"steps": 31, "sampler": "new"})
+        self.assertEqual(resumed["algorithm"], prepared["algorithm"])
+
     def test_copy_candidate_to_library_preserves_exploration_original_and_delete_removes_task(self):
         pool = explore.create_pool("池", "a\n")
         run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
@@ -196,6 +241,25 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertTrue((explore.library_service._library_root() / copied["path"]).is_file())
         explore.delete_run(run["id"])
         self.assertFalse(original.parent.parent.exists())
+
+    def test_create_candidate_card_copies_demo_image_to_normal_library(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        self.generate_gate.set()
+        explore.start_run(run["id"])
+        for _ in range(50):
+            current = explore.get_run(run["id"])
+            if current["status"] == "generated":
+                break
+            time.sleep(0.02)
+        candidate = current["candidates"][0]
+
+        result = explore.create_candidate_card(run["id"], candidate["id"], "候选卡")
+
+        self.assertEqual(explore.cards_service.get_card("画师串", "候选卡")["content"], candidate["artist_string"])
+        self.assertEqual(explore.cards_service.list_cards_images()["画师串:候选卡"], result["image_path"])
+        self.assertTrue((explore.library_service._library_root() / result["image_path"]).is_file())
+        self.assertTrue(Path(candidate["generation"]["path"]).is_file())
 
 
 if __name__ == "__main__":

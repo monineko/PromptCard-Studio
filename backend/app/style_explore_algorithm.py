@@ -181,20 +181,25 @@ def build_artist_string(artist_weights: Sequence[ArtistWeight]) -> str:
 
 def generate_basic_candidate(
     artist_pool: Sequence[str],
-    artist_count: int,
+    min_artist_count: int,
     config: WeightSamplingConfig,
     rng: random.Random | None = None,
 ) -> BasicCandidate:
-    """无放回选择 1～10 个 ID，并生成一条完成离散化的 Artist String。"""
+    """从最少数量到 10 个 ID 中随机取样，并生成 Artist String。
+
+    实际上限还受池子大小约束；每个候选都会重新随机实际数量。因此最少
+    数量为 2 时，不是固定抽取 2 个，而是在 2～min(10, 池大小) 间抽取。
+    """
 
     validate_weight_config(config)
     pool = _validated_pool(artist_pool)
-    if not 1 <= artist_count <= 10:
-        raise ValueError("每个候选需选择 1 到 10 个 Artist ID")
-    if artist_count > len(pool):
+    if not 1 <= min_artist_count <= 10:
+        raise ValueError("最少抽取 ID 数目必须为 1 到 10")
+    if min_artist_count > len(pool):
         raise ValueError("ArtistPool 中的 ID 数量不足")
     source = rng if rng is not None else random.Random()
-    selected = source.sample(pool, artist_count)
+    actual_count = source.randint(min_artist_count, min(10, len(pool)))
+    selected = source.sample(pool, actual_count)
     continuous = [sample_split_beta_weight(config, source) for _ in selected]
     balanced = soft_balance_weights(continuous, config)
     artist_weights = tuple(
@@ -206,7 +211,7 @@ def generate_basic_candidate(
 
 def generate_basic_candidates(
     artist_pool: Sequence[str],
-    artist_count: int,
+    min_artist_count: int,
     candidate_count: int,
     config: WeightSamplingConfig,
     rng: random.Random | None = None,
@@ -217,7 +222,7 @@ def generate_basic_candidates(
         raise ValueError("候选数量至少为 1")
     source = rng if rng is not None else random.Random()
     return [
-        generate_basic_candidate(artist_pool, artist_count, config, source)
+        generate_basic_candidate(artist_pool, min_artist_count, config, source)
         for _ in range(candidate_count)
     ]
 

@@ -254,8 +254,8 @@ export const api = {
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/start`, { method: "POST" }),
   styleExplorePauseRun: (runId: string) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" }),
-  styleExploreResumeRun: (runId: string) =>
-    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/resume`, { method: "POST" }),
+  styleExploreResumeRun: (runId: string, params: Record<string, unknown>) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/resume`, { method: "POST", body: JSON.stringify({ params }) }),
   styleExploreCancelRun: (runId: string) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }),
   styleExploreUpdateCandidate: (runId: string, candidateId: string, patch: { generation?: Record<string, unknown>; review?: Record<string, unknown> }) =>
@@ -266,6 +266,8 @@ export const api = {
     `/api/style-explore/runs/${encodeURIComponent(runId)}/image?candidate_id=${encodeURIComponent(candidateId)}`,
   styleExploreCopyCandidateToLibrary: (runId: string, candidateId: string) =>
     request<{ ok: boolean; path: string; name: string }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}/copy-to-library`, { method: "POST" }),
+  styleExploreCreateCandidateCard: (runId: string, candidateId: string, name: string) =>
+    request<{ ok: boolean; card: { category: string; name: string; content: string }; image_path: string; image_name: string }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}/card`, { method: "POST", body: JSON.stringify({ name }) }),
   pngSend: (png: unknown, model: string) =>
     request<PngSendResult>("/api/generate/from-png", {
       method: "POST",

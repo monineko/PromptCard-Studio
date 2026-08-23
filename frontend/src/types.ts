@@ -351,6 +351,7 @@ export type StyleExploreRunStatus =
   | "cancelled";
 export type StyleExploreCandidateStatus = "pending" | "generating" | "done" | "failed" | "skipped";
 export type StyleExploreReviewLabel = "treasure" | "reject" | "special" | null;
+export type StyleExplorePreliminaryLabel = "treasure" | "reject" | "special" | null;
 
 export type StyleExplorePoolSummary = {
   id: string;
@@ -384,7 +385,7 @@ export type StyleExploreCandidate = {
   artist_string: string;
   ids: unknown[];
   generation: { status: StyleExploreCandidateStatus; [key: string]: unknown };
-  review: { heart?: boolean; rating?: number | null; label: StyleExploreReviewLabel; [key: string]: unknown };
+  review: { heart?: boolean; rating?: number | null; label: StyleExploreReviewLabel; preliminary_label?: StyleExplorePreliminaryLabel; [key: string]: unknown };
   lineage: Record<string, unknown>;
   prompt_snapshot?: { positive: string; negative: string; params: Record<string, unknown> };
 };
