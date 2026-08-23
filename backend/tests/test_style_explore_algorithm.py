@@ -12,19 +12,170 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app.style_explore_algorithm import (  # noqa: E402
     ArtistWeight,
+    DeepParent,
     WeightSamplingConfig,
     build_artist_string,
     discretize_weight,
     dispersion_to_beta_shape,
     generate_basic_candidate,
     generate_basic_candidates,
+    generate_deep_candidates,
+    parse_artist_string,
     sample_split_beta_weight,
     sample_weight,
     soft_balance_weights,
+    suggest_deep_candidate_count,
+    suggest_next_parent_count,
 )
 
 
 class StyleExploreAlgorithmTest(unittest.TestCase):
+    def test_deep_round_suggestions_follow_milestone_examples(self):
+        self.assertEqual(suggest_deep_candidate_count(5), 20)
+        self.assertEqual(suggest_deep_candidate_count(8), 30)
+        self.assertEqual(suggest_deep_candidate_count(12), 50)
+        self.assertEqual(suggest_deep_candidate_count(1), 10)
+        self.assertEqual(suggest_next_parent_count(20), 5)
+        self.assertEqual(suggest_next_parent_count(30), 6)
+        self.assertEqual(suggest_next_parent_count(50), 8)
+
+    def test_artist_string_can_be_parsed_into_a_deep_parent(self):
+        weights = parse_artist_string(r"0.8::artist_a::, -1.2::name\,with-comma::")
+        self.assertEqual(
+            weights,
+            (ArtistWeight("artist_a", 0.8), ArtistWeight(r"name\,with-comma", -1.2)),
+        )
+        parent = DeepParent.from_artist_string("parent-a", "0.8::artist_a::", preference=2.5)
+        self.assertEqual(parent.parent_id, "parent-a")
+        self.assertEqual(parent.artist_weights, (ArtistWeight("artist_a", 0.8),))
+        self.assertEqual(parent.preference, 2.5)
+
+    def test_deep_candidates_cover_every_parent_and_keep_lineage_constraints(self):
+        parents = [
+            DeepParent.from_artist_string("p1", "0.8::a::, 1.0::b::"),
+            DeepParent.from_artist_string("p2", "0.7::c::, 1.1::d::"),
+            DeepParent.from_artist_string("p3", "0.9::e::, 1.2::f::"),
+        ]
+        pool = list("abcdefgh")
+        config = WeightSamplingConfig(lower=-1.0, upper=2.0, mode=0.8)
+
+        candidates = generate_deep_candidates(
+            parents, pool, 15, config, random.Random(20260823)
+        )
+
+        self.assertEqual(len(candidates), 15)
+        canonical = {
+            tuple(sorted((item.artist_id, item.weight) for item in candidate.artist_weights))
+            for candidate in candidates
+        }
+        self.assertEqual(len(canonical), 15)
+        local_parent_ids = {
+            candidate.parent_ids[0]
+            for candidate in candidates
+            if candidate.operation == "local_mutation"
+        }
+        self.assertEqual(local_parent_ids, {"p1", "p2", "p3"})
+        self.assertTrue(any(candidate.operation == "crossover" for candidate in candidates))
+        self.assertTrue(any(candidate.operation == "random_injection" for candidate in candidates))
+        for candidate in candidates:
+            self.assertIn(candidate.operation, {"local_mutation", "crossover", "random_injection"})
+            self.assertTrue(all(item.artist_id in pool for item in candidate.artist_weights))
+            self.assertTrue(all(config.lower <= item.weight <= config.upper for item in candidate.artist_weights))
+            self.assertTrue(all(abs(item.weight * 10 - round(item.weight * 10)) < 1e-9 for item in candidate.artist_weights))
+            self.assertIsInstance(candidate.weight_changes, tuple)
+
+            parent_by_id = {parent.parent_id: parent for parent in parents}
+            reconstructed = (
+                {item.artist_id: item.weight for item in parent_by_id[candidate.parent_ids[0]].artist_weights}
+                if candidate.parent_ids
+                else {}
+            )
+            for change in candidate.weight_changes:
+                if change.after is None:
+                    reconstructed.pop(change.artist_id, None)
+                else:
+                    reconstructed[change.artist_id] = change.after
+            self.assertEqual(
+                reconstructed,
+                {item.artist_id: item.weight for item in candidate.artist_weights},
+            )
+
+    def test_single_parent_uses_mutation_and_random_injection_without_crossover(self):
+        parent = DeepParent.from_artist_string("only", "0.8::a::, 1.0::b::")
+        candidates = generate_deep_candidates(
+            [parent], list("abcdef"), 12, WeightSamplingConfig(), random.Random(91)
+        )
+        operations = {candidate.operation for candidate in candidates}
+        self.assertNotIn("crossover", operations)
+        self.assertIn("local_mutation", operations)
+        self.assertIn("random_injection", operations)
+        self.assertTrue(
+            all(candidate.parent_ids in {("only",), ()} for candidate in candidates)
+        )
+
+    def test_seeded_deep_candidates_are_reproducible(self):
+        parents = [
+            DeepParent.from_artist_string("p1", "0.8::a::, 1.0::b::"),
+            DeepParent.from_artist_string("p2", "0.7::c::, 1.1::d::"),
+        ]
+        first = generate_deep_candidates(
+            parents, list("abcdef"), 12, WeightSamplingConfig(), random.Random(73)
+        )
+        second = generate_deep_candidates(
+            parents, list("abcdef"), 12, WeightSamplingConfig(), random.Random(73)
+        )
+        self.assertEqual(first, second)
+
+    def test_higher_preference_increases_participation_without_monopoly(self):
+        parents = [
+            DeepParent.from_artist_string("high", "0.8::a::, 1.0::b::", preference=6.0),
+            DeepParent.from_artist_string("mid", "0.8::c::, 1.0::d::", preference=1.0),
+            DeepParent.from_artist_string("low", "0.8::e::, 1.0::f::", preference=0.0),
+        ]
+        counts = {parent.parent_id: 0 for parent in parents}
+        for seed in range(40):
+            candidates = generate_deep_candidates(
+                parents,
+                list("abcdefghij"),
+                25,
+                WeightSamplingConfig(),
+                random.Random(seed),
+            )
+            for candidate in candidates:
+                for parent_id in candidate.parent_ids:
+                    counts[parent_id] += 1
+
+        self.assertGreater(counts["high"], counts["low"] * 1.5)
+        # 40 是“每个父本至少一次”的硬保底；超过它证明低偏好仍参与额外后代。
+        self.assertGreater(counts["low"], 40)
+
+    def test_deep_generation_rejects_impossible_or_out_of_pool_inputs(self):
+        config = WeightSamplingConfig(lower=0.8, upper=0.8, mode=0.8)
+        with self.assertRaisesRegex(ValueError, "大于父本数"):
+            generate_deep_candidates(
+                [DeepParent.from_artist_string("p", "0.8::a::")],
+                ["a", "b"],
+                1,
+                config,
+                random.Random(1),
+            )
+        with self.assertRaisesRegex(ValueError, "ArtistPool"):
+            generate_deep_candidates(
+                [DeepParent.from_artist_string("p", "0.8::outside::")],
+                ["a", "b"],
+                2,
+                config,
+                random.Random(1),
+            )
+        with self.assertRaisesRegex(ValueError, "无法局部变异"):
+            generate_deep_candidates(
+                [DeepParent.from_artist_string("p", "0.8::a::")],
+                ["a"],
+                2,
+                config,
+                random.Random(1),
+            )
+
     def test_seeded_candidates_are_reproducible(self):
         config = WeightSamplingConfig()
         pool = ["artist_a", "artist_b", "artist_c", "artist_d"]

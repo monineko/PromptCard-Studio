@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import math
 import random
+import re
 from typing import Sequence
 
 
@@ -51,6 +52,139 @@ class BasicCandidate:
 
     artist_weights: tuple[ArtistWeight, ...]
     artist_string: str
+
+
+@dataclass(frozen=True)
+class DeepParent:
+    """深度探索父本；偏好只影响抽样频率，不表达绝对评分。"""
+
+    parent_id: str
+    artist_weights: tuple[ArtistWeight, ...]
+    preference: float = 1.0
+
+    @classmethod
+    def from_artist_string(
+        cls, parent_id: str, artist_string: str, preference: float = 1.0
+    ) -> "DeepParent":
+        return cls(parent_id, parse_artist_string(artist_string), preference)
+
+
+@dataclass(frozen=True)
+class WeightChange:
+    """候选相对父本的单个 ID 权重/成员变化。``None`` 表示新增或移除。"""
+
+    artist_id: str
+    before: float | None
+    after: float | None
+
+
+@dataclass(frozen=True)
+class DeepCandidate:
+    """带可回溯谱系的深度探索候选。"""
+
+    artist_weights: tuple[ArtistWeight, ...]
+    artist_string: str
+    parent_ids: tuple[str, ...]
+    operation: str
+    weight_changes: tuple[WeightChange, ...]
+
+
+_ARTIST_STRING_ITEM = re.compile(
+    r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))::(.+?)::\s*(?:,\s*|$)"
+)
+
+
+def parse_artist_string(artist_string: str) -> tuple[ArtistWeight, ...]:
+    """解析本模块生成的加权 Artist String，并保留 ID 内的转义字符。"""
+
+    raw = (artist_string or "").strip()
+    if not raw:
+        raise ValueError("Artist String 不能为空")
+    items: list[ArtistWeight] = []
+    position = 0
+    while position < len(raw):
+        match = _ARTIST_STRING_ITEM.match(raw, position)
+        if match is None:
+            raise ValueError("Artist String 格式无效")
+        weight = float(match.group(1))
+        artist_id = match.group(2).strip()
+        if not artist_id or not math.isfinite(weight):
+            raise ValueError("Artist String 格式无效")
+        items.append(ArtistWeight(artist_id, weight))
+        position = match.end()
+    if len({item.artist_id for item in items}) != len(items):
+        raise ValueError("Artist String 不能包含重复 ID")
+    return tuple(items)
+
+
+def suggest_deep_candidate_count(parent_count: int) -> int:
+    """建议一轮生成量：``4 × P`` 取最近的 5，且最低为 10。"""
+
+    if parent_count < 1:
+        raise ValueError("当前父本数至少为 1")
+    return max(10, ((4 * parent_count + 2) // 5) * 5)
+
+
+def suggest_next_parent_count(candidate_count: int) -> int:
+    """建议下一轮父本数：``ceil(sqrt(N))``，限制在 3～10。"""
+
+    if candidate_count < 1:
+        raise ValueError("候选数量至少为 1")
+    return min(10, max(3, math.ceil(math.sqrt(candidate_count))))
+
+
+def generate_deep_candidates(
+    parents: Sequence[DeepParent],
+    artist_pool: Sequence[str],
+    candidate_count: int,
+    config: WeightSamplingConfig,
+    rng: random.Random | None = None,
+) -> list[DeepCandidate]:
+    """生成一轮可回溯的深度探索候选。
+
+    接口保证每个父本至少有一个局部变异，并至少保留一个随机注入名额，
+    因而目标数必须大于父本数。无法在有限组合空间内产生足量唯一候选时
+    会明确失败，而不是静默返回重复或不足数量的结果。
+    """
+
+    validate_weight_config(config)
+    pool = _validated_pool(artist_pool)
+    normalized_parents = _validated_deep_parents(parents, pool, config)
+    if candidate_count <= len(normalized_parents):
+        raise ValueError("深度候选数量必须大于父本数，以保留随机注入名额")
+    source = rng if rng is not None else random.Random()
+    results: list[DeepCandidate] = []
+    seen: set[tuple[tuple[str, float], ...]] = set()
+
+    def append_unique(factory, attempts: int = 240) -> None:
+        for _ in range(attempts):
+            candidate = factory()
+            key = _candidate_key(candidate.artist_weights)
+            if key not in seen:
+                seen.add(key)
+                results.append(candidate)
+                return
+        raise ValueError("当前父本、池子和权重范围无法产生足量唯一深度候选")
+
+    # 公平性硬约束：即使偏好很低，每个父本也不会失去探索机会。
+    for parent in normalized_parents:
+        append_unique(lambda parent=parent: _local_mutation(parent, pool, config, source))
+
+    remaining = candidate_count - len(results)
+    injection_count = min(remaining, max(1, round(candidate_count * 0.1)))
+    for _ in range(injection_count):
+        append_unique(lambda: _random_injection(pool, config, source))
+
+    while len(results) < candidate_count:
+        if len(normalized_parents) > 1 and source.random() < 0.65:
+            append_unique(lambda: _crossover(normalized_parents, config, source))
+        else:
+            append_unique(
+                lambda: _local_mutation(
+                    _weighted_parent(normalized_parents, source), pool, config, source
+                )
+            )
+    return results
 
 
 def validate_weight_config(config: WeightSamplingConfig) -> None:
@@ -225,6 +359,214 @@ def generate_basic_candidates(
         generate_basic_candidate(artist_pool, min_artist_count, config, source)
         for _ in range(candidate_count)
     ]
+
+
+def _validated_deep_parents(
+    parents: Sequence[DeepParent], pool: Sequence[str], config: WeightSamplingConfig
+) -> list[DeepParent]:
+    if not parents:
+        raise ValueError("当前父本集不能为空")
+    pool_set = set(pool)
+    normalized: list[DeepParent] = []
+    parent_ids: set[str] = set()
+    parent_keys: set[tuple[tuple[str, float], ...]] = set()
+    for parent in parents:
+        parent_id = (parent.parent_id or "").strip()
+        if not parent_id or parent_id in parent_ids:
+            raise ValueError("父本 ID 不能为空或重复")
+        if not math.isfinite(parent.preference) or parent.preference < 0:
+            raise ValueError("父本偏好必须是非负有限数字")
+        if not 1 <= len(parent.artist_weights) <= 10:
+            raise ValueError("每个父本必须包含 1 到 10 个 Artist ID")
+        ids = [item.artist_id.strip() for item in parent.artist_weights]
+        if any(not artist_id for artist_id in ids) or len(ids) != len(set(ids)):
+            raise ValueError("父本 Artist ID 不能为空或重复")
+        if any(artist_id not in pool_set for artist_id in ids):
+            raise ValueError("父本 Artist ID 必须来自当前 ArtistPool")
+        if any(not math.isfinite(item.weight) for item in parent.artist_weights):
+            raise ValueError("父本权重必须是有限数字")
+        weights = tuple(
+            ArtistWeight(
+                artist_id,
+                discretize_weight(item.weight, config.lower, config.upper),
+            )
+            for artist_id, item in zip(ids, parent.artist_weights)
+        )
+        key = _candidate_key(weights)
+        if key in parent_keys:
+            raise ValueError("当前父本集不能包含等价 Artist String")
+        parent_ids.add(parent_id)
+        parent_keys.add(key)
+        normalized.append(DeepParent(parent_id, weights, float(parent.preference)))
+    return normalized
+
+
+def _local_mutation(
+    parent: DeepParent,
+    pool: Sequence[str],
+    config: WeightSamplingConfig,
+    rng: random.Random,
+) -> DeepCandidate:
+    weights = list(parent.artist_weights)
+    used = {item.artist_id for item in weights}
+    actions: list[str] = []
+    if any(
+        item.weight - WEIGHT_STEP >= config.lower - _EPSILON
+        or item.weight + WEIGHT_STEP <= config.upper + _EPSILON
+        for item in weights
+    ):
+        actions.append("weight")
+    if len(used) < len(pool):
+        actions.append("replace")
+        if len(weights) < min(10, len(pool)):
+            actions.append("add")
+    if len(weights) > 1:
+        actions.append("remove")
+    if not actions:
+        raise ValueError(f"父本 {parent.parent_id} 在当前池子与权重范围内无法局部变异")
+
+    action = rng.choice(actions)
+    changes: list[WeightChange] = []
+    if action == "weight":
+        mutable = [
+            index
+            for index, item in enumerate(weights)
+            if item.weight - WEIGHT_STEP >= config.lower - _EPSILON
+            or item.weight + WEIGHT_STEP <= config.upper + _EPSILON
+        ]
+        index = rng.choice(mutable)
+        before = weights[index]
+        deltas = [
+            delta
+            for delta in (-0.2, -0.1, 0.1, 0.2)
+            if config.lower - _EPSILON <= before.weight + delta <= config.upper + _EPSILON
+        ]
+        after_weight = discretize_weight(
+            before.weight + rng.choice(deltas), config.lower, config.upper
+        )
+        weights[index] = ArtistWeight(before.artist_id, after_weight)
+        changes.append(WeightChange(before.artist_id, before.weight, after_weight))
+    elif action == "replace":
+        index = rng.randrange(len(weights))
+        before = weights[index]
+        artist_id = rng.choice([item for item in pool if item not in used])
+        weights[index] = ArtistWeight(artist_id, before.weight)
+        changes.extend(
+            (
+                WeightChange(before.artist_id, before.weight, None),
+                WeightChange(artist_id, None, before.weight),
+            )
+        )
+    elif action == "add":
+        artist_id = rng.choice([item for item in pool if item not in used])
+        weight = sample_weight(config, rng)
+        weights.append(ArtistWeight(artist_id, weight))
+        changes.append(WeightChange(artist_id, None, weight))
+    else:
+        index = rng.randrange(len(weights))
+        before = weights.pop(index)
+        changes.append(WeightChange(before.artist_id, before.weight, None))
+
+    result = tuple(weights)
+    return DeepCandidate(
+        result,
+        build_artist_string(result),
+        (parent.parent_id,),
+        "local_mutation",
+        tuple(changes),
+    )
+
+
+def _random_injection(
+    pool: Sequence[str], config: WeightSamplingConfig, rng: random.Random
+) -> DeepCandidate:
+    basic = generate_basic_candidate(pool, min(2, len(pool)), config, rng)
+    return DeepCandidate(
+        basic.artist_weights,
+        basic.artist_string,
+        (),
+        "random_injection",
+        tuple(WeightChange(item.artist_id, None, item.weight) for item in basic.artist_weights),
+    )
+
+
+def _crossover(
+    parents: Sequence[DeepParent], config: WeightSamplingConfig, rng: random.Random
+) -> DeepCandidate:
+    first = _weighted_parent(parents, rng)
+    second = _weighted_parent([parent for parent in parents if parent.parent_id != first.parent_id], rng)
+    first_map = {item.artist_id: item.weight for item in first.artist_weights}
+    second_map = {item.artist_id: item.weight for item in second.artist_weights}
+    shared = set(first_map) & set(second_map)
+    child: list[ArtistWeight] = []
+
+    # 至少从两个父本取得贡献；同 ID 时用两者均值表示交叉。
+    first_seed = rng.choice(first.artist_weights)
+    child.append(first_seed)
+    second_choices = [item for item in second.artist_weights if item.artist_id != first_seed.artist_id]
+    if second_choices:
+        child.append(rng.choice(second_choices))
+    elif first_seed.artist_id in second_map:
+        child[0] = ArtistWeight(
+            first_seed.artist_id,
+            discretize_weight(
+                (first_seed.weight + second_map[first_seed.artist_id]) / 2,
+                config.lower,
+                config.upper,
+            ),
+        )
+
+    used = {item.artist_id for item in child}
+    union = list(first.artist_weights) + [
+        item for item in second.artist_weights if item.artist_id not in first_map
+    ]
+    rng.shuffle(union)
+    for item in union:
+        if item.artist_id in used or len(child) >= 10 or rng.random() >= 0.55:
+            continue
+        if item.artist_id in shared and rng.random() < 0.5:
+            weight = discretize_weight(
+                (first_map[item.artist_id] + second_map[item.artist_id]) / 2,
+                config.lower,
+                config.upper,
+            )
+            child.append(ArtistWeight(item.artist_id, weight))
+        else:
+            child.append(item)
+        used.add(item.artist_id)
+
+    result = tuple(child)
+    changes = _weight_changes(first.artist_weights, result)
+    return DeepCandidate(
+        result,
+        build_artist_string(result),
+        (first.parent_id, second.parent_id),
+        "crossover",
+        changes,
+    )
+
+
+def _weighted_parent(parents: Sequence[DeepParent], rng: random.Random) -> DeepParent:
+    # 固定基线保证最低偏好父本仍有非零机会，不会被绝对垄断。
+    weights = [0.25 + parent.preference for parent in parents]
+    return rng.choices(list(parents), weights=weights, k=1)[0]
+
+
+def _weight_changes(
+    before: Sequence[ArtistWeight], after: Sequence[ArtistWeight]
+) -> tuple[WeightChange, ...]:
+    before_map = {item.artist_id: item.weight for item in before}
+    after_map = {item.artist_id: item.weight for item in after}
+    ids = list(before_map) + [artist_id for artist_id in after_map if artist_id not in before_map]
+    return tuple(
+        WeightChange(artist_id, before_map.get(artist_id), after_map.get(artist_id))
+        for artist_id in ids
+        if before_map.get(artist_id) != after_map.get(artist_id)
+    )
+
+
+def _candidate_key(weights: Sequence[ArtistWeight]) -> tuple[tuple[str, float], ...]:
+    return tuple(sorted((item.artist_id, item.weight) for item in weights))
 
 
 def _sample_side(

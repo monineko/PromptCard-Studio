@@ -32,6 +32,8 @@ RUNS_DIR = STYLE_EXPLORE_DIR / "runs"
 POOLS_INDEX_FILE = POOLS_DIR / "index.json"
 DEFAULT_POOL_ID = "artists_backup"
 DEFAULT_POOL_FILE = POOLS_DIR / f"{DEFAULT_POOL_ID}.txt"
+IMPORT_ORIGINAL_BACKUP = "import-original.txt"
+POOL_REPORT_PREVIEW_LIMIT = 20
 
 _lock = threading.RLock()
 _VALID_RUN_STATES = {"draft", "running", "paused", "generated", "reviewing", "completed", "cancelled"}
@@ -106,10 +108,12 @@ def _split_pool_entries(content: str) -> list[str]:
     return parts
 
 
-def _normalize_ids(content: str) -> tuple[list[str], dict[str, int]]:
+def _normalize_ids(content: str) -> tuple[list[str], dict]:
     """兼容两种池子格式，保序去重并返回可展示的导入统计。"""
     seen: set[str] = set()
     ids: list[str] = []
+    duplicate_entries: list[str] = []
+    skipped_entries: list[dict[str, str]] = []
     report = {"input_count": 0, "duplicate_count": 0, "skipped_count": 0}
     for part in _split_pool_entries(content):
         value = part.strip()
@@ -118,13 +122,58 @@ def _normalize_ids(content: str) -> tuple[list[str], dict[str, int]]:
         report["input_count"] += 1
         if value.startswith("#"):
             report["skipped_count"] += 1
+            skipped_entries.append({"value": value, "reason": "comment"})
             continue
         if value in seen:
             report["duplicate_count"] += 1
+            duplicate_entries.append(value)
             continue
         seen.add(value)
         ids.append(value)
-    return ids, {**report, "valid_count": len(ids), "skipped": report["duplicate_count"] + report["skipped_count"]}
+    raw = (content or "").lstrip("\ufeff")
+    has_line_break = "\n" in raw or "\r" in raw
+    escaped = False
+    has_unescaped_comma = False
+    for char in raw:
+        if char == "," and not escaped:
+            has_unescaped_comma = True
+            break
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    detected_format = (
+        "mixed"
+        if has_line_break and has_unescaped_comma
+        else "comma_separated"
+        if has_unescaped_comma
+        else "one_id_per_line"
+    )
+    warnings = ["comment_lines_skipped"] if skipped_entries else []
+    normalized_content = _pool_text(ids)
+    return ids, {
+        **report,
+        "original_count": report["input_count"],
+        "valid_count": len(ids),
+        "skipped": report["duplicate_count"] + report["skipped_count"],
+        "duplicate_preview": duplicate_entries[:POOL_REPORT_PREVIEW_LIMIT],
+        "duplicate_preview_truncated": len(duplicate_entries) > POOL_REPORT_PREVIEW_LIMIT,
+        "skipped_preview": skipped_entries[:POOL_REPORT_PREVIEW_LIMIT],
+        "skipped_preview_truncated": len(skipped_entries) > POOL_REPORT_PREVIEW_LIMIT,
+        "normalized_preview": ids[:POOL_REPORT_PREVIEW_LIMIT],
+        "normalized_preview_truncated": len(ids) > POOL_REPORT_PREVIEW_LIMIT,
+        "normalized_content": normalized_content,
+        "preview_limit": POOL_REPORT_PREVIEW_LIMIT,
+        "warnings": warnings,
+        "format_info": {
+            "detected_format": detected_format,
+            "accepted_formats": ["one_id_per_line", "comma_separated"],
+            "accepted_extensions": [".txt"],
+            "normalized_format": "one_id_per_line",
+            "literal_comma_escape": "\\,",
+            "comment_prefix": "#",
+        },
+    }
 
 
 def _pool_text(ids: list[str]) -> str:
@@ -192,6 +241,10 @@ def create_pool(name: str, content: str, source_name: str = "") -> dict:
             "updated_at": now,
         }
         _pool_file(pool_id).write_text(_pool_text(ids), encoding="utf-8")
+        if pool["source_name"]:
+            backup_dir = POOL_BACKUPS_DIR / pool_id
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            (backup_dir / IMPORT_ORIGINAL_BACKUP).write_text(content or "", encoding="utf-8")
         index = _load_pool_index()
         index.append(pool)
         _save_pool_index(index)
@@ -234,10 +287,16 @@ def update_pool(pool_id: str, content: str, name: str | None = None) -> dict:
 
 def list_pool_backups(pool_id: str) -> list[dict]:
     with _lock:
-        _pool_by_id(pool_id)
+        pool = _pool_by_id(pool_id)
         folder = POOL_BACKUPS_DIR / pool_id
         return [
-            {"name": path.name, "created_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"), "count": len(_normalize_ids(path.read_text(encoding="utf-8"))[0])}
+            {
+                "name": path.name,
+                "created_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
+                "count": len(_normalize_ids(path.read_text(encoding="utf-8"))[0]),
+                "kind": "import_original" if path.name == IMPORT_ORIGINAL_BACKUP else "edit_backup",
+                "source_name": pool.get("source_name") if path.name == IMPORT_ORIGINAL_BACKUP else "",
+            }
             for path in sorted(folder.glob("*.txt"), reverse=True)
         ]
 
@@ -308,6 +367,61 @@ def _save_run(record: dict) -> None:
     _write_json(_run_file(record["id"]), record)
 
 
+def _recover_interrupted_record(record: dict) -> bool:
+    """把没有存活 worker 的中断任务恢复为可继续的持久化状态。"""
+    run_id = str(record.get("id") or "")
+    worker = _workers.get(run_id)
+    worker_alive = bool(worker and worker.is_alive())
+    reservation = generation_coordinator.status().get("reservation")
+    owns_reservation = bool(
+        reservation
+        and reservation.get("owner") == "style_explore"
+        and reservation.get("task_id") == run_id
+    )
+    # 用户点击暂停时，当前请求可能仍在收尾；只要线程还活着，就不能把它
+    # 当成进程重启遗留，否则快速暂停/继续可能重复发起同一候选。
+    if worker_alive:
+        return False
+
+    changed = False
+    recovered_candidates = 0
+    if record.get("status") in {"running", "paused"}:
+        for candidate in record.get("candidates") or []:
+            generation = candidate.get("generation") or {}
+            if generation.get("status") != "generating":
+                continue
+            candidate["generation"] = {**generation, "status": "pending"}
+            recovered_candidates += 1
+            changed = True
+    if record.get("status") == "running":
+        record["status"] = "paused"
+        changed = True
+    if changed:
+        reason = "服务重启，探索任务已暂停"
+        if recovered_candidates:
+            reason += f"；{recovered_candidates} 个未完成候选已恢复为待生成"
+        record["status_reason"] = reason
+    if owns_reservation:
+        generation_coordinator.release("style_explore", run_id)
+    if worker is not None and not worker_alive:
+        _workers.pop(run_id, None)
+    return changed
+
+
+def recover_interrupted_runs() -> dict:
+    """程序启动时恢复所有因进程退出而中断的探索任务。"""
+    with _lock:
+        ensure_storage()
+        recovered_ids: list[str] = []
+        for path in RUNS_DIR.glob("*/run.json"):
+            record = _read_json(path, None)
+            if not isinstance(record, dict) or not _recover_interrupted_record(record):
+                continue
+            _save_run(record)
+            recovered_ids.append(str(record.get("id") or ""))
+        return {"recovered_count": len(recovered_ids), "run_ids": recovered_ids}
+
+
 def _public_run(record: dict) -> dict:
     candidates = record.get("candidates") or []
     return {
@@ -339,7 +453,11 @@ def list_runs(include_archived: bool = False) -> list[dict]:
         records: list[dict] = []
         for path in RUNS_DIR.glob("*/run.json"):
             record = _read_json(path, None)
-            if isinstance(record, dict) and (include_archived or not record.get("archived_at")):
+            if not isinstance(record, dict):
+                continue
+            if _recover_interrupted_record(record):
+                _save_run(record)
+            if include_archived or not record.get("archived_at"):
                 records.append(_public_run(record))
         return sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
 
@@ -347,15 +465,7 @@ def list_runs(include_archived: bool = False) -> list[dict]:
 def get_run(run_id: str) -> dict:
     with _lock:
         record = _load_run(run_id)
-        # 进程重启后没有实际 worker，不能把旧 running 任务误报为继续执行。
-        reservation = generation_coordinator.status().get("reservation")
-        if record.get("status") == "running" and (
-            not reservation
-            or reservation.get("owner") != "style_explore"
-            or reservation.get("task_id") != run_id
-        ):
-            record["status"] = "paused"
-            record["status_reason"] = "服务重启，探索任务已暂停"
+        if _recover_interrupted_record(record):
             _save_run(record)
         return _full_run(record)
 
@@ -447,6 +557,8 @@ def _assert_batch_idle() -> None:
 def start_run(run_id: str) -> dict:
     with _lock:
         record = _load_run(run_id)
+        if _recover_interrupted_record(record):
+            _save_run(record)
         if record.get("status") not in {"draft", "paused"}:
             raise ValueError("只有草稿或已暂停的探索任务可以开始")
         _assert_batch_idle()
@@ -482,6 +594,8 @@ def resume_run(run_id: str, params: dict | None = None) -> dict:
     """以当前生图参数继续暂停任务，只改写尚未发起请求的候选快照。"""
     with _lock:
         record = _load_run(run_id)
+        if _recover_interrupted_record(record):
+            _save_run(record)
         if record.get("status") != "paused":
             raise ValueError("只有已暂停的探索任务可以继续")
         next_params = dict(params or {})
@@ -531,6 +645,298 @@ def append_basic_round(
         _append_basic_round_to_record(record, int(target_count), positive, negative, params or {}, algorithm or {})
         record["status"] = "draft"
         record["status_reason"] = None
+        _save_run(record)
+        return _full_run(record)
+
+
+def _deep_state(record: dict) -> dict:
+    """返回任务内唯一的深度探索状态容器，并兼容旧任务的首次访问。"""
+
+    deep = record.setdefault("deep", {})
+    deep.setdefault("active_parent_set_id", None)
+    deep.setdefault("parent_sets", [])
+    return deep
+
+
+def set_deep_parent_set(
+    run_id: str,
+    candidate_ids: list[str] | None = None,
+    custom_artist_strings: list[str] | None = None,
+) -> dict:
+    """从本任务 Treasure 与自定义串建立一份不可变父本快照。"""
+
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再确认深度探索父本")
+        if record.get("archived_at") or record.get("status") == "cancelled":
+            raise ValueError("已归档或已结束的任务不能建立深度探索父本")
+
+        by_id = {item.get("id"): item for item in record.get("candidates") or []}
+        parents: list[dict] = []
+        normalized_keys: set[tuple[tuple[str, float], ...]] = set()
+        seen_candidate_ids: set[str] = set()
+
+        def add_parent(*, parent_id: str, source: str, artist_string: str, candidate_id: str | None = None) -> None:
+            parsed = style_explore_algorithm.parse_artist_string(artist_string)
+            key = tuple(sorted((item.artist_id, item.weight) for item in parsed))
+            if key in normalized_keys:
+                return
+            normalized_keys.add(key)
+            parents.append(
+                {
+                    "id": parent_id,
+                    "source": source,
+                    "candidate_id": candidate_id,
+                    "representative_candidate_id": candidate_id,
+                    "artist_string": style_explore_algorithm.build_artist_string(parsed),
+                    "preference": 1.0,
+                }
+            )
+
+        for candidate_id in candidate_ids or []:
+            clean_id = str(candidate_id or "").strip()
+            if not clean_id or clean_id in seen_candidate_ids:
+                continue
+            seen_candidate_ids.add(clean_id)
+            candidate = by_id.get(clean_id)
+            if candidate is None:
+                raise FileNotFoundError(f"候选不存在: {clean_id}")
+            if (candidate.get("generation") or {}).get("status") != "done":
+                raise ValueError(f"候选尚未生成完成: {clean_id}")
+            if (candidate.get("review") or {}).get("label") != "treasure":
+                raise ValueError("深度探索只能从本任务 Treasure 选择图片父本")
+            add_parent(
+                parent_id=clean_id,
+                source="candidate",
+                artist_string=str(candidate.get("artist_string") or ""),
+                candidate_id=clean_id,
+            )
+
+        for raw in custom_artist_strings or []:
+            artist_string = str(raw or "").strip()
+            if not artist_string:
+                continue
+            add_parent(
+                parent_id=f"custom-{uuid.uuid4().hex[:12]}",
+                source="custom",
+                artist_string=artist_string,
+            )
+
+        if not parents:
+            raise ValueError("请至少选择一张 Treasure 或输入一条 Artist String")
+
+        # 在确认阶段提前校验池成员、父本重复和权重范围，使错误不会拖到创建轮次时才出现。
+        raw_algorithm = dict(record.get("algorithm") or {})
+        config = style_explore_algorithm.WeightSamplingConfig(
+            lower=float(raw_algorithm.get("lower", 0.1)),
+            upper=float(raw_algorithm.get("upper", 2.0)),
+            mode=float(raw_algorithm.get("mode", 0.8)),
+            left_dispersion=float(raw_algorithm.get("left_dispersion", 0.4)),
+            right_dispersion=float(raw_algorithm.get("right_dispersion", 0.4)),
+            soft_balance_strength=float(raw_algorithm.get("soft_balance_strength", 0.0)),
+        )
+        style_explore_algorithm.generate_deep_candidates(
+            [
+                style_explore_algorithm.DeepParent.from_artist_string(
+                    item["id"], item["artist_string"], item["preference"]
+                )
+                for item in parents
+            ],
+            (record.get("pool") or {}).get("ids") or [],
+            len(parents) + 1,
+            config,
+            random.Random(0),
+        )
+
+        deep = _deep_state(record)
+        now = _now()
+        for existing in deep["parent_sets"]:
+            if existing.get("status") == "active":
+                existing["status"] = "used"
+                existing["updated_at"] = now
+        parent_set = {
+            "id": uuid.uuid4().hex[:12],
+            "number": len(deep["parent_sets"]) + 1,
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+            "parents": parents,
+            "comparisons": [],
+            "suggested_target_count": style_explore_algorithm.suggest_deep_candidate_count(len(parents)),
+            "used_round_ids": [],
+        }
+        deep["parent_sets"].append(parent_set)
+        deep["active_parent_set_id"] = parent_set["id"]
+        _save_run(record)
+        return _full_run(record)
+
+
+def record_deep_preference(
+    run_id: str,
+    parent_set_id: str,
+    left_parent_id: str,
+    right_parent_id: str,
+    result: str,
+) -> dict:
+    """保存一次成对偏好，并把它折算为温和的抽样权重。"""
+
+    if result not in {"left", "right", "neither", "skip"}:
+        raise ValueError("深度探索偏好结果非法")
+    if left_parent_id == right_parent_id:
+        raise ValueError("偏好比较的两份父本不能相同")
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("生成期间不能修改父本偏好")
+        deep = _deep_state(record)
+        parent_set = next(
+            (item for item in deep["parent_sets"] if item.get("id") == parent_set_id), None
+        )
+        if parent_set is None:
+            raise FileNotFoundError(f"父本集不存在: {parent_set_id}")
+        parents = {item.get("id"): item for item in parent_set.get("parents") or []}
+        if left_parent_id not in parents or right_parent_id not in parents:
+            raise ValueError("偏好比较包含不属于当前父本集的项目")
+        if result == "left":
+            parents[left_parent_id]["preference"] = float(parents[left_parent_id].get("preference", 1.0)) + 1.0
+        elif result == "right":
+            parents[right_parent_id]["preference"] = float(parents[right_parent_id].get("preference", 1.0)) + 1.0
+        elif result == "neither":
+            for parent_id in (left_parent_id, right_parent_id):
+                parents[parent_id]["preference"] = max(
+                    0.25, float(parents[parent_id].get("preference", 1.0)) - 0.25
+                )
+        event = {
+            "left_parent_id": left_parent_id,
+            "right_parent_id": right_parent_id,
+            "result": result,
+            "created_at": _now(),
+        }
+        parent_set.setdefault("comparisons", []).append(event)
+        parent_set["updated_at"] = event["created_at"]
+        _save_run(record)
+        return _full_run(record)
+
+
+def append_deep_round(
+    run_id: str,
+    target_count: int,
+    positive: str,
+    negative: str,
+    params: dict | None = None,
+    algorithm: dict | None = None,
+) -> dict:
+    """用当前父本集生成一轮带谱系的候选，并复用现有串行生图 worker。"""
+
+    if not 1 <= int(target_count) <= 1000:
+        raise ValueError("目标生成数量需在 1~1000 之间")
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再创建深度轮次")
+        if record.get("archived_at") or record.get("status") == "cancelled":
+            raise ValueError("已归档或已结束的任务不能创建深度轮次")
+        deep = _deep_state(record)
+        parent_set = next(
+            (
+                item
+                for item in deep["parent_sets"]
+                if item.get("id") == deep.get("active_parent_set_id")
+            ),
+            None,
+        )
+        if parent_set is None:
+            raise ValueError("请先确认当前深度探索父本集")
+        parents = parent_set.get("parents") or []
+        if int(target_count) <= len(parents):
+            raise ValueError("深度候选数量必须大于父本数，以保留变异与随机注入名额")
+
+        raw = {**dict(record.get("algorithm") or {}), **dict(algorithm or {})}
+        config = style_explore_algorithm.WeightSamplingConfig(
+            lower=float(raw.get("lower", 0.1)),
+            upper=float(raw.get("upper", 2.0)),
+            mode=float(raw.get("mode", 0.8)),
+            left_dispersion=float(raw.get("left_dispersion", 0.4)),
+            right_dispersion=float(raw.get("right_dispersion", 0.4)),
+            soft_balance_strength=float(raw.get("soft_balance_strength", 0.0)),
+        )
+        seed = int(raw.get("random_seed", random.SystemRandom().randrange(1, 2**63)))
+        normalized_algorithm = {
+            **raw,
+            "lower": config.lower,
+            "upper": config.upper,
+            "mode": config.mode,
+            "left_dispersion": config.left_dispersion,
+            "right_dispersion": config.right_dispersion,
+            "soft_balance_strength": config.soft_balance_strength,
+        }
+        generated = style_explore_algorithm.generate_deep_candidates(
+            [
+                style_explore_algorithm.DeepParent.from_artist_string(
+                    item["id"], item["artist_string"], float(item.get("preference", 1.0))
+                )
+                for item in parents
+            ],
+            (record.get("pool") or {}).get("ids") or [],
+            int(target_count),
+            config,
+            random.Random(seed),
+        )
+        rounds = record.setdefault("rounds", [])
+        round_id = uuid.uuid4().hex[:12]
+        snapshot = {"positive": positive or "", "negative": negative or "", "params": dict(params or {})}
+        candidates = []
+        for generated_candidate in generated:
+            candidate_id = uuid.uuid4().hex[:12]
+            candidates.append(
+                {
+                    "id": candidate_id,
+                    "round_id": round_id,
+                    "artist_string": generated_candidate.artist_string,
+                    "ids": [
+                        {"id": item.artist_id, "weight": item.weight}
+                        for item in generated_candidate.artist_weights
+                    ],
+                    "generation": {"status": "pending"},
+                    "review": {"heart": False, "rating": None, "label": None, "preliminary_label": None},
+                    "lineage": {
+                        "parent_ids": list(generated_candidate.parent_ids),
+                        "operation": generated_candidate.operation,
+                        "operations": [generated_candidate.operation],
+                        "weight_changes": [
+                            {"artist_id": change.artist_id, "before": change.before, "after": change.after}
+                            for change in generated_candidate.weight_changes
+                        ],
+                    },
+                    "prompt_snapshot": {"positive": snapshot["positive"], "negative": snapshot["negative"], "params": dict(snapshot["params"])},
+                    "algorithm_snapshot": dict(normalized_algorithm),
+                }
+            )
+        round_record = {
+            "id": round_id,
+            "number": len(rounds) + 1,
+            "phase": "deep",
+            "status": "pending",
+            "created_at": _now(),
+            "target_count": int(target_count),
+            "random_seed": seed,
+            "parent_set_id": parent_set["id"],
+            "suggested_next_parent_count": style_explore_algorithm.suggest_next_parent_count(int(target_count)),
+            "prompt_snapshot": snapshot,
+            "algorithm": normalized_algorithm,
+            "candidate_ids": [item["id"] for item in candidates],
+        }
+        rounds.append(round_record)
+        record.setdefault("candidates", []).extend(candidates)
+        parent_set["status"] = "used"
+        parent_set.setdefault("used_round_ids", []).append(round_id)
+        parent_set["updated_at"] = _now()
+        record["status"] = "draft"
+        record["status_reason"] = None
+        record["target_count"] = len(record["candidates"])
+        record["random_seed"] = seed
+        record["prompt_snapshot"] = snapshot
         _save_run(record)
         return _full_run(record)
 

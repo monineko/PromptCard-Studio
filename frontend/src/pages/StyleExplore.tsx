@@ -1,17 +1,19 @@
 import { Archive, ArrowLeft, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AlbumStackCard } from "../components/gallery/AlbumStackCard";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
 import { ReviewMode, type ReviewChoice } from "../components/gallery/ReviewMode";
 import { ConfirmDialog, Modal } from "../components/UI";
 import { StyleExploreParamsPanel } from "../components/StyleExploreParamsPanel";
+import { StyleExploreDeepExplorer } from "../components/style-explore/StyleExploreDeepExplorer";
 import { serializeSections } from "../lib";
 import { useStore } from "../store";
 import { useGenerateStore } from "../store/generate";
 import { useStyleExploreDraft } from "../store/styleExploreDraft";
-import type { LibraryImageItem, Section, StyleExploreCandidate, StyleExplorePool, StyleExplorePoolSummary, StyleExploreRun, StyleExploreRunSummary } from "../types";
+import type { GenerationOccupancy, LibraryImageItem, Section, StyleExploreCandidate, StyleExplorePool, StyleExplorePoolSummary, StyleExploreRun, StyleExploreRunSummary } from "../types";
 
 const inputClass = "w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
 const buttonClass = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
@@ -155,6 +157,7 @@ function WeightParameters({ targetCount, setTargetCount, minArtistCount, setMinA
 }
 
 export function StyleExplore() {
+  const navigate = useNavigate();
   const addToast = useStore((s) => s.addToast);
   const refreshCategories = useStore((s) => s.refreshCategories);
   const workspacePositive = useStore((s) => s.positive);
@@ -176,6 +179,8 @@ export function StyleExplore() {
   const [poolName, setPoolName] = useState("");
   const [poolText, setPoolText] = useState("");
   const [poolBackups, setPoolBackups] = useState<{ name: string; created_at: string; count: number }[]>([]);
+  const [poolImportResult, setPoolImportResult] = useState<StyleExplorePool | null>(null);
+  const [generationOccupancy, setGenerationOccupancy] = useState<GenerationOccupancy | null>(null);
   const [newPoolName, setNewPoolName] = useState("");
   const [newPoolText, setNewPoolText] = useState("");
   const [targetCount, setTargetCount] = useState(20);
@@ -217,6 +222,15 @@ export function StyleExplore() {
   useEffect(() => { void refresh().catch((e) => addToast(`读取画风探索数据失败：${(e as Error).message}`, "err")); }, [addToast, refresh]);
   useEffect(() => { void loadPool(poolId).catch((e) => addToast(`读取 ArtistPool 失败：${(e as Error).message}`, "err")); }, [addToast, loadPool, poolId]);
   useEffect(() => { void loadRun(selectedRunId).catch((e) => addToast(`读取任务失败：${(e as Error).message}`, "err")); }, [addToast, loadRun, selectedRunId]);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => void api.generationOccupancy().then((value) => {
+      if (!cancelled) setGenerationOccupancy(value);
+    }).catch(() => {});
+    poll();
+    const timer = window.setInterval(poll, 2200);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
   useEffect(() => { setEditRunName(run?.name ?? ""); }, [run?.id, run?.name]);
   useEffect(() => {
     if (run?.status !== "running") return;
@@ -226,12 +240,23 @@ export function StyleExplore() {
 
   const workspaceHasArtistCard = useMemo(() => workspacePositive.some((section) => section.blocks.some((block) => block.type === "card" && block.category === "画师串")), [workspacePositive]);
   const previewCandidate = useMemo(() => run?.candidates.find((candidate) => candidate.id === previewCandidateId) ?? null, [previewCandidateId, run]);
+  const basicCandidates = useMemo(() => {
+    if (!run) return [];
+    const roundById = new Map((run.rounds ?? []).map((round) => [round.id, round]));
+    return run.candidates.filter((candidate) => !candidate.round_id || roundById.get(candidate.round_id)?.phase !== "deep");
+  }, [run]);
   const visibleExploreCandidates = useMemo(() => run?.candidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at) ?? [], [run]);
-  const formalReviewCandidates = useMemo(() => visibleExploreCandidates.filter((candidate) => !candidate.review.label), [visibleExploreCandidates]);
+  const formalReviewCandidates = useMemo(() => {
+    const basicRoundIds = new Set((run?.rounds ?? []).filter((round) => round.phase === "basic").map((round) => round.id));
+    return visibleExploreCandidates.filter((candidate) => {
+      const isLegacyBasic = !candidate.round_id || !run?.rounds?.some((round) => round.id === candidate.round_id);
+      return (isLegacyBasic || basicRoundIds.has(candidate.round_id ?? "")) && !candidate.review.label;
+    });
+  }, [run?.rounds, visibleExploreCandidates]);
   const exploreLibraryGroups = useMemo(() => Object.fromEntries((["treasure", "special", "reject"] as const).map((category) => [category, visibleExploreCandidates.filter((candidate) => candidate.review.label === category)])) as Record<ExploreLibraryCategory, StyleExploreCandidate[]>, [visibleExploreCandidates]);
   const openExploreCandidates = exploreLibraryCategory ? exploreLibraryGroups[exploreLibraryCategory] : [];
   const openExploreItems = useMemo(() => openExploreCandidates.map(exploreCandidateAsLibraryItem), [openExploreCandidates]);
-  const canStartFormalReview = formalReviewCandidates.length > 0 && (run?.status === "cancelled" || !run?.candidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)));
+  const canStartFormalReview = formalReviewCandidates.length > 0 && (run?.status === "cancelled" || !basicCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)));
 
   useEffect(() => {
     setFormalReviewing(false);
@@ -265,7 +290,14 @@ export function StyleExplore() {
   };
   const importPoolFile = (file: File | undefined) => void withBusy(async () => {
     if (!file) return;
-    const imported = await api.styleExploreImportPool(file); setPoolId(imported.id); await refresh(); addToast(`已导入并规范化 ArtistPool：${imported.input_count ?? imported.count} 项输入，${imported.count} 个有效 ID，${imported.duplicate_count ?? 0} 项重复`);
+    const imported = await api.styleExploreImportPool(file);
+    const normalized = await api.styleExplorePool(imported.id);
+    setPoolId(imported.id);
+    setPool(normalized);
+    setPoolName(normalized.name);
+    setPoolText(normalized.content);
+    setPoolImportResult({ ...normalized, ...imported, content: normalized.content, ids: normalized.ids, skipped: imported.skipped ?? normalized.skipped });
+    await refresh();
   });
   const createRun = () => void withBusy(async () => {
     if (!poolId) throw new Error("请先选择 ArtistPool");
@@ -388,8 +420,8 @@ export function StyleExplore() {
         <input className={inputClass} value={run ? editRunName : taskName} onChange={(e) => run ? setEditRunName(e.target.value) : setTaskName(e.target.value)} placeholder="新任务名称，例如：厚涂水彩画风" aria-label="探索任务名称" />
         <button className={`${ghostButtonClass} w-full`} onClick={renameRun} disabled={busy || !run || !editRunName.trim()}><Save size={15} />重命名</button>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2"><button className={`${buttonClass} w-36`} onClick={() => controlRun(run?.status === "paused" ? "resume" : "start")} disabled={busy || !run || !!run.archived_at || !["draft", "paused"].includes(run.status)}><Play size={15} />{run?.status === "paused" ? "继续生成" : "开始生成"}</button><button className={`${ghostButtonClass} w-36`} onClick={() => controlRun("pause")} disabled={busy || !run || !!run.archived_at || run.status !== "running"}><Pause size={15} />暂停生成</button><button className={`${ghostButtonClass} w-36`} onClick={confirmEndRun} disabled={busy || !run || !!run.archived_at || ["completed", "cancelled"].includes(run.status)}><Square size={15} />结束任务</button><button className={`${ghostButtonClass} w-36`} onClick={appendRound} disabled={busy || !run || run.status === "running" || !!run.archived_at}><WandSparkles size={15} />追加一轮</button><button className={`${ghostButtonClass} w-36`} onClick={retryFailed} disabled={busy || !run || !!run.archived_at || !run.candidates.some((candidate) => candidate.generation.status === "failed")}>重试失败项</button><button className={`${ghostButtonClass} w-28`} onClick={archiveRun} disabled={busy || !run || run.status === "running"}><Archive size={15} />{run?.archived_at ? "取消归档" : "归档"}</button><button className={`${ghostButtonClass} w-28`} onClick={deleteRun} disabled={busy || !run || run.status === "running"}><Trash2 size={15} />删除</button></div>
-      <p className="mt-4 pr-52 text-xs text-[var(--muted)]">{run ? `当前：${run.name} · ${statusLabel(run.status)} · ${run.done_count}/${run.target_count} · ${run.round_count ?? run.rounds?.length ?? 0} 轮。追加时会使用页面当前条件，旧候选不会变化。` : "选择已有任务后可生成、结束、追加、重试、归档或删除；按钮位置始终固定。"}</p>
+      <div className="mt-4 flex flex-wrap gap-2"><button className={`${buttonClass} w-36`} onClick={() => controlRun(run?.status === "paused" ? "resume" : "start")} disabled={busy || !run || !!run.archived_at || generationOccupancy?.owner === "batch" || !["draft", "paused"].includes(run.status)}><Play size={15} />{run?.status === "paused" ? "继续生成" : "开始生成"}</button><button className={`${ghostButtonClass} w-36`} onClick={() => controlRun("pause")} disabled={busy || !run || !!run.archived_at || run.status !== "running"}><Pause size={15} />暂停生成</button><button className={`${ghostButtonClass} w-36`} onClick={confirmEndRun} disabled={busy || !run || !!run.archived_at || ["completed", "cancelled"].includes(run.status)}><Square size={15} />结束任务</button><button className={`${ghostButtonClass} w-36`} onClick={appendRound} disabled={busy || !run || run.status === "running" || !!run.archived_at}><WandSparkles size={15} />追加一轮</button><button className={`${ghostButtonClass} w-36`} onClick={retryFailed} disabled={busy || !run || !!run.archived_at || !run.candidates.some((candidate) => candidate.generation.status === "failed")}>重试失败项</button><button className={`${ghostButtonClass} w-28`} onClick={archiveRun} disabled={busy || !run || run.status === "running"}><Archive size={15} />{run?.archived_at ? "取消归档" : "归档"}</button><button className={`${ghostButtonClass} w-28`} onClick={deleteRun} disabled={busy || !run || run.status === "running"}><Trash2 size={15} />删除</button></div>
+      <p className="mt-4 pr-52 text-xs text-[var(--muted)]">{generationOccupancy?.owner === "batch" ? <>普通批量任务正在占用生成通道，探索任务暂不能开始。<button type="button" className="ml-1 font-medium text-[var(--accent)] hover:underline" onClick={() => navigate("/", { state: { scrollTarget: "batch-generation" } })}>前往批量生成</button></> : run ? `当前：${run.name} · ${statusLabel(run.status)} · ${run.done_count}/${run.target_count} · ${run.round_count ?? run.rounds?.length ?? 0} 轮。追加时会使用页面当前条件，旧候选不会变化。` : "选择已有任务后可生成、结束、追加、重试、归档或删除；按钮位置始终固定。"}</p>
       <button className={`${buttonClass} absolute bottom-4 right-4`} onClick={() => setCreateRunDialogOpen(true)} disabled={busy || !poolId}><WandSparkles size={15} />创建基础探索任务</button>
     </section>
     <div className="grid items-stretch gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
@@ -410,13 +442,13 @@ export function StyleExplore() {
     <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} minArtistCount={minArtistCount} setMinArtistCount={setMinArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} />
     {run && <section className="glass rounded-2xl p-5">
       <div className="flex items-start gap-3"><div><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p></div><button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button></div>
-      <div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{run.candidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
+      <div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{basicCandidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
         {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
         <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
         <code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}
         {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title={candidate.review.heart ? "取消心动标记" : "标记为心动"} aria-label={candidate.review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={candidate.review.heart ? "currentColor" : "none"} className={candidate.review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(candidate.id, label, candidate.review.preliminary_label)} disabled={busy} aria-pressed={candidate.review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
         {candidate.review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{candidate.review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{candidate.review.preliminary_label}</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{candidate.review.label}</div>}{Boolean(candidate.generation.deleted_at) && <div className="mt-1 text-xs text-[var(--muted)]">探索图片已删除，候选记录保留</div>}
-      </div>)}{run.candidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
+      </div>)}{basicCandidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4"><p className="text-xs text-[var(--muted)]">全部候选生成完成后，从这里进入正式筛选。正式结果会移动到探索图库的三个牌堆中。</p><button className={`${buttonClass} w-32`} onClick={() => setFormalReviewing(true)} disabled={busy || !canStartFormalReview}><Images size={15} />筛选</button></div>
     </section>}
     {run && <section className="glass rounded-2xl p-5">
@@ -427,8 +459,11 @@ export function StyleExplore() {
         {openExploreItems.length > 0 ? <GalleryMasonry items={openExploreItems} selectionMode={exploreSelecting} selectedPaths={exploreSelectedIds} onToggleSelect={(item) => toggleExploreSelection(item.path)} onItemClick={(item) => setPreviewCandidateId(item.path)} getImageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} /> : <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--muted)]">这个牌堆还没有图片。</div>}
       </div>}
     </section>}
+    {run && <StyleExploreDeepExplorer run={run} positive={positive} negative={negative} params={{ ...params, vibes }} algorithm={{ min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength }} onRunChange={(next) => { setRun(next); void refresh(); }} notify={addToast} />}
   </div>{formalReviewing && run && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${formalReviewCandidates.map((candidate) => candidate.id).join("-")}`} items={formalReviewCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart, annotation: candidate.review.preliminary_label ? String(candidate.review.preliminary_label) : undefined }))} categoryLabel={`${run.name} · 基础探索`} choices={EXPLORE_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyFormalReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setFormalReviewing(false); addToast(result.message); }} onCancel={() => setFormalReviewing(false)} /></div>, document.body)}<Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
+  </Modal><Modal open={poolImportResult !== null} onClose={() => setPoolImportResult(null)} title="ArtistPool 导入结果" wide>
+    {poolImportResult && <div className="space-y-4 text-sm"><p className="text-[var(--muted)]">支持英文逗号或换行分隔；导入内容已规范化为一行一个 Artist ID。原始 TXT 已作为首次备份保留。</p><div className="grid gap-3 sm:grid-cols-4">{[["输入项", poolImportResult.input_count ?? poolImportResult.original_count ?? 0], ["有效 ID", poolImportResult.valid_count ?? poolImportResult.ids.length], ["重复", poolImportResult.duplicate_count ?? 0], ["跳过", poolImportResult.skipped_count ?? poolImportResult.skipped ?? 0]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">{label}</div><div className="mt-1 text-lg font-semibold">{value}</div></div>)}</div>{(poolImportResult.warnings ?? []).length > 0 && <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{poolImportResult.warnings?.map((warning) => <p key={warning}>{warning === "comment_lines_skipped" ? "检测到以 # 开头的注释项，已跳过。" : warning}</p>)}</div>}<div><div className="mb-1 text-xs text-[var(--muted)]">规范化后的内容</div><pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--input)] p-3 font-mono text-xs">{poolImportResult.normalized_content ?? poolImportResult.content}</pre></div><div className="flex justify-end"><button className={buttonClass} onClick={() => setPoolImportResult(null)}>确认</button></div></div>}
   </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览">
     {run && previewCandidate && <><img className="max-h-[70vh] w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidate.id)} alt="放大候选预览" /><div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => createArtistCard(previewCandidate.id)} disabled={busy}>创建画师串 Card</button><button className={buttonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, previewCandidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div></>}
   </Modal><Modal open={cardDialog !== null} onClose={() => setCardDialog(null)} title="创建画师串 Card">

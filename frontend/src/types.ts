@@ -332,6 +332,15 @@ export type BatchStatusResponse = {
   run: BatchRun | null;
 };
 
+export type GenerationOccupancy = {
+  occupied: boolean;
+  owner: "batch" | "style_explore" | string | null;
+  task_id: string | null;
+  task_name: string | null;
+  status: string | null;
+  acquired_at?: string | null;
+};
+
 export type BatchStartPayload = {
   base_positive: string;
   negative: string;
@@ -365,6 +374,23 @@ export type StyleExplorePoolSummary = {
   duplicate_count?: number;
   skipped_count?: number;
   skipped?: number;
+  original_count?: number;
+  duplicate_preview?: string[];
+  skipped_preview?: { value: string; reason: string }[];
+  normalized_preview?: string[];
+  duplicate_preview_truncated?: boolean;
+  skipped_preview_truncated?: boolean;
+  normalized_preview_truncated?: boolean;
+  normalized_content?: string;
+  warnings?: string[];
+  format_info?: {
+    detected_format: string;
+    accepted_formats: string[];
+    accepted_extensions: string[];
+    normalized_format: string;
+    literal_comma_escape: string;
+    comment_prefix: string;
+  };
 };
 
 export type StyleExplorePool = StyleExplorePoolSummary & {
@@ -390,6 +416,52 @@ export type StyleExploreCandidate = {
   prompt_snapshot?: { positive: string; negative: string; params: Record<string, unknown> };
 };
 
+export type StyleExploreDeepParent = {
+  id: string;
+  source: "candidate" | "custom";
+  candidate_id?: string | null;
+  representative_candidate_id?: string | null;
+  artist_string: string;
+  preference: number;
+};
+
+export type StyleExploreDeepPreference = {
+  left_parent_id: string;
+  right_parent_id: string;
+  result: "left" | "right" | "neither" | "skip";
+  created_at: string;
+};
+
+export type StyleExploreDeepParentSet = {
+  id: string;
+  number: number;
+  status: "active" | "used";
+  created_at: string;
+  updated_at: string;
+  parents: StyleExploreDeepParent[];
+  comparisons: StyleExploreDeepPreference[];
+  suggested_target_count: number;
+  used_round_ids?: string[];
+};
+
+export type StyleExploreRound = {
+  id: string;
+  number: number;
+  phase: "basic" | "deep";
+  status: string;
+  target_count: number;
+  created_at: string;
+  random_seed?: number;
+  parent_set_id?: string;
+  suggested_next_parent_count?: number;
+  candidate_ids?: string[];
+};
+
+export type StyleExploreDeepState = {
+  active_parent_set_id: string | null;
+  parent_sets: StyleExploreDeepParentSet[];
+};
+
 export type StyleExploreRunSummary = {
   id: string;
   name: string;
@@ -412,7 +484,8 @@ export type StyleExploreRun = StyleExploreRunSummary & {
   prompt_snapshot: { positive: string; negative: string; params: Record<string, unknown> };
   algorithm: Record<string, unknown>;
   candidates: StyleExploreCandidate[];
-  rounds?: { id: string; number: number; status: string; target_count: number; created_at: string }[];
+  rounds?: StyleExploreRound[];
+  deep?: StyleExploreDeepState;
 };
 
 export type StyleExploreRunCreatePayload = {

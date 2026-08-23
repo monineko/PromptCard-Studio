@@ -5,6 +5,7 @@ import type {
   BatchRun,
   BatchStartPayload,
   BatchStatusResponse,
+  GenerationOccupancy,
   PngSendResult,
   LibraryImages,
   LibrarySummary,
@@ -202,6 +203,7 @@ export const api = {
       body: JSON.stringify({ prompt, negative_prompt, params }),
     }),
   batchStatus: () => request<BatchStatusResponse>("/api/generate/batch"),
+  generationOccupancy: () => request<GenerationOccupancy>("/api/generate/occupancy"),
   batchStart: (payload: BatchStartPayload) =>
     request<BatchRun>("/api/generate/batch", {
       method: "POST",
@@ -248,6 +250,12 @@ export const api = {
     request<{ ok: boolean; deleted_images: number }>(`/api/style-explore/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
   styleExploreAppendBasicRound: (runId: string, payload: Omit<StyleExploreRunCreatePayload, "pool_id" | "name" | "phase">) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/rounds/basic`, { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreSetDeepParents: (runId: string, payload: { candidate_ids: string[]; custom_artist_strings: string[] }) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/parents`, { method: "PUT", body: JSON.stringify(payload) }),
+  styleExploreRecordDeepPreference: (runId: string, parentSetId: string, payload: { left_parent_id: string; right_parent_id: string; result: "left" | "right" | "neither" | "skip" }) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/parents/${encodeURIComponent(parentSetId)}/preferences`, { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreAppendDeepRound: (runId: string, payload: Omit<StyleExploreRunCreatePayload, "pool_id" | "name" | "phase">) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/rounds/deep`, { method: "POST", body: JSON.stringify(payload) }),
   styleExploreRetryFailed: (runId: string) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/retry-failed`, { method: "POST" }),
   styleExploreStartRun: (runId: string) =>

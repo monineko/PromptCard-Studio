@@ -6,7 +6,7 @@ import { cn, serializeSections } from "../lib";
 import { useStore } from "../store";
 import { useBatchStore } from "../store/batch";
 import { useGenerateStore } from "../store/generate";
-import type { BatchDimension, BatchRun, CardBlock, GenerateStatus, Section } from "../types";
+import type { BatchDimension, BatchRun, CardBlock, GenerateStatus, GenerationOccupancy, Section } from "../types";
 import { Button, ConfirmDialog, Modal } from "./UI";
 
 const DIM_NAMES = ["角色", "动作", "画师串"];
@@ -59,6 +59,7 @@ export function BatchPanel() {
   const [endConfirm, setEndConfirm] = useState(false);
   const [moveDialog, setMoveDialog] = useState<{ name: string; count: number }[] | null>(null);
   const [thresholdInput, setThresholdInput] = useState<number | null>(null);
+  const [generationOccupancy, setGenerationOccupancy] = useState<GenerationOccupancy | null>(null);
   const lastShownPath = useRef<string | null>(null);
 
   const refreshStatus = useCallback(() => {
@@ -105,6 +106,18 @@ export function BatchPanel() {
       clearInterval(timer);
     };
   }, [setRun, setResult]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => void api.generationOccupancy().then((value) => {
+      if (!cancelled) setGenerationOccupancy(value);
+    }).catch(() => {});
+    tick();
+    const timer = window.setInterval(tick, 2200);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  const blockedByStyleExplore = generationOccupancy?.owner === "style_explore";
 
   const workbench = positive.find((s) => s.name === WORKBENCH_NAME) ?? null;
   const systemDims = useMemo(
@@ -273,6 +286,7 @@ export function BatchPanel() {
 
   return (
     <div className="space-y-2">
+      {blockedByStyleExplore && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs"><AlertTriangle size={14} className="text-amber-400" /><span>画风探索任务「{generationOccupancy?.task_name ?? generationOccupancy?.task_id ?? "当前任务"}」正在占用生成通道，批量生成暂不可开始。</span><Button size="sm" variant="ghost" className="ml-auto" onClick={() => navigate("/style-explore")}>前往画风探索</Button></div>}
       {run ? (
         <RunPanel
           run={run}
@@ -303,6 +317,7 @@ export function BatchPanel() {
           setStopDelta={setStopDelta}
           onThresholdInput={(v) => setThresholdInput(v)}
           onStart={() => void handleStartClick()}
+          blocked={blockedByStyleExplore}
         />
       )}
 
@@ -323,7 +338,7 @@ export function BatchPanel() {
           <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={starting}>
             返回调整
           </Button>
-          <Button onClick={() => void confirmStart()} disabled={starting}>
+          <Button onClick={() => void confirmStart()} disabled={starting || blockedByStyleExplore}>
             {starting ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
             确认开始
           </Button>
@@ -472,6 +487,7 @@ function ConfigPanel({
   setStopDelta,
   onThresholdInput,
   onStart,
+  blocked,
 }: {
   systemDims: Section[];
   customSections: Section[];
@@ -494,6 +510,7 @@ function ConfigPanel({
   setStopDelta: (value: number) => void;
   onThresholdInput: (v: number | null) => void;
   onStart: () => void;
+  blocked: boolean;
 }) {
   const editableDims = dimSections.map((s) => {
     const spec = dimensions.find((d) => d.name === s.name);
@@ -668,8 +685,8 @@ function ConfigPanel({
         <Button
           className="ml-auto !px-6 !py-3 text-base"
           onClick={onStart}
-          disabled={!currentAnlas}
-          title={!currentAnlas ? "无法获取点数，请先配置 Token" : undefined}
+          disabled={!currentAnlas || blocked}
+          title={blocked ? "画风探索任务正在占用生成通道" : !currentAnlas ? "无法获取点数，请先配置 Token" : undefined}
         >
           <Wand2 size={16} /> 开始批量
         </Button>

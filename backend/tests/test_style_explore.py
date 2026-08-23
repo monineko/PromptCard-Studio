@@ -96,15 +96,30 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_pool_normalizes_two_supported_formats_and_keeps_escapes(self):
-        pool = explore.create_pool("混合池", "a, b\n# note\na\nsakimori_\\(hououbds\\)\nname\\,with-comma\n")
+        content = "a, b\n# note\na\nsakimori_\\(hououbds\\)\nname\\,with-comma\n"
+        pool = explore.create_pool("混合池", content, "artists.txt")
         self.assertEqual(pool["count"], 4)
         self.assertEqual(pool["skipped"], 2)
         self.assertEqual(pool["input_count"], 6)
+        self.assertEqual(pool["original_count"], 6)
         self.assertEqual(pool["duplicate_count"], 1)
         self.assertEqual(pool["skipped_count"], 1)
+        self.assertEqual(pool["duplicate_preview"], ["a"])
+        self.assertEqual(pool["skipped_preview"], [{"value": "# note", "reason": "comment"}])
+        self.assertEqual(pool["normalized_preview"], ["a", "b", "sakimori_\\(hououbds\\)", "name\\,with-comma"])
+        self.assertFalse(pool["normalized_preview_truncated"])
+        self.assertEqual(pool["normalized_content"], "a\nb\nsakimori_\\(hououbds\\)\nname\\,with-comma\n")
+        self.assertEqual(pool["format_info"]["normalized_format"], "one_id_per_line")
+        self.assertEqual(pool["format_info"]["literal_comma_escape"], "\\,")
+        self.assertIn("comment_lines_skipped", pool["warnings"])
         loaded = explore.get_pool(pool["id"])
         self.assertEqual(loaded["ids"], ["a", "b", "sakimori_\\(hououbds\\)", "name\\,with-comma"])
         self.assertEqual(loaded["content"], "a\nb\nsakimori_\\(hououbds\\)\nname\\,with-comma\n")
+        backups = explore.list_pool_backups(pool["id"])
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0]["kind"], "import_original")
+        original_backup = explore.POOL_BACKUPS_DIR / pool["id"] / backups[0]["name"]
+        self.assertEqual(original_backup.read_text(encoding="utf-8"), content)
 
     def test_default_artist_pool_seed_is_indexed_on_first_access(self):
         default_file = explore.POOLS_DIR / "artists_backup.txt"
@@ -237,6 +252,67 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(resumed["candidates"][0]["prompt_snapshot"]["params"], {"steps": 20})
         self.assertEqual(resumed["candidates"][1]["prompt_snapshot"]["params"], {"steps": 31, "sampler": "new"})
         self.assertEqual(resumed["algorithm"], prepared["algorithm"])
+
+    def test_restart_recovery_pauses_run_and_requeues_generating_candidate_preserving_done(self):
+        pool = explore.create_pool("池", "a\nb\nc\n")
+        run = explore.create_run(pool["id"], 3, "base", "neg", algorithm={"artist_count": 1})
+        prepared = explore.append_basic_round(
+            run["id"], 3, "base", "neg", {}, {"artist_count": 1, "random_seed": 17}
+        )
+        record = explore._load_run(run["id"])
+        done_image = explore._active_dir(run["id"]) / "done.png"
+        done_image.write_bytes(b"done")
+        record["status"] = "running"
+        record["status_reason"] = None
+        record["candidates"][0]["generation"] = {
+            "status": "done",
+            "path": str(done_image),
+            "name": done_image.name,
+            "seed": 7,
+        }
+        record["candidates"][1]["generation"] = {"status": "generating"}
+        record["candidates"][2]["generation"] = {"status": "pending"}
+        explore._save_run(record)
+        coordinator.release("style_explore", run["id"])
+
+        recovered = explore.get_run(run["id"])
+
+        self.assertEqual(recovered["status"], "paused")
+        self.assertIn("服务重启", recovered["status_reason"])
+        self.assertEqual(recovered["candidates"][0]["generation"]["status"], "done")
+        self.assertEqual(recovered["candidates"][0]["generation"]["path"], str(done_image))
+        self.assertEqual(recovered["candidates"][1]["generation"]["status"], "pending")
+        self.assertEqual(recovered["candidates"][2]["generation"]["status"], "pending")
+        self.assertEqual(recovered["done_count"], 1)
+        self.assertEqual(prepared["target_count"], 3)
+
+        self.generate_gate.set()
+        explore.resume_run(run["id"], {"steps": 28})
+        for _ in range(50):
+            continued = explore.get_run(run["id"])
+            if continued["status"] == "generated":
+                break
+            time.sleep(0.02)
+        self.assertEqual(continued["status"], "generated")
+        self.assertEqual(continued["done_count"], 3)
+        self.assertEqual(continued["candidates"][0]["generation"]["path"], str(done_image))
+        self.assertEqual(continued["candidates"][0]["generation"]["seed"], 7)
+
+    def test_run_list_recovers_interrupted_status_before_returning_summary(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        record = explore._load_run(run["id"])
+        record["status"] = "running"
+        explore._save_run(record)
+        coordinator.release("style_explore", run["id"])
+
+        result = explore.recover_interrupted_runs()
+        summary = next(item for item in explore.list_runs() if item["id"] == run["id"])
+
+        self.assertEqual(result, {"recovered_count": 1, "run_ids": [run["id"]]})
+        self.assertEqual(summary["status"], "paused")
+        self.assertIn("服务重启", summary["status_reason"])
+        self.assertEqual(explore.recover_interrupted_runs()["recovered_count"], 0)
 
     def test_copy_candidate_to_library_preserves_exploration_original_and_delete_removes_task(self):
         pool = explore.create_pool("池", "a\n")
@@ -371,6 +447,92 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertIsNone(by_id["partial-b"]["review"]["label"])
         self.assertIn("active", Path(by_id["partial-b"]["generation"]["path"]).parts)
         self.assertTrue(Path(by_id["partial-b"]["generation"]["path"]).is_file())
+
+    def test_deep_parent_preference_and_round_are_persisted_with_lineage(self):
+        pool = explore.create_pool("深度池", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
+        run = explore.create_run(
+            pool["id"],
+            2,
+            "base",
+            "negative",
+            {"model": "nai"},
+            {"min_artist_count": 2, "random_seed": 7},
+        )
+        added = explore.add_candidates(
+            run["id"],
+            [
+                {"id": "parent-a", "artist_string": "0.8::a::, 1.0::b::"},
+                {"id": "parent-b", "artist_string": "0.7::c::, 1.1::d::"},
+            ],
+        )
+        for candidate in added["added"]:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+        explore.apply_candidate_reviews(
+            run["id"],
+            [
+                {"candidate_id": "parent-a", "tag": "treasure"},
+                {"candidate_id": "parent-b", "tag": "treasure"},
+            ],
+        )
+
+        with_parents = explore.set_deep_parent_set(
+            run["id"], ["parent-a", "parent-b"], ["0.9::e::, 1.0::f::"]
+        )
+        parent_set = with_parents["deep"]["parent_sets"][0]
+        self.assertEqual(parent_set["status"], "active")
+        self.assertEqual(len(parent_set["parents"]), 3)
+        self.assertEqual(parent_set["suggested_target_count"], 10)
+
+        preferred = explore.record_deep_preference(
+            run["id"],
+            parent_set["id"],
+            parent_set["parents"][0]["id"],
+            parent_set["parents"][1]["id"],
+            "left",
+        )
+        preferred_set = preferred["deep"]["parent_sets"][0]
+        self.assertEqual(preferred_set["parents"][0]["preference"], 2.0)
+        self.assertEqual(preferred_set["comparisons"][0]["result"], "left")
+
+        deep_run = explore.append_deep_round(
+            run["id"],
+            10,
+            "deep base",
+            "deep negative",
+            {"model": "nai", "steps": 28},
+            {"random_seed": 20260823},
+        )
+        deep_round = deep_run["rounds"][-1]
+        self.assertEqual(deep_round["phase"], "deep")
+        self.assertEqual(deep_round["parent_set_id"], parent_set["id"])
+        self.assertEqual(deep_round["suggested_next_parent_count"], 4)
+        deep_candidates = [
+            candidate for candidate in deep_run["candidates"] if candidate.get("round_id") == deep_round["id"]
+        ]
+        self.assertEqual(len(deep_candidates), 10)
+        self.assertTrue(all(candidate["generation"]["status"] == "pending" for candidate in deep_candidates))
+        self.assertTrue(all(candidate["lineage"]["operation"] in {"local_mutation", "crossover", "random_injection"} for candidate in deep_candidates))
+        self.assertTrue(any(candidate["lineage"]["parent_ids"] for candidate in deep_candidates))
+        self.assertEqual(deep_run["status"], "draft")
+        self.assertEqual(deep_run["deep"]["parent_sets"][0]["used_round_ids"], [deep_round["id"]])
+
+    def test_deep_parents_only_accept_treasure_and_current_pool_artist_ids(self):
+        pool = explore.create_pool("深度池", "a\nb\nc\n")
+        run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
+        added = explore.add_candidates(run["id"], [{"id": "plain", "artist_string": "0.8::a::"}])
+        path = explore._active_dir(run["id"]) / "plain.png"
+        path.write_bytes(b"fake")
+        explore.update_candidate(
+            run["id"], added["added"][0]["id"], {"generation": {"status": "done", "path": str(path)}}
+        )
+        with self.assertRaisesRegex(ValueError, "Treasure"):
+            explore.set_deep_parent_set(run["id"], ["plain"], [])
+        with self.assertRaisesRegex(ValueError, "ArtistPool"):
+            explore.set_deep_parent_set(run["id"], [], ["0.8::outside::"])
 
 
 if __name__ == "__main__":

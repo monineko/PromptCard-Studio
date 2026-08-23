@@ -181,6 +181,25 @@ class StyleExploreBasicRoundIn(BaseModel):
     algorithm: dict = {}
 
 
+class StyleExploreDeepParentsIn(BaseModel):
+    candidate_ids: list[str] = []
+    custom_artist_strings: list[str] = []
+
+
+class StyleExploreDeepPreferenceIn(BaseModel):
+    left_parent_id: str = ""
+    right_parent_id: str = ""
+    result: str = "skip"
+
+
+class StyleExploreDeepRoundIn(BaseModel):
+    target_count: int = 10
+    positive: str = ""
+    negative: str = ""
+    params: dict = {}
+    algorithm: dict = {}
+
+
 class StyleExploreCandidatesIn(BaseModel):
     candidates: list[dict] = []
 

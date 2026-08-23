@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
@@ -64,6 +65,9 @@ from .schemas import (
     StyleExploreResumeIn,
     StyleExploreReviewsIn,
     StyleExploreBasicRoundIn,
+    StyleExploreDeepParentsIn,
+    StyleExploreDeepPreferenceIn,
+    StyleExploreDeepRoundIn,
     StyleExploreRunIn,
     Text2ImageIn,
     VibeRenameIn,
@@ -75,7 +79,14 @@ from .schemas import (
 ensure_dirs()
 cards_service.ensure_default_categories()
 
-app = FastAPI(title="PromptCard Studio for NovelAI", version="1.0.2")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    style_explore_service.recover_interrupted_runs()
+    yield
+
+
+app = FastAPI(title="PromptCard Studio for NovelAI", version="1.0.2", lifespan=_lifespan)
 
 # 本地 Web 应用：只允许本机来源（127.0.0.1 / localhost 任意端口，含前端开发服务器），
 # 防止外部网页跨域读取本地数据或触发关闭等操作
@@ -537,6 +548,38 @@ def batch_status():
     return batch_service.status()
 
 
+@app.get("/api/generate/occupancy")
+def generation_occupancy():
+    """统一展示普通批量与画风探索对生成通道的占用。"""
+    batch = batch_service.status()
+    if batch.get("active") and batch.get("run"):
+        run = batch["run"]
+        return {
+            "occupied": True,
+            "owner": "batch",
+            "task_id": run.get("id"),
+            "task_name": "普通批量生成",
+            "status": run.get("status"),
+        }
+    reservation = generation_coordinator_service.status().get("reservation")
+    if reservation:
+        task_name = reservation.get("task_id") or "画风探索任务"
+        if reservation.get("owner") == "style_explore":
+            try:
+                task_name = style_explore_service.get_run(str(reservation.get("task_id"))).get("name") or task_name
+            except (FileNotFoundError, ValueError):
+                pass
+        return {
+            "occupied": True,
+            "owner": reservation.get("owner"),
+            "task_id": reservation.get("task_id"),
+            "task_name": task_name,
+            "status": "running",
+            "acquired_at": reservation.get("acquired_at"),
+        }
+    return {"occupied": False, "owner": None, "task_id": None, "task_name": None, "status": None}
+
+
 @app.post("/api/generate/batch")
 def batch_start(body: BatchStartIn):
     try:
@@ -689,6 +732,57 @@ def style_explore_round_append(run_id: str, body: StyleExploreBasicRoundIn):
     try:
         return style_explore_service.append_basic_round(
             run_id, body.target_count, body.positive, body.negative, body.params, body.algorithm
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.put("/api/style-explore/runs/{run_id}/deep/parents")
+def style_explore_deep_parents_set(run_id: str, body: StyleExploreDeepParentsIn):
+    try:
+        return style_explore_service.set_deep_parent_set(
+            run_id,
+            body.candidate_ids,
+            body.custom_artist_strings,
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/deep/parents/{parent_set_id}/preferences")
+def style_explore_deep_preference_record(
+    run_id: str,
+    parent_set_id: str,
+    body: StyleExploreDeepPreferenceIn,
+):
+    try:
+        return style_explore_service.record_deep_preference(
+            run_id,
+            parent_set_id,
+            body.left_parent_id,
+            body.right_parent_id,
+            body.result,
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.post("/api/style-explore/runs/{run_id}/rounds/deep")
+def style_explore_deep_round_append(run_id: str, body: StyleExploreDeepRoundIn):
+    try:
+        return style_explore_service.append_deep_round(
+            run_id,
+            body.target_count,
+            body.positive,
+            body.negative,
+            body.params,
+            body.algorithm,
         )
     except FileNotFoundError as e:
         raise _as_http(e, 404)
