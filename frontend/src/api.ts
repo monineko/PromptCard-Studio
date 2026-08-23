@@ -262,12 +262,18 @@ export const api = {
     request<StyleExploreRun["candidates"][number]>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}`, {
       method: "PATCH", body: JSON.stringify(patch),
     }),
+  styleExploreApplyReviews: (runId: string, moves: { candidate_id: string; tag: string }[]) =>
+    request<ReviewApplyResult & { run: StyleExploreRun }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/reviews`, {
+      method: "POST", body: JSON.stringify({ moves }),
+    }),
   styleExploreCandidateImageUrl: (runId: string, candidateId: string) =>
     `/api/style-explore/runs/${encodeURIComponent(runId)}/image?candidate_id=${encodeURIComponent(candidateId)}`,
   styleExploreCopyCandidateToLibrary: (runId: string, candidateId: string) =>
     request<{ ok: boolean; path: string; name: string }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}/copy-to-library`, { method: "POST" }),
   styleExploreCreateCandidateCard: (runId: string, candidateId: string, name: string) =>
     request<{ ok: boolean; card: { category: string; name: string; content: string }; image_path: string; image_name: string }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}/card`, { method: "POST", body: JSON.stringify({ name }) }),
+  styleExploreDeleteCandidateImage: (runId: string, candidateId: string) =>
+    request<{ ok: boolean; candidate_id: string; mode: string; run: StyleExploreRun }>(`/api/style-explore/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateId)}/image`, { method: "DELETE" }),
   pngSend: (png: unknown, model: string) =>
     request<PngSendResult>("/api/generate/from-png", {
       method: "POST",

@@ -17,6 +17,7 @@ export function GalleryMasonry({
   onToggleSelect,
   minColumnWidth = 190,
   gap = 12,
+  getImageUrl = (item) => api.libraryImageUrl(item.path),
 }: {
   items: LibraryImageItem[];
   onItemClick: (item: LibraryImageItem, index: number) => void;
@@ -25,6 +26,7 @@ export function GalleryMasonry({
   onToggleSelect?: (item: LibraryImageItem, index: number) => void;
   minColumnWidth?: number;
   gap?: number;
+  getImageUrl?: (item: LibraryImageItem) => string;
 }) {
   const paged: GalleryItem[] = items.map((item, idx) => ({ ...item, _idx: idx }));
   // 图库内容变化（移动/删除/重扫）时强制重建内部分页状态
@@ -56,7 +58,7 @@ export function GalleryMasonry({
           }
         >
           <img
-            src={api.libraryImageUrl(item.path)}
+            src={getImageUrl(item)}
             alt={item.name}
             loading="lazy"
             className="h-full w-full object-cover transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-110"

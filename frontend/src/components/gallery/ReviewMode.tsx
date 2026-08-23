@@ -4,9 +4,12 @@ import { AnimatePresence, motion, type TargetAndTransition } from "framer-motion
 import { api } from "../../api";
 import { useStore } from "../../store";
 import { useGalleryVisual } from "../../store/galleryVisual";
-import type { LibraryImageItem, ReviewTag } from "../../types";
+import type { ReviewApplyResult } from "../../types";
 
-const TAGS: { tag: ReviewTag; label: string; key: string; icon: typeof Crown; color: string }[] = [
+export type ReviewModeItem = { path: string; name: string; hearted?: boolean; annotation?: string };
+export type ReviewChoice = { tag: string; label: string; key: "ArrowLeft" | "ArrowDown" | "ArrowRight" | "ArrowUp"; icon: typeof Crown; color: string };
+
+export const LIBRARY_REVIEW_CHOICES: ReviewChoice[] = [
   { tag: "treasure", label: "Treasure", key: "ArrowLeft", icon: Crown, color: "#f59e0b" },
   { tag: "fine", label: "Fine", key: "ArrowDown", icon: ThumbsUp, color: "#34d399" },
   { tag: "reject", label: "Reject", key: "ArrowRight", icon: XCircle, color: "#f87171" },
@@ -21,17 +24,17 @@ const TAGS: { tag: ReviewTag; label: string; key: string; icon: typeof Crown; co
  * - 右（Reject）：瞬间灰化 + 向右下方旋转飞出并溶解
  * 动画期间锁定输入，动画结束后才切换到下一张。
  */
-const EXIT_ANIM: Record<ReviewTag, TargetAndTransition> = {
-  treasure: { opacity: 0, x: "-120vw", rotate: -20 },
-  fine: { opacity: 0, y: "120vh", rotateX: 60, scale: 0.8 },
-  reject: {
+const EXIT_ANIM: Record<ReviewChoice["key"], TargetAndTransition> = {
+  ArrowLeft: { opacity: 0, x: "-120vw", rotate: -20 },
+  ArrowDown: { opacity: 0, y: "120vh", rotateX: 60, scale: 0.8 },
+  ArrowRight: {
     opacity: 0,
     x: "120vw",
     y: 200,
     rotate: 45,
     filter: "grayscale(100%) contrast(80%) blur(8px)",
   },
-  favorites: {
+  ArrowUp: {
     opacity: 0,
     y: "-120vh",
     scale: 0.9,
@@ -61,24 +64,33 @@ export function ReviewMode({
   categoryLabel,
   startIndex = 0,
   recycleReject,
+  choices = LIBRARY_REVIEW_CHOICES,
+  imageUrl = (item) => api.libraryImageUrl(item.path),
+  applyReview,
+  requireAllTagged = false,
   onFinished,
   onCancel,
 }: {
-  items: LibraryImageItem[];
+  items: ReviewModeItem[];
   categoryLabel: string;
   startIndex?: number;
   recycleReject: boolean;
+  choices?: ReviewChoice[];
+  imageUrl?: (item: ReviewModeItem) => string;
+  applyReview?: (moves: { path: string; tag: string }[]) => Promise<ReviewApplyResult>;
+  requireAllTagged?: boolean;
   onFinished: (result: Awaited<ReturnType<typeof api.applyReview>>) => void;
   onCancel: () => void;
 }) {
   const [index, setIndex] = useState(startIndex);
-  const [tags, setTags] = useState<Record<string, ReviewTag>>({});
+  const [tags, setTags] = useState<Record<string, string>>({});
   const [history, setHistory] = useState<number[]>([]);
   const [applying, setApplying] = useState(false);
-  const [leaving, setLeaving] = useState<{ id: number; tag: ReviewTag; path: string } | null>(null);
+  const [leaving, setLeaving] = useState<{ id: number; tag: string; key: ReviewChoice["key"]; path: string } | null>(null);
   const [heartsBurst, setHeartsBurst] = useState<{ id: number; x: number; y: number } | null>(null);
   const [rejectFlash, setRejectFlash] = useState<{ id: number } | null>(null);
   const effects = useStore((s) => s.settings?.effects);
+  const addToast = useStore((s) => s.addToast);
   const particles = effects?.review_particles !== false;
   const animations = effects?.review_animations !== false;
   const leavingSeq = useRef(0);
@@ -92,17 +104,19 @@ export function ReviewMode({
   const taggedCount = Object.keys(tags).length;
 
   const tag = useCallback(
-    (t: ReviewTag) => {
+    (t: string) => {
       if (!current || leavingRef.current) return; // 离场动画期间锁定，防止连击
+      const choice = choices.find((item) => item.tag === t);
+      if (!choice) return;
       setTags((prev) => ({ ...prev, [current.path]: t }));
       setHistory((prev) => [...prev, index]);
-      if (t === "treasure" && particles) {
+      if (choice.key === "ArrowLeft" && particles) {
         const rect = centerRef.current?.getBoundingClientRect();
         if (rect) {
           useGalleryVisual.getState().fire(rect.left + rect.width / 2, rect.top + rect.height / 2);
         }
       }
-      if (t === "favorites" && particles) {
+      if (choice.key === "ArrowUp" && particles) {
         // 心形粒子独立于卡片切换：全屏播放约 2 秒，从卡片中心向外扩散
         const rootRect = rootRef.current?.getBoundingClientRect();
         const cardRect = centerRef.current?.getBoundingClientRect();
@@ -115,20 +129,20 @@ export function ReviewMode({
         setHeartsBurst({ id: leavingSeq.current, x: sx, y: sy });
         window.setTimeout(() => setHeartsBurst(null), 2500);
       }
-      if (t === "reject" && animations) {
+      if (choice.key === "ArrowRight" && animations) {
         // 全屏溶解模糊：1 秒，不阻塞图片切换节奏
         setRejectFlash({ id: leavingSeq.current });
         window.setTimeout(() => setRejectFlash(null), 1300);
       }
       leavingSeq.current += 1;
       if (animations) {
-        setLeaving({ id: leavingSeq.current, tag: t, path: current.path });
+        setLeaving({ id: leavingSeq.current, tag: t, key: choice.key, path: current.path });
       } else {
         // 关闭动效：不做飞入出/变色/淡化，直接替换为下一张
         setIndex((i) => Math.min(i + 1, items.length - 1));
       }
     },
-    [current, index, items.length, particles, animations]
+    [animations, choices, current, items.length, particles]
   );
 
   const finishLeaving = useCallback(() => {
@@ -157,30 +171,25 @@ export function ReviewMode({
   }, [items]);
 
   const finish = useCallback(async () => {
-    if (applying || leavingRef.current) return;
+    if (applying || leavingRef.current || (requireAllTagged && Object.keys(tags).length < items.length)) return;
     setApplying(true);
     const moves = items.filter((it) => tags[it.path]).map((it) => ({ path: it.path, tag: tags[it.path] }));
     try {
-      const result = await api.applyReview(moves, recycleReject);
+      const result = applyReview ? await applyReview(moves) : await api.applyReview(moves, recycleReject);
       onFinished(result);
     } catch (e) {
       setApplying(false);
-      window.alert(`结束筛选失败: ${(e as Error).message}`);
+      addToast(`结束筛选失败: ${(e as Error).message}`, "err");
     }
-  }, [applying, items, tags, recycleReject, onFinished]);
+  }, [addToast, applyReview, applying, items, onFinished, recycleReject, requireAllTagged, tags]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (applying || leavingRef.current) return;
-      const map: Record<string, ReviewTag> = {
-        ArrowLeft: "treasure",
-        ArrowDown: "fine",
-        ArrowRight: "reject",
-        ArrowUp: "favorites",
-      };
-      if (map[e.key]) {
+      const choice = choices.find((item) => item.key === e.key);
+      if (choice) {
         e.preventDefault();
-        tag(map[e.key]);
+        tag(choice.tag);
       } else if (e.key === "Backspace") {
         e.preventDefault();
         undoLast();
@@ -194,13 +203,14 @@ export function ReviewMode({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applying, tag, undoLast, finish, onCancel]);
+  }, [applying, choices, tag, undoLast, finish, onCancel]);
 
   const prev = index > 0 ? items[index - 1] : null;
   const next = index < items.length - 1 ? items[index + 1] : null;
   const keyHint = (key: string) =>
     key === "ArrowLeft" ? "←" : key === "ArrowDown" ? "↓" : key === "ArrowRight" ? "→" : "↑";
   const locked = applying || !!leaving;
+  const finishDisabled = locked || (requireAllTagged && taggedCount < items.length);
 
   if (!current) {
     return (
@@ -295,7 +305,7 @@ export function ReviewMode({
           <div className="aspect-square w-full -rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-[0_20px_50px_-18px_rgba(0,0,0,0.8)] brightness-[0.55]">
             {prev ? (
               <img
-                src={api.libraryImageUrl(prev.path)}
+                src={imageUrl(prev)}
                 alt={prev.name}
                 draggable={false}
                 className="h-full w-full object-cover"
@@ -317,7 +327,7 @@ export function ReviewMode({
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.img
               key={current.path}
-              src={api.libraryImageUrl(current.path)}
+              src={imageUrl(current)}
               alt={current.name}
               initial={{ opacity: 0, scale: 0.92, x: 30 }}
               animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -333,7 +343,7 @@ export function ReviewMode({
               <motion.div
                 key={`leaving-${leaving.id}`}
                 initial={
-                  leaving.tag === "reject"
+                  leaving.key === "ArrowRight"
                     ? {
                         opacity: 1,
                         x: 0,
@@ -343,7 +353,7 @@ export function ReviewMode({
                         scale: 1,
                         filter: "grayscale(100%) contrast(80%) blur(0px)",
                       }
-                    : leaving.tag === "favorites"
+                    : leaving.key === "ArrowUp"
                       ? {
                           opacity: 1,
                           x: 0,
@@ -355,18 +365,18 @@ export function ReviewMode({
                         }
                       : { opacity: 1, x: 0, y: 0, rotate: 0, rotateX: 0, scale: 1 }
                 }
-                animate={EXIT_ANIM[leaving.tag]}
+                animate={EXIT_ANIM[leaving.key]}
                 transition={{ duration: 0.55, ease: [0.25, 0.8, 0.25, 1] }}
                 onAnimationComplete={() => finishLeaving()}
                 className="pointer-events-none absolute inset-0 z-30 will-change-transform will-change-opacity"
               >
                 <img
-                  src={api.libraryImageUrl(leaving.path)}
+                  src={imageUrl({ path: leaving.path, name: "" })}
                   alt=""
                   draggable={false}
                   className="h-full w-full rounded-2xl object-contain"
                 />
-                {leaving.tag === "favorites" && (
+                {leaving.key === "ArrowUp" && (
                   <>
                     <div className="shine-sweep absolute inset-0 z-20 rounded-2xl" />
                     <div
@@ -385,11 +395,13 @@ export function ReviewMode({
           {currentTag && (
             <span
               className="absolute left-3 top-3 z-10 rounded-full px-3 py-1 text-xs font-semibold text-white shadow"
-              style={{ background: TAGS.find((t) => t.tag === currentTag)?.color }}
+              style={{ background: choices.find((t) => t.tag === currentTag)?.color }}
             >
-              {TAGS.find((t) => t.tag === currentTag)?.label}
+              {choices.find((t) => t.tag === currentTag)?.label}
             </span>
           )}
+          {current.hearted && <span className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/45 text-xl text-rose-400 shadow-lg backdrop-blur-sm" title="心动标记">♥</span>}
+          {current.annotation && <span className="absolute bottom-3 right-3 z-10 max-w-[70%] rounded-full bg-black/55 px-3 py-1 text-xs text-white/90 backdrop-blur-sm">初步判断：{current.annotation}</span>}
         </div>
 
         {/* 下一张：被中间遮盖的抽象卡片 */}
@@ -397,7 +409,7 @@ export function ReviewMode({
           <div className="aspect-square w-full rotate-6 overflow-hidden rounded-2xl bg-[var(--hover)] opacity-45 shadow-[0_20px_50px_-18px_rgba(0,0,0,0.8)] brightness-[0.55]">
             {next ? (
               <img
-                src={api.libraryImageUrl(next.path)}
+                src={imageUrl(next)}
                 alt={next.name}
                 draggable={false}
                 className="h-full w-full object-cover"
@@ -413,7 +425,7 @@ export function ReviewMode({
 
       <div className="glass relative z-10 border-x-0 border-b-0 px-4 py-3">
         <div className="flex flex-wrap items-center justify-center gap-3">
-          {TAGS.map((t) => (
+          {choices.map((t) => (
             <button
               key={t.tag}
               onClick={() => tag(t.tag)}
@@ -440,10 +452,10 @@ export function ReviewMode({
           </button>
           <button
             onClick={finish}
-            disabled={locked}
+            disabled={finishDisabled}
             className="flex items-center gap-1.5 rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:pointer-events-none disabled:opacity-50"
             style={{ background: "var(--accent)" }}
-            title="开始移动文件到对应文件夹"
+            title={requireAllTagged && taggedCount < items.length ? "请先完成全部图片的分类" : "开始移动文件到对应文件夹"}
           >
             <Check size={16} /> 结束筛选
           </button>
@@ -456,7 +468,7 @@ export function ReviewMode({
           </button>
         </div>
         <p className="mt-2 text-center text-[11px] text-[var(--muted)]">
-          结束筛选：开始移动文件到对应文件夹 · 退出：放弃本次筛选（不移动图片）
+          {requireAllTagged && taggedCount < items.length ? `还需分类 ${items.length - taggedCount} 张 · ` : ""}结束筛选：开始移动文件到对应文件夹 · 退出：放弃本次筛选（不移动图片）
         </p>
       </div>
     </div>

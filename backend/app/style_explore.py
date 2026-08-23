@@ -601,6 +601,69 @@ def update_candidate(run_id: str, candidate_id: str, patch: dict) -> dict:
         return candidate
 
 
+def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
+    """一次提交正式筛选结果，并同步移动专属图库文件。"""
+    with _lock:
+        record = _load_run(run_id)
+        candidates = {item.get("id"): item for item in record.get("candidates") or []}
+        normalized: list[tuple[dict, str]] = []
+        seen: set[str] = set()
+        for raw in moves or []:
+            candidate_id = str((raw or {}).get("candidate_id") or "")
+            tag = str((raw or {}).get("tag") or "")
+            if candidate_id in seen:
+                raise ValueError(f"正式筛选包含重复候选: {candidate_id}")
+            candidate = candidates.get(candidate_id)
+            if candidate is None:
+                raise FileNotFoundError(f"候选不存在: {candidate_id}")
+            if tag not in {"treasure", "special", "reject"}:
+                raise ValueError(f"正式筛选标签非法: {tag}")
+            if (candidate.get("generation") or {}).get("status") != "done":
+                raise ValueError(f"候选尚未生成完成: {candidate_id}")
+            candidate_image_file(run_id, candidate_id)
+            seen.add(candidate_id)
+            normalized.append((candidate, tag))
+
+        applied: list[dict] = []
+        for candidate, tag in normalized:
+            candidate.setdefault("review", {})["label"] = tag
+            candidate["review"]["formal_reviewed_at"] = _now()
+            _move_candidate_for_label(run_id, candidate, tag)
+            applied.append(
+                {
+                    "candidate_id": candidate["id"],
+                    "path": candidate["id"],
+                    "tag": tag,
+                    "dest": (candidate.get("generation") or {}).get("path"),
+                    "undoable": False,
+                }
+            )
+            # 批处理中途失败时，已移动文件的索引仍与磁盘保持一致；前端可重新读取继续。
+            _save_run(record)
+        reviewable = [
+            item
+            for item in record.get("candidates") or []
+            if (item.get("generation") or {}).get("status") == "done"
+            and (item.get("generation") or {}).get("path")
+        ]
+        if normalized:
+            record["status"] = (
+                "completed"
+                if reviewable and all((item.get("review") or {}).get("label") for item in reviewable)
+                else "reviewing"
+            )
+            record["status_reason"] = None
+        _save_run(record)
+        return {
+            "ok": True,
+            "applied": applied,
+            "skipped": [],
+            "undo_token": None,
+            "message": f"已完成 {len(applied)} 张探索图片的正式筛选",
+            "run": _full_run(record),
+        }
+
+
 def _move_candidate_for_label(run_id: str, candidate: dict, label: str | None) -> None:
     """筛选状态与任务内物理目录同步；未生成候选仅记录标签。"""
     generation = candidate.get("generation") or {}
@@ -641,6 +704,33 @@ def copy_candidate_to_library(run_id: str, candidate_id: str) -> dict:
         source = candidate_image_file(run_id, candidate_id)
         copied = library_service.copy_image_from_source(source)
         return {"ok": True, **copied}
+
+
+def delete_candidate_image(run_id: str, candidate_id: str) -> dict:
+    """从探索图库移走 Reject 图片，并在任务内部保留可追溯的回收副本。"""
+    with _lock:
+        record = _load_run(run_id)
+        candidate = next(
+            (item for item in record.get("candidates") or [] if item.get("id") == candidate_id),
+            None,
+        )
+        if candidate is None:
+            raise FileNotFoundError("候选不存在")
+        if (candidate.get("review") or {}).get("label") != "reject":
+            raise ValueError("仅 Reject 牌堆中的图片可以删除")
+        source = candidate_image_file(run_id, candidate_id)
+        mode = "internal"
+        trash_dir = _run_file(run_id).parent / ".trash"
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        target = trash_dir / f"{uuid.uuid4().hex[:8]}_{source.name}"
+        shutil.move(str(source), str(target))
+        generation = candidate.setdefault("generation", {})
+        generation["deleted_from"] = str(source)
+        generation["deleted_at"] = _now()
+        generation["deletion_mode"] = mode
+        generation["path"] = None
+        _save_run(record)
+        return {"ok": True, "candidate_id": candidate_id, "mode": mode, "run": _full_run(record)}
 
 
 def create_candidate_card(run_id: str, candidate_id: str, name: str) -> dict:

@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 import sys
@@ -260,6 +261,103 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(explore.cards_service.list_cards_images()["画师串:候选卡"], result["image_path"])
         self.assertTrue((explore.library_service._library_root() / result["image_path"]).is_file())
         self.assertTrue(Path(candidate["generation"]["path"]).is_file())
+
+    def test_formal_review_moves_candidates_and_library_actions_stay_in_sync(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        added = explore.add_candidates(
+            run["id"],
+            [
+                {"id": "formal-a", "artist_string": "1.0::a::"},
+                {"id": "formal-b", "artist_string": "1.1::a::"},
+                {"id": "formal-c", "artist_string": "1.2::a::"},
+            ],
+        )
+        for candidate in added["added"]:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+
+        reviewed = explore.apply_candidate_reviews(
+            run["id"],
+            [
+                {"candidate_id": "formal-a", "tag": "treasure"},
+                {"candidate_id": "formal-b", "tag": "special"},
+                {"candidate_id": "formal-c", "tag": "reject"},
+            ],
+        )
+
+        self.assertEqual(len(reviewed["applied"]), 3)
+        current = explore.get_run(run["id"])
+        by_id = {candidate["id"]: candidate for candidate in current["candidates"]}
+        self.assertIn("treasure", Path(by_id["formal-a"]["generation"]["path"]).parts)
+        self.assertIn("special", Path(by_id["formal-b"]["generation"]["path"]).parts)
+        self.assertIn("reject", Path(by_id["formal-c"]["generation"]["path"]).parts)
+        self.assertEqual(current["status"], "completed")
+        with self.assertRaisesRegex(ValueError, "Reject"):
+            explore.delete_candidate_image(run["id"], "formal-b")
+
+        moved = explore.apply_candidate_reviews(
+            run["id"], [{"candidate_id": "formal-a", "tag": "special"}]
+        )
+        moved_candidate = next(
+            item for item in moved["run"]["candidates"] if item["id"] == "formal-a"
+        )
+        self.assertIn("special", Path(moved_candidate["generation"]["path"]).parts)
+
+        deleted = explore.delete_candidate_image(run["id"], "formal-c")
+        self.assertTrue(deleted["ok"])
+        removed = next(item for item in explore.get_run(run["id"])["candidates"] if item["id"] == "formal-c")
+        self.assertIsNone(removed["generation"]["path"])
+        self.assertTrue(removed["generation"]["deleted_at"])
+
+    def test_partial_formal_review_failure_keeps_saved_paths_in_sync(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        added = explore.add_candidates(
+            run["id"],
+            [
+                {"id": "partial-a", "artist_string": "1.0::a::"},
+                {"id": "partial-b", "artist_string": "1.1::a::"},
+            ],
+        )
+        for candidate in added["added"]:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+
+        original_move = explore._move_candidate_for_label
+        call_count = 0
+
+        def fail_second_move(run_id, candidate, label):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise OSError("simulated move failure")
+            return original_move(run_id, candidate, label)
+
+        with mock.patch.object(explore, "_move_candidate_for_label", side_effect=fail_second_move):
+            with self.assertRaisesRegex(OSError, "simulated"):
+                explore.apply_candidate_reviews(
+                    run["id"],
+                    [
+                        {"candidate_id": "partial-a", "tag": "treasure"},
+                        {"candidate_id": "partial-b", "tag": "special"},
+                    ],
+                )
+
+        current = explore.get_run(run["id"])
+        by_id = {candidate["id"]: candidate for candidate in current["candidates"]}
+        self.assertEqual(by_id["partial-a"]["review"]["label"], "treasure")
+        self.assertIn("treasure", Path(by_id["partial-a"]["generation"]["path"]).parts)
+        self.assertTrue(Path(by_id["partial-a"]["generation"]["path"]).is_file())
+        self.assertIsNone(by_id["partial-b"]["review"]["label"])
+        self.assertIn("active", Path(by_id["partial-b"]["generation"]["path"]).parts)
+        self.assertTrue(Path(by_id["partial-b"]["generation"]["path"]).is_file())
 
 
 if __name__ == "__main__":

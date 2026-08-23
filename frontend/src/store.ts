@@ -118,7 +118,7 @@ interface AppState {
   cardRefresher: number;
 
   init: () => Promise<void>;
-  refreshCategories: () => Promise<void>;
+  refreshCategories: (notifyOnError?: boolean) => Promise<boolean>;
   reorderCategories: (names: string[]) => void;
   setSearch: (s: string) => void;
   toggleExpanded: (name: string) => void;
@@ -286,12 +286,14 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
-    async refreshCategories() {
+    async refreshCategories(notifyOnError = true) {
       try {
         const categories = await api.categories();
         set((s) => ({ categories, categoryColor: buildColorMap(categories), cardRefresher: s.cardRefresher + 1 }));
+        return true;
       } catch (e) {
-        get().addToast(`刷新失败: ${(e as Error).message}`, "err");
+        if (notifyOnError) get().addToast(`刷新失败: ${(e as Error).message}`, "err");
+        return false;
       }
     },
 

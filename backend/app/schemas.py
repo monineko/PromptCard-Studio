@@ -194,6 +194,15 @@ class StyleExploreCandidateCardIn(BaseModel):
     name: str = ""
 
 
+class StyleExploreReviewMove(BaseModel):
+    candidate_id: str
+    tag: str
+
+
+class StyleExploreReviewsIn(BaseModel):
+    moves: list[StyleExploreReviewMove] = []
+
+
 class PngSendIn(BaseModel):
     png: dict = {}
     model: str = ""

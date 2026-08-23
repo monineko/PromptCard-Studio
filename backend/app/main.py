@@ -62,6 +62,7 @@ from .schemas import (
     StyleExplorePoolUpdateIn,
     StyleExploreRunUpdateIn,
     StyleExploreResumeIn,
+    StyleExploreReviewsIn,
     StyleExploreBasicRoundIn,
     StyleExploreRunIn,
     Text2ImageIn,
@@ -765,6 +766,19 @@ def style_explore_candidate_update(run_id: str, candidate_id: str, body: StyleEx
         raise _as_http(e, 400)
 
 
+@app.post("/api/style-explore/runs/{run_id}/reviews")
+def style_explore_reviews_apply(run_id: str, body: StyleExploreReviewsIn):
+    try:
+        return style_explore_service.apply_candidate_reviews(
+            run_id,
+            [move.model_dump() for move in body.moves],
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
 @app.get("/api/style-explore/runs/{run_id}/image")
 def style_explore_candidate_image(run_id: str, candidate_id: str):
     try:
@@ -779,6 +793,16 @@ def style_explore_candidate_image(run_id: str, candidate_id: str):
 def style_explore_candidate_copy_to_library(run_id: str, candidate_id: str):
     try:
         return style_explore_service.copy_candidate_to_library(run_id, candidate_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.delete("/api/style-explore/runs/{run_id}/candidates/{candidate_id}/image")
+def style_explore_candidate_delete_image(run_id: str, candidate_id: str):
+    try:
+        return style_explore_service.delete_candidate_image(run_id, candidate_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except ValueError as e:

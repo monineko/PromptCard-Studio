@@ -1,13 +1,17 @@
-import { Archive, CircleHelp, Compass, FileUp, FolderPlus, Heart, Pause, Play, RotateCcw, Save, Square, Trash2, WandSparkles } from "lucide-react";
+import { Archive, ArrowLeft, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api";
+import { AlbumStackCard } from "../components/gallery/AlbumStackCard";
+import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
+import { ReviewMode, type ReviewChoice } from "../components/gallery/ReviewMode";
 import { ConfirmDialog, Modal } from "../components/UI";
 import { StyleExploreParamsPanel } from "../components/StyleExploreParamsPanel";
 import { serializeSections } from "../lib";
 import { useStore } from "../store";
 import { useGenerateStore } from "../store/generate";
 import { useStyleExploreDraft } from "../store/styleExploreDraft";
-import type { Section, StyleExplorePool, StyleExplorePoolSummary, StyleExploreRun, StyleExploreRunSummary } from "../types";
+import type { LibraryImageItem, Section, StyleExploreCandidate, StyleExplorePool, StyleExplorePoolSummary, StyleExploreRun, StyleExploreRunSummary } from "../types";
 
 const inputClass = "w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
 const buttonClass = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
@@ -15,6 +19,20 @@ const ghostButtonClass = "inline-flex items-center justify-center gap-1.5 rounde
 
 function statusLabel(status: string) {
   return ({ draft: "草稿", running: "生成中", paused: "已暂停", generated: "已生成", reviewing: "筛选中", completed: "已完成", cancelled: "已结束" } as Record<string, string>)[status] ?? status;
+}
+
+function exploreCandidateAsLibraryItem(candidate: StyleExploreCandidate): LibraryImageItem {
+  const reviewedAt = String(candidate.review.formal_reviewed_at ?? "");
+  return {
+    path: candidate.id,
+    name: String(candidate.generation.name ?? `候选-${candidate.id}.png`),
+    category: "unrated",
+    date: reviewedAt.slice(0, 10),
+    size: 0,
+    mtime: Date.parse(reviewedAt) || 0,
+    width: Number(candidate.generation.width) || 768,
+    height: Number(candidate.generation.height) || 1024,
+  };
 }
 
 function toExplorePrompt(sections: Section[]) {
@@ -27,6 +45,19 @@ function toExplorePrompt(sections: Section[]) {
 type HelpEntry = { title: string; description: ReactNode };
 type ConfirmState = { title: string; message: string; danger?: boolean; onConfirm: () => void } | null;
 type CardDialogState = { candidateId: string; name: string } | null;
+type ExploreLibraryCategory = "treasure" | "special" | "reject";
+
+const EXPLORE_REVIEW_CHOICES: ReviewChoice[] = [
+  { tag: "treasure", label: "Treasure", key: "ArrowLeft", icon: Crown, color: "#f59e0b" },
+  { tag: "special", label: "Special", key: "ArrowDown", icon: Sparkles, color: "#8b5cf6" },
+  { tag: "reject", label: "Reject", key: "ArrowRight", icon: XCircle, color: "#f87171" },
+];
+
+const EXPLORE_LIBRARY_META: Record<ExploreLibraryCategory, { label: string; description: string; color: string; icon: typeof Crown }> = {
+  treasure: { label: "Treasure", description: "正式筛选后保留的优胜父本档案", color: "#f59e0b", icon: Crown },
+  special: { label: "Special", description: "独立保留、不自动参与深度算法的特别结果", color: "#8b5cf6", icon: Sparkles },
+  reject: { label: "Reject", description: "暂不采用，可继续转移或删除的结果", color: "#f87171", icon: XCircle },
+};
 
 function ParameterHelp({ entry, onOpen }: { entry: HelpEntry; onOpen: (entry: HelpEntry) => void }) {
   return <span className="group relative inline-flex align-middle">
@@ -125,6 +156,7 @@ function WeightParameters({ targetCount, setTargetCount, minArtistCount, setMinA
 
 export function StyleExplore() {
   const addToast = useStore((s) => s.addToast);
+  const refreshCategories = useStore((s) => s.refreshCategories);
   const workspacePositive = useStore((s) => s.positive);
   const workspaceNegative = useStore((s) => s.negative);
   const workspaceParams = useGenerateStore((s) => s.params);
@@ -163,6 +195,10 @@ export function StyleExplore() {
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const [cardDialog, setCardDialog] = useState<CardDialogState>(null);
   const [createRunDialogOpen, setCreateRunDialogOpen] = useState(false);
+  const [formalReviewing, setFormalReviewing] = useState(false);
+  const [exploreLibraryCategory, setExploreLibraryCategory] = useState<ExploreLibraryCategory | null>(null);
+  const [exploreSelecting, setExploreSelecting] = useState(false);
+  const [exploreSelectedIds, setExploreSelectedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -190,6 +226,19 @@ export function StyleExplore() {
 
   const workspaceHasArtistCard = useMemo(() => workspacePositive.some((section) => section.blocks.some((block) => block.type === "card" && block.category === "画师串")), [workspacePositive]);
   const previewCandidate = useMemo(() => run?.candidates.find((candidate) => candidate.id === previewCandidateId) ?? null, [previewCandidateId, run]);
+  const visibleExploreCandidates = useMemo(() => run?.candidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at) ?? [], [run]);
+  const formalReviewCandidates = useMemo(() => visibleExploreCandidates.filter((candidate) => !candidate.review.label), [visibleExploreCandidates]);
+  const exploreLibraryGroups = useMemo(() => Object.fromEntries((["treasure", "special", "reject"] as const).map((category) => [category, visibleExploreCandidates.filter((candidate) => candidate.review.label === category)])) as Record<ExploreLibraryCategory, StyleExploreCandidate[]>, [visibleExploreCandidates]);
+  const openExploreCandidates = exploreLibraryCategory ? exploreLibraryGroups[exploreLibraryCategory] : [];
+  const openExploreItems = useMemo(() => openExploreCandidates.map(exploreCandidateAsLibraryItem), [openExploreCandidates]);
+  const canStartFormalReview = formalReviewCandidates.length > 0 && (run?.status === "cancelled" || !run?.candidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)));
+
+  useEffect(() => {
+    setFormalReviewing(false);
+    setExploreLibraryCategory(null);
+    setExploreSelecting(false);
+    setExploreSelectedIds(new Set());
+  }, [run?.id]);
   const withBusy = async (action: () => Promise<void>) => {
     setBusy(true); try { await action(); } catch (e) { addToast((e as Error).message, "err"); } finally { setBusy(false); }
   };
@@ -265,13 +314,70 @@ export function StyleExplore() {
   const submitCardDialog = () => void withBusy(async () => {
     if (!run || !cardDialog?.name.trim()) return;
     await api.styleExploreCreateCandidateCard(run.id, cardDialog.candidateId, cardDialog.name.trim());
-    addToast(`已创建画师串 Card，并将候选图复制到图库设为演示图：${cardDialog.name.trim()}`);
+    const categoriesSynced = await refreshCategories(false) || await refreshCategories(false);
+    addToast(categoriesSynced
+      ? `已创建画师串 Card，并将候选图复制到图库设为演示图：${cardDialog.name.trim()}`
+      : `Card 已创建，但卡包列表暂时同步失败；请稍后重新进入首页：${cardDialog.name.trim()}`,
+    categoriesSynced ? "ok" : "err");
     setCardDialog(null);
   });
   const confirmEndRun = () => {
     if (!run) return;
     setConfirmState({ title: "结束探索任务", message: `确认结束「${run.name}」吗？已生成的图片会保留，但剩余进度将永久无法继续。`, danger: true, onConfirm: () => controlRun("cancel") });
   };
+  const applyFormalReviews = async (moves: { path: string; tag: string }[]) => {
+    if (!run) throw new Error("尚未选择探索任务");
+    let result: Awaited<ReturnType<typeof api.styleExploreApplyReviews>>;
+    try {
+      result = await api.styleExploreApplyReviews(run.id, moves.map((move) => ({ candidate_id: move.path, tag: move.tag })));
+    } catch (error) {
+      await loadRun(run.id).catch(() => {});
+      throw error;
+    }
+    setRun(result.run);
+    void refresh().catch((error) => addToast(`任务摘要刷新失败：${(error as Error).message}`, "err"));
+    return result;
+  };
+  const moveExploreSelection = (target: ExploreLibraryCategory) => void withBusy(async () => {
+    if (!run || exploreSelectedIds.size === 0) return;
+    let result: Awaited<ReturnType<typeof api.styleExploreApplyReviews>>;
+    try {
+      result = await api.styleExploreApplyReviews(run.id, [...exploreSelectedIds].map((candidateId) => ({ candidate_id: candidateId, tag: target })));
+    } catch (error) {
+      await loadRun(run.id).catch(() => {});
+      throw error;
+    }
+    setRun(result.run);
+    setExploreSelectedIds(new Set());
+    void refresh().catch((error) => addToast(`任务摘要刷新失败：${(error as Error).message}`, "err"));
+    addToast(`已将图片发送到 ${EXPLORE_LIBRARY_META[target].label}`);
+  });
+  const deleteExploreSelection = () => {
+    if (!run || exploreLibraryCategory !== "reject" || exploreSelectedIds.size === 0) return;
+    const count = exploreSelectedIds.size;
+    setConfirmState({ title: "删除 Reject 图片", message: `确认从探索图库删除选中的 ${count} 张 Reject 图片吗？候选画师串与筛选记录仍会保留。`, danger: true, onConfirm: () => void withBusy(async () => {
+      let nextRun = run;
+      try {
+        for (const candidateId of exploreSelectedIds) {
+          const result = await api.styleExploreDeleteCandidateImage(run.id, candidateId);
+          nextRun = result.run;
+          setRun(result.run);
+        }
+      } catch (error) {
+        await loadRun(run.id).catch(() => {});
+        throw error;
+      }
+      setRun(nextRun);
+      setExploreSelectedIds(new Set());
+      void refresh().catch((error) => addToast(`任务摘要刷新失败：${(error as Error).message}`, "err"));
+      addToast(`已删除 ${count} 张 Reject 图片`);
+    }) });
+  };
+  const toggleExploreSelection = (candidateId: string) => setExploreSelectedIds((current) => {
+    const next = new Set(current);
+    if (next.has(candidateId)) next.delete(candidateId); else next.add(candidateId);
+    return next;
+  });
 
   return <><div className="mx-auto w-full max-w-7xl space-y-5 px-4 py-5">
     <section className="glass relative min-h-[210px] rounded-2xl p-4 pb-14">
@@ -305,14 +411,23 @@ export function StyleExplore() {
     {run && <section className="glass rounded-2xl p-5">
       <div className="flex items-start gap-3"><div><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p></div><button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button></div>
       <div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{run.candidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
-        {candidate.generation.status === "done" && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
+        {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
         <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
         <code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}
-        {candidate.generation.status === "done" && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title={candidate.review.heart ? "取消心动标记" : "标记为心动"} aria-label={candidate.review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={candidate.review.heart ? "currentColor" : "none"} className={candidate.review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(candidate.id, label, candidate.review.preliminary_label)} disabled={busy} aria-pressed={candidate.review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
-        {candidate.review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{candidate.review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{candidate.review.preliminary_label}</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{candidate.review.label}</div>}
+        {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title={candidate.review.heart ? "取消心动标记" : "标记为心动"} aria-label={candidate.review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={candidate.review.heart ? "currentColor" : "none"} className={candidate.review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(candidate.id, label, candidate.review.preliminary_label)} disabled={busy} aria-pressed={candidate.review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
+        {candidate.review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{candidate.review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{candidate.review.preliminary_label}</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{candidate.review.label}</div>}{Boolean(candidate.generation.deleted_at) && <div className="mt-1 text-xs text-[var(--muted)]">探索图片已删除，候选记录保留</div>}
       </div>)}{run.candidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4"><p className="text-xs text-[var(--muted)]">全部候选生成完成后，从这里进入正式筛选。正式结果会移动到探索图库的三个牌堆中。</p><button className={`${buttonClass} w-32`} onClick={() => setFormalReviewing(true)} disabled={busy || !canStartFormalReview}><Images size={15} />筛选</button></div>
     </section>}
-  </div><Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
+    {run && <section className="glass rounded-2xl p-5">
+      <div className="flex flex-wrap items-start gap-3"><div><h2 className="font-semibold">探索图库</h2><p className="mt-1 text-xs text-[var(--muted)]">当前探索任务的独立图库。正式筛选会实际移动图片；从牌堆中可继续发送到其他分类，Reject 图片可删除。</p></div>{exploreLibraryCategory && <button className={`${ghostButtonClass} ml-auto`} onClick={() => { setExploreLibraryCategory(null); setExploreSelecting(false); setExploreSelectedIds(new Set()); }}><ArrowLeft size={14} />返回牌堆</button>}</div>
+      {!exploreLibraryCategory ? <div className="mt-7 grid grid-cols-1 gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">{(["treasure", "special", "reject"] as const).map((category, index) => { const meta = EXPLORE_LIBRARY_META[category]; const candidates = exploreLibraryGroups[category]; return <AlbumStackCard key={category} title={meta.label} subtitle={meta.description} count={candidates.length} date={String(candidates[0]?.review.formal_reviewed_at ?? "").slice(0, 10) || undefined} coverUrls={candidates.slice(0, 3).map((candidate) => api.styleExploreCandidateImageUrl(run.id, candidate.id))} color={meta.color} icon={meta.icon} index={index} onOpen={() => { setExploreLibraryCategory(category); setExploreSelecting(false); setExploreSelectedIds(new Set()); }} />; })}</div> : <div className="mt-5">
+        <div className="mb-4 flex flex-wrap items-center gap-2"><span className="text-sm font-semibold" style={{ color: EXPLORE_LIBRARY_META[exploreLibraryCategory].color }}>{EXPLORE_LIBRARY_META[exploreLibraryCategory].label}</span><span className="text-xs text-[var(--muted)]">{openExploreItems.length} 张</span><button className={`${ghostButtonClass} ml-auto`} onClick={() => { setExploreSelecting((value) => !value); setExploreSelectedIds(new Set()); }}>{exploreSelecting ? "退出选择" : "选择图片"}</button></div>
+        {exploreSelecting && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3"><span className="mr-2 text-xs text-[var(--muted)]">已选 {exploreSelectedIds.size} 张</span>{(["treasure", "special", "reject"] as const).filter((target) => target !== exploreLibraryCategory).map((target) => <button key={target} className={ghostButtonClass} disabled={busy || exploreSelectedIds.size === 0} onClick={() => moveExploreSelection(target)}><Send size={14} />发送到 {EXPLORE_LIBRARY_META[target].label}</button>)}{exploreLibraryCategory === "reject" && <button className={`${ghostButtonClass} text-red-500`} disabled={busy || exploreSelectedIds.size === 0} onClick={deleteExploreSelection}><Trash2 size={14} />删除</button>}</div>}
+        {openExploreItems.length > 0 ? <GalleryMasonry items={openExploreItems} selectionMode={exploreSelecting} selectedPaths={exploreSelectedIds} onToggleSelect={(item) => toggleExploreSelection(item.path)} onItemClick={(item) => setPreviewCandidateId(item.path)} getImageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} /> : <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--muted)]">这个牌堆还没有图片。</div>}
+      </div>}
+    </section>}
+  </div>{formalReviewing && run && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${formalReviewCandidates.map((candidate) => candidate.id).join("-")}`} items={formalReviewCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart, annotation: candidate.review.preliminary_label ? String(candidate.review.preliminary_label) : undefined }))} categoryLabel={`${run.name} · 基础探索`} choices={EXPLORE_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyFormalReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setFormalReviewing(false); addToast(result.message); }} onCancel={() => setFormalReviewing(false)} /></div>, document.body)}<Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
   </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览">
     {run && previewCandidate && <><img className="max-h-[70vh] w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidate.id)} alt="放大候选预览" /><div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => createArtistCard(previewCandidate.id)} disabled={busy}>创建画师串 Card</button><button className={buttonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, previewCandidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div></>}
