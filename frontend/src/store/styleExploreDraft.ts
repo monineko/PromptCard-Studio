@@ -9,9 +9,10 @@ type StyleExploreDraft = {
   negative: string;
   params: GenerateParamsPayload;
   vibes: GenerateVibe[];
+  lastSelectedRunId: string;
 };
 
-const defaults = (): StyleExploreDraft => ({ positive: "", negative: "", params: { ...DEFAULT_PARAMS }, vibes: [] });
+const defaults = (): StyleExploreDraft => ({ positive: "", negative: "", params: { ...DEFAULT_PARAMS }, vibes: [], lastSelectedRunId: "" });
 
 function loadDraft(): StyleExploreDraft {
   try {
@@ -31,6 +32,7 @@ type DraftState = StyleExploreDraft & {
   setVibes: (vibes: GenerateVibe[]) => void;
   updateVibe: (id: string, patch: Partial<GenerateVibe>) => void;
   removeVibe: (id: string) => void;
+  setLastSelectedRunId: (id: string) => void;
   importWorkspaceSnapshot: (positive: string, negative: string, params: GenerateParamsPayload, vibes: GenerateVibe[]) => void;
 };
 
@@ -41,6 +43,7 @@ export const useStyleExploreDraft = create<DraftState>((set, get) => ({
   setVibes(vibes) { persist({ ...get(), vibes }); set({ vibes }); },
   updateVibe(id, patch) { const vibes = get().vibes.map((item) => item.id === id ? { ...item, ...patch } : item); persist({ ...get(), vibes }); set({ vibes }); },
   removeVibe(id) { const vibes = get().vibes.filter((item) => item.id !== id); persist({ ...get(), vibes }); set({ vibes }); },
+  setLastSelectedRunId(lastSelectedRunId) { persist({ ...get(), lastSelectedRunId }); set({ lastSelectedRunId }); },
   importWorkspaceSnapshot(positive, negative, params, vibes) {
     const next = { ...get(), positive, negative, params: { ...DEFAULT_PARAMS, ...params }, vibes: [...vibes] };
     persist(next); set({ positive: next.positive, negative: next.negative, params: next.params, vibes: next.vibes });

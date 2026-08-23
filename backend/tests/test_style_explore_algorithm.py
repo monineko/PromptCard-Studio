@@ -149,21 +149,49 @@ class StyleExploreAlgorithmTest(unittest.TestCase):
         # 40 是“每个父本至少一次”的硬保底；超过它证明低偏好仍参与额外后代。
         self.assertGreater(counts["low"], 40)
 
-    def test_deep_generation_rejects_impossible_or_out_of_pool_inputs(self):
+    def test_custom_parents_can_inherit_external_ids_but_new_ids_stay_in_pool(self):
+        parents = [
+            DeepParent.from_artist_string("p1", "0.8::external_x::, 1.0::a::"),
+            DeepParent.from_artist_string("p2", "0.7::external_y::, 1.1::b::"),
+        ]
+        pool = list("abcd")
+
+        candidates = generate_deep_candidates(
+            parents, pool, 25, WeightSamplingConfig(), random.Random(20260823)
+        )
+
+        parent_ids = {
+            parent.parent_id: {item.artist_id for item in parent.artist_weights}
+            for parent in parents
+        }
+        self.assertTrue(any(
+            candidate.operation == "local_mutation"
+            and any(item.artist_id in {"external_x", "external_y"} for item in candidate.artist_weights)
+            for candidate in candidates
+        ))
+        self.assertTrue(any(
+            candidate.operation == "crossover"
+            and any(item.artist_id in {"external_x", "external_y"} for item in candidate.artist_weights)
+            for candidate in candidates
+        ))
+        for candidate in candidates:
+            inherited = set().union(*(parent_ids[parent_id] for parent_id in candidate.parent_ids))
+            introduced = {
+                item.artist_id for item in candidate.artist_weights
+            } - inherited
+            self.assertTrue(introduced.issubset(set(pool)))
+            if candidate.operation == "random_injection":
+                self.assertTrue(
+                    all(item.artist_id in pool for item in candidate.artist_weights)
+                )
+
+    def test_deep_generation_rejects_impossible_inputs(self):
         config = WeightSamplingConfig(lower=0.8, upper=0.8, mode=0.8)
         with self.assertRaisesRegex(ValueError, "大于父本数"):
             generate_deep_candidates(
                 [DeepParent.from_artist_string("p", "0.8::a::")],
                 ["a", "b"],
                 1,
-                config,
-                random.Random(1),
-            )
-        with self.assertRaisesRegex(ValueError, "ArtistPool"):
-            generate_deep_candidates(
-                [DeepParent.from_artist_string("p", "0.8::outside::")],
-                ["a", "b"],
-                2,
                 config,
                 random.Random(1),
             )

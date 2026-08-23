@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, ChevronUp, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +21,11 @@ const ghostButtonClass = "inline-flex items-center justify-center gap-1.5 rounde
 
 function statusLabel(status: string) {
   return ({ draft: "草稿", running: "生成中", paused: "已暂停", generated: "已生成", reviewing: "筛选中", completed: "已完成", cancelled: "已结束" } as Record<string, string>)[status] ?? status;
+}
+
+function finiteNumber(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function exploreCandidateAsLibraryItem(candidate: StyleExploreCandidate): LibraryImageItem {
@@ -170,6 +175,8 @@ export function StyleExplore() {
   const vibes = useStyleExploreDraft((s) => s.vibes);
   const setPrompts = useStyleExploreDraft((s) => s.setPrompts);
   const importWorkspaceSnapshot = useStyleExploreDraft((s) => s.importWorkspaceSnapshot);
+  const lastSelectedRunId = useStyleExploreDraft((s) => s.lastSelectedRunId);
+  const setLastSelectedRunId = useStyleExploreDraft((s) => s.setLastSelectedRunId);
   const fileRef = useRef<HTMLInputElement>(null);
   const [pools, setPools] = useState<StyleExplorePoolSummary[]>([]);
   const [runs, setRuns] = useState<StyleExploreRunSummary[]>([]);
@@ -193,7 +200,7 @@ export function StyleExplore() {
   const [rightDispersion, setRightDispersion] = useState(0.4);
   const [softBalanceStrength, setSoftBalanceStrength] = useState(0);
   const [helpEntry, setHelpEntry] = useState<HelpEntry | null>(null);
-  const [selectedRunId, setSelectedRunId] = useState("");
+  const [selectedRunId, setSelectedRunId] = useState(() => lastSelectedRunId);
   const [run, setRun] = useState<StyleExploreRun | null>(null);
   const [editRunName, setEditRunName] = useState("");
   const [previewCandidateId, setPreviewCandidateId] = useState<string | null>(null);
@@ -201,10 +208,29 @@ export function StyleExplore() {
   const [cardDialog, setCardDialog] = useState<CardDialogState>(null);
   const [createRunDialogOpen, setCreateRunDialogOpen] = useState(false);
   const [formalReviewing, setFormalReviewing] = useState(false);
+  const [candidateCollapsed, setCandidateCollapsed] = useState(false);
   const [exploreLibraryCategory, setExploreLibraryCategory] = useState<ExploreLibraryCategory | null>(null);
   const [exploreSelecting, setExploreSelecting] = useState(false);
   const [exploreSelectedIds, setExploreSelectedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+
+  const selectRun = useCallback((id: string) => {
+    setSelectedRunId(id);
+    setLastSelectedRunId(id);
+  }, [setLastSelectedRunId]);
+  const restoreRunControls = useCallback((next: StyleExploreRun) => {
+    type SnapshotRound = { phase?: string; target_count?: number; algorithm?: Record<string, unknown> };
+    const latestBasicRound = [...((next.rounds ?? []) as unknown as SnapshotRound[])].reverse().find((round) => round.phase === "basic");
+    const source = latestBasicRound?.algorithm ?? next.algorithm ?? {};
+    setTargetCount(Math.max(1, Math.min(1000, finiteNumber(latestBasicRound?.target_count ?? next.target_count, 20))));
+    setMinArtistCount(Math.max(1, Math.min(10, finiteNumber(source.min_artist_count ?? source.artist_count, 2))));
+    setLower(Math.max(-3, Math.min(3, finiteNumber(source.lower, 0.1))));
+    setUpper(Math.max(-3, Math.min(3, finiteNumber(source.upper, 2))));
+    setMode(Math.max(-3, Math.min(3, finiteNumber(source.mode, 0.8))));
+    setLeftDispersion(Math.max(0, Math.min(1, finiteNumber(source.left_dispersion, 0.4))));
+    setRightDispersion(Math.max(0, Math.min(1, finiteNumber(source.right_dispersion, 0.4))));
+    setSoftBalanceStrength(Math.max(0, Math.min(1, finiteNumber(source.soft_balance_strength, 0))));
+  }, []);
 
   const refresh = useCallback(async () => {
     const [nextPools, nextRuns] = await Promise.all([api.styleExplorePools(), api.styleExploreRuns(showArchived)]);
@@ -214,14 +240,16 @@ export function StyleExplore() {
     if (!id) return setPool(null);
     const [next, backups] = await Promise.all([api.styleExplorePool(id), api.styleExplorePoolBackups(id)]); setPool(next); setPoolName(next.name); setPoolText(next.content); setPoolBackups(backups);
   }, []);
-  const loadRun = useCallback(async (id: string) => {
+  const loadRun = useCallback(async (id: string, restoreControls = false) => {
     if (!id) return setRun(null);
-    setRun(await api.styleExploreRun(id));
-  }, []);
+    const next = await api.styleExploreRun(id);
+    setRun(next);
+    if (restoreControls) restoreRunControls(next);
+  }, [restoreRunControls]);
 
   useEffect(() => { void refresh().catch((e) => addToast(`读取画风探索数据失败：${(e as Error).message}`, "err")); }, [addToast, refresh]);
   useEffect(() => { void loadPool(poolId).catch((e) => addToast(`读取 ArtistPool 失败：${(e as Error).message}`, "err")); }, [addToast, loadPool, poolId]);
-  useEffect(() => { void loadRun(selectedRunId).catch((e) => addToast(`读取任务失败：${(e as Error).message}`, "err")); }, [addToast, loadRun, selectedRunId]);
+  useEffect(() => { void loadRun(selectedRunId, true).catch((e) => { setRun(null); selectRun(""); addToast(`读取任务失败：${(e as Error).message}`, "err"); }); }, [addToast, loadRun, selectRun, selectedRunId]);
   useEffect(() => {
     let cancelled = false;
     const poll = () => void api.generationOccupancy().then((value) => {
@@ -260,6 +288,7 @@ export function StyleExplore() {
 
   useEffect(() => {
     setFormalReviewing(false);
+    setCandidateCollapsed(false);
     setExploreLibraryCategory(null);
     setExploreSelecting(false);
     setExploreSelectedIds(new Set());
@@ -305,7 +334,7 @@ export function StyleExplore() {
       name: taskName, pool_id: poolId, target_count: targetCount, positive, negative, params: { ...params, vibes }, phase: "basic",
       algorithm: { min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength },
     });
-    setTaskName(""); setSelectedRunId(created.id); setRun(created); setCreateRunDialogOpen(false); await refresh(); addToast("已创建基础探索任务；确认参数后即可开始生成");
+    setTaskName(""); selectRun(created.id); setRun(created); setCreateRunDialogOpen(false); await refresh(); addToast("已创建基础探索任务；确认参数后即可开始生成");
   });
   const controlRun = (action: "start" | "pause" | "resume" | "cancel") => void withBusy(async () => {
     if (!run) return;
@@ -329,11 +358,11 @@ export function StyleExplore() {
   });
   const archiveRun = () => {
     if (!run) return;
-    setConfirmState({ title: run.archived_at ? "取消归档任务" : "归档任务", message: run.archived_at ? `确认将「${run.name}」恢复到活动任务列表吗？` : `归档「${run.name}」不会删除专属图片和记录。`, onConfirm: () => void withBusy(async () => { await api.styleExploreArchiveRun(run.id, !run.archived_at); setRun(null); setSelectedRunId(""); await refresh(); addToast(run.archived_at ? "任务已恢复到活动列表" : "任务已归档，专属图片与记录仍被保留"); setConfirmState(null); }) });
+    setConfirmState({ title: run.archived_at ? "取消归档任务" : "归档任务", message: run.archived_at ? `确认将「${run.name}」恢复到活动任务列表吗？` : `归档「${run.name}」不会删除专属图片和记录。`, onConfirm: () => void withBusy(async () => { await api.styleExploreArchiveRun(run.id, !run.archived_at); setRun(null); selectRun(""); await refresh(); addToast(run.archived_at ? "任务已恢复到活动列表" : "任务已归档，专属图片与记录仍被保留"); setConfirmState(null); }) });
   };
   const deleteRun = () => {
     if (!run) return;
-    setConfirmState({ title: "永久删除探索任务", message: `将永久删除「${run.name}」及其 ${run.done_count} 张探索图片，此操作不可恢复。`, danger: true, onConfirm: () => void withBusy(async () => { const result = await api.styleExploreDeleteRun(run.id); setRun(null); setSelectedRunId(""); await refresh(); addToast(`任务已永久删除，并删除 ${result.deleted_images} 张专属图片`); setConfirmState(null); }) });
+    setConfirmState({ title: "永久删除探索任务", message: `将永久删除「${run.name}」及其 ${run.done_count} 张探索图片，此操作不可恢复。`, danger: true, onConfirm: () => void withBusy(async () => { const result = await api.styleExploreDeleteRun(run.id); setRun(null); selectRun(""); await refresh(); addToast(`任务已永久删除，并删除 ${result.deleted_images} 张专属图片`); setConfirmState(null); }) });
   };
   const retryFailed = () => void withBusy(async () => {
     if (!run) return;
@@ -415,7 +444,7 @@ export function StyleExplore() {
     <section className="glass relative min-h-[210px] rounded-2xl p-4 pb-14">
       <div className="grid gap-3 xl:grid-cols-[260px_minmax(260px,1fr)_120px_minmax(260px,1fr)_120px]">
         <div className="flex items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white" style={{ background: "var(--accent)" }}><Compass size={20} /></span><div><h1 className="font-semibold">探索任务</h1><p className="text-xs text-[var(--muted)]">任务、轮次与专属图库</p></div></div>
-        <select className={inputClass} value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)}><option value="">新建任务 / 未选择</option>{runs.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived_at ? " · 已归档" : ""} · {statusLabel(item.status)} · {item.done_count}/{item.target_count}</option>)}</select>
+        <select className={inputClass} value={selectedRunId} onChange={(e) => selectRun(e.target.value)}><option value="">新建任务 / 未选择</option>{runs.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived_at ? " · 已归档" : ""} · {statusLabel(item.status)} · {item.done_count}/{item.target_count}</option>)}</select>
         <button className={ghostButtonClass} onClick={() => setShowArchived((value) => !value)}>{showArchived ? "隐藏归档" : "查看归档"}</button>
         <input className={inputClass} value={run ? editRunName : taskName} onChange={(e) => run ? setEditRunName(e.target.value) : setTaskName(e.target.value)} placeholder="新任务名称，例如：厚涂水彩画风" aria-label="探索任务名称" />
         <button className={`${ghostButtonClass} w-full`} onClick={renameRun} disabled={busy || !run || !editRunName.trim()}><Save size={15} />重命名</button>
@@ -441,15 +470,15 @@ export function StyleExplore() {
     </div>
     <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} minArtistCount={minArtistCount} setMinArtistCount={setMinArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} />
     {run && <section className="glass rounded-2xl p-5">
-      <div className="flex items-start gap-3"><div><h2 className="font-semibold">本任务候选</h2><p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p></div><button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button></div>
-      <div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{basicCandidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
+      <div className={`flex gap-3 ${candidateCollapsed ? "items-center" : "items-start"}`}><div><h2 className="font-semibold">本任务候选</h2>{!candidateCollapsed && <p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p>}</div>{candidateCollapsed ? <button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => setCandidateCollapsed(false)}><ChevronDown size={15} />展开</button> : <button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button>}</div>
+      {!candidateCollapsed && <><div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{basicCandidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
         {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
         <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
         <code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}
         {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title={candidate.review.heart ? "取消心动标记" : "标记为心动"} aria-label={candidate.review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={candidate.review.heart ? "currentColor" : "none"} className={candidate.review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(candidate.id, label, candidate.review.preliminary_label)} disabled={busy} aria-pressed={candidate.review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
         {candidate.review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{candidate.review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{candidate.review.preliminary_label}</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{candidate.review.label}</div>}{Boolean(candidate.generation.deleted_at) && <div className="mt-1 text-xs text-[var(--muted)]">探索图片已删除，候选记录保留</div>}
       </div>)}{basicCandidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4"><p className="text-xs text-[var(--muted)]">全部候选生成完成后，从这里进入正式筛选。正式结果会移动到探索图库的三个牌堆中。</p><button className={`${buttonClass} w-32`} onClick={() => setFormalReviewing(true)} disabled={busy || !canStartFormalReview}><Images size={15} />筛选</button></div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4"><p className="text-xs text-[var(--muted)]">全部候选生成完成后，从这里进入正式筛选。正式结果会移动到探索图库的三个牌堆中。</p><div className="flex gap-2"><button className={`${ghostButtonClass} w-32`} onClick={() => setCandidateCollapsed(true)}><ChevronUp size={15} />收起</button><button className={`${buttonClass} w-32`} onClick={() => setFormalReviewing(true)} disabled={busy || !canStartFormalReview}><Images size={15} />筛选</button></div></div></>}
     </section>}
     {run && <section className="glass rounded-2xl p-5">
       <div className="flex flex-wrap items-start gap-3"><div><h2 className="font-semibold">探索图库</h2><p className="mt-1 text-xs text-[var(--muted)]">当前探索任务的独立图库。正式筛选会实际移动图片；从牌堆中可继续发送到其他分类，Reject 图片可删除。</p></div>{exploreLibraryCategory && <button className={`${ghostButtonClass} ml-auto`} onClick={() => { setExploreLibraryCategory(null); setExploreSelecting(false); setExploreSelectedIds(new Set()); }}><ArrowLeft size={14} />返回牌堆</button>}</div>
@@ -459,13 +488,13 @@ export function StyleExplore() {
         {openExploreItems.length > 0 ? <GalleryMasonry items={openExploreItems} selectionMode={exploreSelecting} selectedPaths={exploreSelectedIds} onToggleSelect={(item) => toggleExploreSelection(item.path)} onItemClick={(item) => setPreviewCandidateId(item.path)} getImageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} /> : <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--muted)]">这个牌堆还没有图片。</div>}
       </div>}
     </section>}
-    {run && <StyleExploreDeepExplorer run={run} positive={positive} negative={negative} params={{ ...params, vibes }} algorithm={{ min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength }} onRunChange={(next) => { setRun(next); void refresh(); }} notify={addToast} />}
+    {run && <StyleExploreDeepExplorer run={run} positive={positive} negative={negative} params={{ ...params, vibes }} algorithm={{ min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength }} onRunChange={(next) => { setRun(next); void refresh(); }} onPreviewCandidate={setPreviewCandidateId} notify={addToast} />}
   </div>{formalReviewing && run && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${formalReviewCandidates.map((candidate) => candidate.id).join("-")}`} items={formalReviewCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart, annotation: candidate.review.preliminary_label ? String(candidate.review.preliminary_label) : undefined }))} categoryLabel={`${run.name} · 基础探索`} choices={EXPLORE_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyFormalReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setFormalReviewing(false); addToast(result.message); }} onCancel={() => setFormalReviewing(false)} /></div>, document.body)}<Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
   </Modal><Modal open={poolImportResult !== null} onClose={() => setPoolImportResult(null)} title="ArtistPool 导入结果" wide>
     {poolImportResult && <div className="space-y-4 text-sm"><p className="text-[var(--muted)]">支持英文逗号或换行分隔；导入内容已规范化为一行一个 Artist ID。原始 TXT 已作为首次备份保留。</p><div className="grid gap-3 sm:grid-cols-4">{[["输入项", poolImportResult.input_count ?? poolImportResult.original_count ?? 0], ["有效 ID", poolImportResult.valid_count ?? poolImportResult.ids.length], ["重复", poolImportResult.duplicate_count ?? 0], ["跳过", poolImportResult.skipped_count ?? poolImportResult.skipped ?? 0]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">{label}</div><div className="mt-1 text-lg font-semibold">{value}</div></div>)}</div>{(poolImportResult.warnings ?? []).length > 0 && <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{poolImportResult.warnings?.map((warning) => <p key={warning}>{warning === "comment_lines_skipped" ? "检测到以 # 开头的注释项，已跳过。" : warning}</p>)}</div>}<div><div className="mb-1 text-xs text-[var(--muted)]">规范化后的内容</div><pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--input)] p-3 font-mono text-xs">{poolImportResult.normalized_content ?? poolImportResult.content}</pre></div><div className="flex justify-end"><button className={buttonClass} onClick={() => setPoolImportResult(null)}>确认</button></div></div>}
-  </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览">
-    {run && previewCandidate && <><img className="max-h-[70vh] w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidate.id)} alt="放大候选预览" /><div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => createArtistCard(previewCandidate.id)} disabled={busy}>创建画师串 Card</button><button className={buttonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, previewCandidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div></>}
+  </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览" maxW="max-w-5xl">
+    {run && previewCandidate && <><div className="flex min-h-[50vh] items-center justify-center rounded-xl bg-black/15 p-2"><img className="max-h-[82vh] max-w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidate.id)} alt="放大候选预览" /></div><code className="mt-3 block break-all text-xs text-[var(--accent)]">{previewCandidate.artist_string}</code><div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => createArtistCard(previewCandidate.id)} disabled={busy}>创建画师串 Card</button><button className={buttonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, previewCandidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div></>}
   </Modal><Modal open={cardDialog !== null} onClose={() => setCardDialog(null)} title="创建画师串 Card">
     <p className="mb-3 text-sm text-[var(--muted)]">将当前 Artist String 保存为「画师串」Card；候选图会自动复制到普通图库，并设为该 Card 的演示图。</p>
     <input className={inputClass} value={cardDialog?.name ?? ""} onChange={(event) => setCardDialog((current) => current ? { ...current, name: event.target.value } : current)} placeholder="Card 名称" autoFocus />

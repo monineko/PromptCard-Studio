@@ -25,12 +25,14 @@ class StyleExploreServiceTest(unittest.TestCase):
             explore.POOL_BACKUPS_DIR,
             explore.RUNS_DIR,
             explore.POOLS_INDEX_FILE,
+            explore.DEFAULT_POOL_FILE,
         )
         explore.STYLE_EXPLORE_DIR = root / "style_explore"
         explore.POOLS_DIR = explore.STYLE_EXPLORE_DIR / "pools"
         explore.POOL_BACKUPS_DIR = explore.STYLE_EXPLORE_DIR / "pool_backups"
         explore.RUNS_DIR = explore.STYLE_EXPLORE_DIR / "runs"
         explore.POOLS_INDEX_FILE = explore.POOLS_DIR / "index.json"
+        explore.DEFAULT_POOL_FILE = explore.POOLS_DIR / f"{explore.DEFAULT_POOL_ID}.txt"
         self.old_batch_check = explore._assert_batch_idle
         explore._assert_batch_idle = lambda: None
         self.generate_gate = __import__("threading").Event()
@@ -92,6 +94,7 @@ class StyleExploreServiceTest(unittest.TestCase):
             explore.POOL_BACKUPS_DIR,
             explore.RUNS_DIR,
             explore.POOLS_INDEX_FILE,
+            explore.DEFAULT_POOL_FILE,
         ) = self.old_paths
         self.tmp.cleanup()
 
@@ -252,6 +255,41 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(resumed["candidates"][0]["prompt_snapshot"]["params"], {"steps": 20})
         self.assertEqual(resumed["candidates"][1]["prompt_snapshot"]["params"], {"steps": 31, "sampler": "new"})
         self.assertEqual(resumed["algorithm"], prepared["algorithm"])
+
+    def test_paused_task_resumes_pending_candidates_across_multiple_deep_rounds(self):
+        pool = explore.create_pool("池", "a\nb\nc\nd\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", {"steps": 20}, {"artist_count": 1})
+        explore.add_candidates(
+            run["id"],
+            [
+                {"id": "deep-old", "artist_string": "0.8::a::"},
+                {"id": "deep-new-a", "artist_string": "0.9::b::"},
+                {"id": "deep-new-b", "artist_string": "1.0::c::"},
+            ],
+        )
+        record = explore._load_run(run["id"])
+        record["status"] = "paused"
+        record["rounds"] = [
+            {"id": "round-old", "number": 1, "phase": "deep", "status": "pending", "candidate_ids": ["deep-old"]},
+            {"id": "round-new", "number": 2, "phase": "deep", "status": "pending", "candidate_ids": ["deep-new-a", "deep-new-b"]},
+        ]
+        for candidate in record["candidates"]:
+            candidate["round_id"] = "round-old" if candidate["id"] == "deep-old" else "round-new"
+            candidate["prompt_snapshot"] = {"positive": "base", "negative": "neg", "params": {"steps": 20}}
+        explore._save_run(record)
+
+        self.generate_gate.set()
+        explore.resume_run(run["id"], {"steps": 28})
+        for _ in range(100):
+            current = explore.get_run(run["id"])
+            if current["status"] == "generated":
+                break
+            time.sleep(0.02)
+
+        self.assertEqual(current["status"], "generated")
+        self.assertEqual([item["generation"]["status"] for item in current["candidates"]], ["done", "done", "done"])
+        self.assertEqual([item["status"] for item in current["rounds"]], ["generated", "generated"])
+        self.assertTrue(all(item["prompt_snapshot"]["params"] == {"steps": 28} for item in current["candidates"]))
 
     def test_restart_recovery_pauses_run_and_requeues_generating_candidate_preserving_done(self):
         pool = explore.create_pool("池", "a\nb\nc\n")
@@ -520,7 +558,7 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(deep_run["status"], "draft")
         self.assertEqual(deep_run["deep"]["parent_sets"][0]["used_round_ids"], [deep_round["id"]])
 
-    def test_deep_parents_only_accept_treasure_and_current_pool_artist_ids(self):
+    def test_deep_candidate_parents_require_treasure_but_custom_strings_may_use_external_ids(self):
         pool = explore.create_pool("深度池", "a\nb\nc\n")
         run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
         added = explore.add_candidates(run["id"], [{"id": "plain", "artist_string": "0.8::a::"}])
@@ -531,8 +569,10 @@ class StyleExploreServiceTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "Treasure"):
             explore.set_deep_parent_set(run["id"], ["plain"], [])
-        with self.assertRaisesRegex(ValueError, "ArtistPool"):
-            explore.set_deep_parent_set(run["id"], [], ["0.8::outside::"])
+        custom = explore.set_deep_parent_set(run["id"], [], ["0.8::outside::"])
+        parent = custom["deep"]["parent_sets"][0]["parents"][0]
+        self.assertEqual(parent["source"], "custom")
+        self.assertEqual(parent["artist_string"], "0.8::outside::")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ const DEEP_REVIEW_CHOICES: ReviewChoice[] = [
 ];
 
 const HELP: Record<string, { title: string; text: string }> = {
-  parents: { title: "当前父本集", text: "父本是 Artist String，不是图片本身。Treasure 图片仅作为代表和筛选依据；自定义串没有代表图也可参与。" },
+  parents: { title: "当前父本集", text: "父本是 Artist String，不是图片本身。Treasure 图片仅作为代表和筛选依据；自定义串没有代表图也可参与，并允许包含当前 ArtistPool 之外的 ID。后代可以继承这些 ID，但算法新增、替换和随机注入的 ID 仍来自当前池子。" },
   preference: { title: "可选偏好排序", text: "不排序时所有父本等权。排序只影响交叉和变异时的抽取概率，不会让低偏好父本完全失去产生后代的机会。" },
   suggestion: { title: "建议出图数", text: "系统按父本数给出建议：通常为 4 × 父本数后取最接近的 5，最低为 10；下一轮建议数为 sqrt(出图数) 并限制在 3 到 10。所有数值都可由你覆盖。" },
   lineage: { title: "纵向家系图", text: "每张深度候选会保存父本和操作记录。这里按时间从上到下显示基础探索、父本集和深度轮次；审美分支不属于本阶段。" },
@@ -62,6 +62,7 @@ export function StyleExploreDeepExplorer({
   params,
   algorithm,
   onRunChange,
+  onPreviewCandidate,
   notify,
 }: {
   run: StyleExploreRun;
@@ -70,6 +71,7 @@ export function StyleExploreDeepExplorer({
   params: Record<string, unknown>;
   algorithm: Record<string, unknown>;
   onRunChange: (run: StyleExploreRun) => void;
+  onPreviewCandidate: (candidateId: string) => void;
   notify: (message: string, kind?: "ok" | "err") => void;
 }) {
   const deep = deepState(run);
@@ -99,12 +101,18 @@ export function StyleExploreDeepExplorer({
   }, [activeParentSet, choosingParents, selectedTreasureIds.size, treasures]);
 
   useEffect(() => {
-    if (!selectedRoundId && rounds.length) setSelectedRoundId(rounds[rounds.length - 1].id);
-  }, [rounds, selectedRoundId]);
+    if (!rounds.some((round) => round.id === selectedRoundId)) setSelectedRoundId(rounds[rounds.length - 1]?.id ?? null);
+  }, [run.id, rounds, selectedRoundId]);
 
   const selectedRound = rounds.find((round) => round.id === selectedRoundId) ?? null;
   const selectedRoundCandidates = useMemo(() => run.candidates.filter((candidate) => candidate.round_id === selectedRound?.id || selectedRound?.candidate_ids?.includes(candidate.id)), [run.candidates, selectedRound]);
   const unreviewedRoundCandidates = selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done" && !candidate.review.label);
+  const roundDoneCount = selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done").length;
+  const roundFailedCount = selectedRoundCandidates.filter((candidate) => candidate.generation.status === "failed").length;
+  const roundProgress = selectedRoundCandidates.length ? Math.round((roundDoneCount / selectedRoundCandidates.length) * 100) : 0;
+  const taskPendingCount = run.candidates.filter((candidate) => ["pending", "generating"].includes(candidate.generation.status)).length;
+  const taskDoneCount = run.candidates.filter((candidate) => candidate.generation.status === "done").length;
+  const taskProgress = run.candidates.length ? Math.round((taskDoneCount / run.candidates.length) * 100) : 0;
   const pairCandidates = activeParentSet ? buildPairs(activeParentSet.parents) : [];
   const currentPair = pairCandidates[pairIndex] ?? null;
 
@@ -164,13 +172,14 @@ export function StyleExploreDeepExplorer({
         params,
         algorithm,
       });
+      const latestRound = [...(next.rounds ?? [])].reverse().find((round) => round.phase === "deep");
+      setSelectedRoundId(latestRound?.id ?? null);
       notify(`已创建深度轮次，建议从 ${suggestedNextParentCount(targetCount)} 个候选中确认下一轮父本`);
       return next;
     });
   };
 
   const controlRound = (action: "start" | "pause" | "resume" | "retry") => {
-    if (!selectedRound) return;
     void act(async () => {
       const next = action === "start" ? await api.styleExploreStartRun(run.id)
         : action === "pause" ? await api.styleExplorePauseRun(run.id)
@@ -196,7 +205,7 @@ export function StyleExploreDeepExplorer({
     </div>
 
     {(!activeParentSet || choosingParents) && <div className="mt-5 space-y-4">
-      <Guide step={1}>先从本任务的 Treasure 选择代表图，或补充当前 ArtistPool 内 ID 组成的自定义 Artist String；这不会移动图片或影响既有 Treasure 档案。</Guide>
+      <Guide step={1}>先从本任务的 Treasure 选择代表图，或补充任意自定义 Artist String；池外 ID 可以继承到后代，而算法主动新增、替换和随机注入的 ID 仍来自当前 ArtistPool。这不会移动图片或影响既有 Treasure 档案。</Guide>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{treasures.map((candidate) => {
         const selected = selectedTreasureIds.has(candidate.id);
         return <button key={candidate.id} type="button" onClick={() => toggleTreasure(candidate.id)} className={`overflow-hidden rounded-xl border text-left transition-colors ${selected ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--border)] bg-[var(--input)]/30 hover:bg-[var(--hover)]"}`}><div className="relative aspect-[3/4] bg-[var(--hover)]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="Treasure 候选" loading="lazy" />{selected && <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-[var(--accent)] px-2 py-1 text-xs font-medium text-white"><Check size={12} />已选</span>}</div><code className="block max-h-14 overflow-hidden px-3 py-2 text-xs text-[var(--accent)]">{candidate.artist_string}</code></button>;
@@ -233,7 +242,14 @@ export function StyleExploreDeepExplorer({
       </div>
     </div>}
 
-    {selectedRound && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4"><div className="flex flex-wrap items-center gap-2"><div><h3 className="text-sm font-semibold">深度第 {rounds.findIndex((item) => item.id === selectedRound.id) + 1} 轮</h3><p className="mt-1 text-xs text-[var(--muted)]">{selectedRoundCandidates.length} 条候选 · 当前状态 {selectedRound.status}</p></div><div className="ml-auto flex flex-wrap gap-2">{run.status === "draft" && selectedRoundCandidates.some((candidate) => candidate.generation.status === "pending") && <button className={primaryButtonClass} onClick={() => controlRound("start")} disabled={busy}><Play size={14} />开始</button>}{run.status === "running" && <button className={buttonClass} onClick={() => controlRound("pause")} disabled={busy}><Pause size={14} />暂停</button>}{run.status === "paused" && selectedRoundCandidates.some((candidate) => candidate.generation.status === "pending") && <button className={primaryButtonClass} onClick={() => controlRound("resume")} disabled={busy}><Play size={14} />继续</button>}{selectedRoundCandidates.some((candidate) => candidate.generation.status === "failed") && <button className={buttonClass} onClick={() => controlRound("retry")} disabled={busy}>失败重试</button>}{unreviewedRoundCandidates.length > 0 && !selectedRoundCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)) && <button className={buttonClass} onClick={() => setReviewingRoundId(selectedRound.id)} disabled={busy}><ArrowDown size={14} />按轮筛选</button>}</div></div><div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done").slice(0, 8).map((candidate) => <div key={candidate.id} className="overflow-hidden rounded-lg border border-[var(--border)]"><img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="深度候选" loading="lazy" /><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></div>)}</div></div>}
+    {selectedRound && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div><h3 className="text-sm font-semibold">深度第 {rounds.findIndex((item) => item.id === selectedRound.id) + 1} 轮</h3><p className="mt-1 text-xs text-[var(--muted)]">{selectedRoundCandidates.length} 条候选 · 已完成 {roundDoneCount} · 待生成 {selectedRoundCandidates.length - roundDoneCount - roundFailedCount}{roundFailedCount ? ` · 失败 ${roundFailedCount}` : ""}</p></div>
+        <div className="ml-auto flex flex-wrap gap-2">{run.status === "draft" && taskPendingCount > 0 && <button className={primaryButtonClass} onClick={() => controlRound("start")} disabled={busy}><Play size={14} />开始任务生成</button>}{run.status === "running" && <button className={buttonClass} onClick={() => controlRound("pause")} disabled={busy}><Pause size={14} />暂停任务生成</button>}{run.status === "paused" && taskPendingCount > 0 && <button className={primaryButtonClass} onClick={() => controlRound("resume")} disabled={busy}><Play size={14} />继续全部待生成</button>}{run.candidates.some((candidate) => candidate.generation.status === "failed") && <button className={buttonClass} onClick={() => controlRound("retry")} disabled={busy}>失败重试</button>}{unreviewedRoundCandidates.length > 0 && !selectedRoundCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)) && <button className={buttonClass} onClick={() => setReviewingRoundId(selectedRound.id)} disabled={busy}><ArrowDown size={14} />按轮筛选</button>}</div>
+      </div>
+      <div className="mt-3 space-y-2"><div className="flex justify-between text-xs text-[var(--muted)]"><span>本轮进度 {roundDoneCount}/{selectedRoundCandidates.length}</span><span>{roundProgress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[var(--hover)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-500" style={{ width: `${roundProgress}%` }} /></div><div className="flex justify-between text-[10px] text-[var(--muted)]"><span>任务总进度 {taskDoneCount}/{run.candidates.length}</span><span>{taskProgress}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[var(--hover)]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${taskProgress}%` }} /></div>{taskPendingCount > 0 && <p className="text-[10px] text-[var(--muted)]">任务使用同一个串行队列；继续后会把页面当前生图参数应用到所有尚未请求的候选，先补完较早轮次，再进入当前轮次。权重与候选串不会改变。</p>}</div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at).map((candidate) => <button type="button" key={candidate.id} className="overflow-hidden rounded-lg border border-[var(--border)] text-left transition-colors hover:border-[var(--accent)]" onClick={() => onPreviewCandidate(candidate.id)}><img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="深度候选" loading="lazy" /><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button>)}</div>
+    </div>}
 
     {pairwiseOpen && activeParentSet && <Modal open onClose={() => setPairwiseOpen(false)} title="可选偏好排序" wide>{currentPair ? <div className="space-y-4"><Guide step={2}>选择更符合本次目标的一方，也可跳过或选择都不合适。{pairIndex + 1} / {pairCandidates.length}</Guide><div className="grid gap-3 sm:grid-cols-2">{(["left", "right"] as const).map((side) => { const parent = currentPair[side]; const candidate = candidateForParent(run, parent); return <div key={side} className="overflow-hidden rounded-xl border border-[var(--border)]">{candidate ? <img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`${side} 父本代表图`} /> : <div className="flex aspect-[3/4] items-center justify-center bg-[var(--hover)] text-sm text-[var(--muted)]">自定义串 · 无代表图</div>}<code className="block max-h-24 overflow-auto p-3 text-xs text-[var(--accent)]">{parent.artist_string}</code><button className={`${side === "left" ? primaryButtonClass : buttonClass} m-3`} onClick={() => recordPreference(side)} disabled={busy}>{side === "left" ? <ArrowUp size={14} /> : <ArrowRight size={14} />}选择这一方</button></div>; })}</div><div className="flex flex-wrap justify-end gap-2"><button className={buttonClass} onClick={() => recordPreference("skip")} disabled={busy}>跳过</button><button className={buttonClass} onClick={() => recordPreference("neither")} disabled={busy}>都不合适</button><button className={buttonClass} onClick={() => setPairwiseOpen(false)}>结束排序</button></div></div> : <div className="space-y-3"><p className="text-sm text-[var(--muted)]">当前父本不足两条，或本次比较已完成。</p><button className={buttonClass} onClick={() => setPairwiseOpen(false)}>关闭</button></div>}</Modal>}
 

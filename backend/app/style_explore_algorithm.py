@@ -56,7 +56,11 @@ class BasicCandidate:
 
 @dataclass(frozen=True)
 class DeepParent:
-    """深度探索父本；偏好只影响抽样频率，不表达绝对评分。"""
+    """深度探索父本；既有 ID 可在当前 ArtistPool 之外。
+
+    偏好只影响抽样频率，不表达绝对评分。后代可继承父本的池外 ID，但
+    变异新增、替换和随机注入的 ID 仍严格取自本轮 ArtistPool。
+    """
 
     parent_id: str
     artist_weights: tuple[ArtistWeight, ...]
@@ -149,7 +153,7 @@ def generate_deep_candidates(
 
     validate_weight_config(config)
     pool = _validated_pool(artist_pool)
-    normalized_parents = _validated_deep_parents(parents, pool, config)
+    normalized_parents = _validated_deep_parents(parents, config)
     if candidate_count <= len(normalized_parents):
         raise ValueError("深度候选数量必须大于父本数，以保留随机注入名额")
     source = rng if rng is not None else random.Random()
@@ -176,14 +180,14 @@ def generate_deep_candidates(
         append_unique(lambda: _random_injection(pool, config, source))
 
     while len(results) < candidate_count:
-        if len(normalized_parents) > 1 and source.random() < 0.65:
-            append_unique(lambda: _crossover(normalized_parents, config, source))
-        else:
-            append_unique(
-                lambda: _local_mutation(
-                    _weighted_parent(normalized_parents, source), pool, config, source
-                )
+        def next_candidate() -> DeepCandidate:
+            if len(normalized_parents) > 1 and source.random() < 0.65:
+                return _crossover(normalized_parents, config, source)
+            return _local_mutation(
+                _weighted_parent(normalized_parents, source), pool, config, source
             )
+
+        append_unique(next_candidate)
     return results
 
 
@@ -362,11 +366,10 @@ def generate_basic_candidates(
 
 
 def _validated_deep_parents(
-    parents: Sequence[DeepParent], pool: Sequence[str], config: WeightSamplingConfig
+    parents: Sequence[DeepParent], config: WeightSamplingConfig
 ) -> list[DeepParent]:
     if not parents:
         raise ValueError("当前父本集不能为空")
-    pool_set = set(pool)
     normalized: list[DeepParent] = []
     parent_ids: set[str] = set()
     parent_keys: set[tuple[tuple[str, float], ...]] = set()
@@ -381,8 +384,6 @@ def _validated_deep_parents(
         ids = [item.artist_id.strip() for item in parent.artist_weights]
         if any(not artist_id for artist_id in ids) or len(ids) != len(set(ids)):
             raise ValueError("父本 Artist ID 不能为空或重复")
-        if any(artist_id not in pool_set for artist_id in ids):
-            raise ValueError("父本 Artist ID 必须来自当前 ArtistPool")
         if any(not math.isfinite(item.weight) for item in parent.artist_weights):
             raise ValueError("父本权重必须是有限数字")
         weights = tuple(
@@ -409,6 +410,7 @@ def _local_mutation(
 ) -> DeepCandidate:
     weights = list(parent.artist_weights)
     used = {item.artist_id for item in weights}
+    available_pool_ids = [artist_id for artist_id in pool if artist_id not in used]
     actions: list[str] = []
     if any(
         item.weight - WEIGHT_STEP >= config.lower - _EPSILON
@@ -416,9 +418,9 @@ def _local_mutation(
         for item in weights
     ):
         actions.append("weight")
-    if len(used) < len(pool):
+    if available_pool_ids:
         actions.append("replace")
-        if len(weights) < min(10, len(pool)):
+        if len(weights) < 10:
             actions.append("add")
     if len(weights) > 1:
         actions.append("remove")
@@ -449,7 +451,7 @@ def _local_mutation(
     elif action == "replace":
         index = rng.randrange(len(weights))
         before = weights[index]
-        artist_id = rng.choice([item for item in pool if item not in used])
+        artist_id = rng.choice(available_pool_ids)
         weights[index] = ArtistWeight(artist_id, before.weight)
         changes.extend(
             (
@@ -458,7 +460,7 @@ def _local_mutation(
             )
         )
     elif action == "add":
-        artist_id = rng.choice([item for item in pool if item not in used])
+        artist_id = rng.choice(available_pool_ids)
         weight = sample_weight(config, rng)
         weights.append(ArtistWeight(artist_id, weight))
         changes.append(WeightChange(artist_id, None, weight))
