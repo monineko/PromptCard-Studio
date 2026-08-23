@@ -658,6 +658,110 @@ def _deep_state(record: dict) -> dict:
     return deep
 
 
+def _append_parent_snapshot(
+    parents: list[dict],
+    normalized_keys: set[tuple[tuple[str, float], ...]],
+    *,
+    parent_id: str,
+    source: str,
+    artist_string: str,
+    candidate_id: str | None = None,
+    metadata: dict | None = None,
+) -> bool:
+    """规范化并去重一条父本；返回是否实际加入。"""
+
+    parsed = style_explore_algorithm.parse_artist_string(artist_string)
+    key = tuple(sorted((item.artist_id, item.weight) for item in parsed))
+    if key in normalized_keys:
+        return False
+    normalized_keys.add(key)
+    parents.append(
+        {
+            "id": parent_id,
+            "source": source,
+            "candidate_id": candidate_id,
+            "representative_candidate_id": candidate_id,
+            "artist_string": style_explore_algorithm.build_artist_string(parsed),
+            "preference": 1.0,
+            **dict(metadata or {}),
+        }
+    )
+    return True
+
+
+def _validate_parent_snapshot(record: dict, parents: list[dict]) -> None:
+    """通过算法接口提前验证父本集合，避免无效快照进入任务记录。"""
+
+    raw_algorithm = dict(record.get("algorithm") or {})
+    config = style_explore_algorithm.WeightSamplingConfig(
+        lower=float(raw_algorithm.get("lower", 0.1)),
+        upper=float(raw_algorithm.get("upper", 2.0)),
+        mode=float(raw_algorithm.get("mode", 0.8)),
+        left_dispersion=float(raw_algorithm.get("left_dispersion", 0.4)),
+        right_dispersion=float(raw_algorithm.get("right_dispersion", 0.4)),
+        soft_balance_strength=float(raw_algorithm.get("soft_balance_strength", 0.0)),
+    )
+    style_explore_algorithm.generate_deep_candidates(
+        [
+            style_explore_algorithm.DeepParent.from_artist_string(
+                item["id"], item["artist_string"], item["preference"]
+            )
+            for item in parents
+        ],
+        (record.get("pool") or {}).get("ids") or [],
+        len(parents) + 1,
+        config,
+        random.Random(0),
+    )
+
+
+def _activate_parent_snapshot(
+    record: dict,
+    parents: list[dict],
+    *,
+    generation: int,
+    branch: dict | None = None,
+) -> dict:
+    """把已校验父本固化为唯一活跃父本集。"""
+
+    deep = _deep_state(record)
+    now = _now()
+    for existing in deep["parent_sets"]:
+        if existing.get("status") == "active":
+            existing["status"] = "used"
+            existing["updated_at"] = now
+    parent_set = {
+        "id": uuid.uuid4().hex[:12],
+        "number": len(deep["parent_sets"]) + 1,
+        "generation": max(1, int(generation)),
+        "status": "active",
+        "created_at": now,
+        "updated_at": now,
+        "parents": parents,
+        "comparisons": [],
+        "suggested_target_count": style_explore_algorithm.suggest_deep_candidate_count(len(parents)),
+        "used_round_ids": [],
+    }
+    if branch:
+        parent_set["branch"] = dict(branch)
+    deep["parent_sets"].append(parent_set)
+    deep["active_parent_set_id"] = parent_set["id"]
+    return parent_set
+
+
+def _parent_set_round_ids(record: dict, parent_set: dict) -> list[str]:
+    """读取父本集已使用轮次，并为旧任务补充可推导的兼容视图。"""
+
+    stored = [str(item) for item in parent_set.get("used_round_ids") or [] if str(item)]
+    if stored:
+        return stored
+    return [
+        str(item.get("id"))
+        for item in record.get("rounds") or []
+        if item.get("phase") == "deep" and item.get("parent_set_id") == parent_set.get("id") and item.get("id")
+    ]
+
+
 def set_deep_parent_set(
     run_id: str,
     candidate_ids: list[str] | None = None,
@@ -677,23 +781,6 @@ def set_deep_parent_set(
         normalized_keys: set[tuple[tuple[str, float], ...]] = set()
         seen_candidate_ids: set[str] = set()
 
-        def add_parent(*, parent_id: str, source: str, artist_string: str, candidate_id: str | None = None) -> None:
-            parsed = style_explore_algorithm.parse_artist_string(artist_string)
-            key = tuple(sorted((item.artist_id, item.weight) for item in parsed))
-            if key in normalized_keys:
-                return
-            normalized_keys.add(key)
-            parents.append(
-                {
-                    "id": parent_id,
-                    "source": source,
-                    "candidate_id": candidate_id,
-                    "representative_candidate_id": candidate_id,
-                    "artist_string": style_explore_algorithm.build_artist_string(parsed),
-                    "preference": 1.0,
-                }
-            )
-
         for candidate_id in candidate_ids or []:
             clean_id = str(candidate_id or "").strip()
             if not clean_id or clean_id in seen_candidate_ids:
@@ -706,7 +793,9 @@ def set_deep_parent_set(
                 raise ValueError(f"候选尚未生成完成: {clean_id}")
             if (candidate.get("review") or {}).get("label") != "treasure":
                 raise ValueError("深度探索只能从本任务 Treasure 选择图片父本")
-            add_parent(
+            _append_parent_snapshot(
+                parents,
+                normalized_keys,
                 parent_id=clean_id,
                 source="candidate",
                 artist_string=str(candidate.get("artist_string") or ""),
@@ -717,7 +806,9 @@ def set_deep_parent_set(
             artist_string = str(raw or "").strip()
             if not artist_string:
                 continue
-            add_parent(
+            _append_parent_snapshot(
+                parents,
+                normalized_keys,
                 parent_id=f"custom-{uuid.uuid4().hex[:12]}",
                 source="custom",
                 artist_string=artist_string,
@@ -726,48 +817,133 @@ def set_deep_parent_set(
         if not parents:
             raise ValueError("请至少选择一张 Treasure 或输入一条 Artist String")
 
-        # 在确认阶段提前校验池成员、父本重复和权重范围，使错误不会拖到创建轮次时才出现。
-        raw_algorithm = dict(record.get("algorithm") or {})
-        config = style_explore_algorithm.WeightSamplingConfig(
-            lower=float(raw_algorithm.get("lower", 0.1)),
-            upper=float(raw_algorithm.get("upper", 2.0)),
-            mode=float(raw_algorithm.get("mode", 0.8)),
-            left_dispersion=float(raw_algorithm.get("left_dispersion", 0.4)),
-            right_dispersion=float(raw_algorithm.get("right_dispersion", 0.4)),
-            soft_balance_strength=float(raw_algorithm.get("soft_balance_strength", 0.0)),
-        )
-        style_explore_algorithm.generate_deep_candidates(
-            [
-                style_explore_algorithm.DeepParent.from_artist_string(
-                    item["id"], item["artist_string"], item["preference"]
-                )
-                for item in parents
-            ],
-            (record.get("pool") or {}).get("ids") or [],
-            len(parents) + 1,
-            config,
-            random.Random(0),
-        )
-
+        _validate_parent_snapshot(record, parents)
         deep = _deep_state(record)
-        now = _now()
-        for existing in deep["parent_sets"]:
-            if existing.get("status") == "active":
-                existing["status"] = "used"
-                existing["updated_at"] = now
-        parent_set = {
+        generation = max(
+            [
+                int(item.get("generation") or item.get("number") or 2)
+                for item in record.get("rounds") or []
+                if item.get("phase") == "deep"
+            ],
+            default=1,
+        )
+        _activate_parent_snapshot(record, parents, generation=generation)
+        _save_run(record)
+        return _full_run(record)
+
+
+def create_aesthetic_branch(
+    run_id: str,
+    source_round_id: str,
+    name: str,
+    candidate_ids: list[str] | None = None,
+) -> dict:
+    """把某代选中的优秀子代与该代父本回交，固化为下一代父本集。"""
+
+    branch_name = str(name or "").strip()
+    if not branch_name:
+        raise ValueError("请填写审美分支名称")
+    if len(branch_name) > 40:
+        raise ValueError("审美分支名称不能超过 40 个字符")
+    selected_ids = list(dict.fromkeys(str(item or "").strip() for item in candidate_ids or [] if str(item or "").strip()))
+    if not selected_ids:
+        raise ValueError("请至少挑选一张符合本分支的优秀子代")
+
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再添加审美分支")
+        if record.get("archived_at") or record.get("status") == "cancelled":
+            raise ValueError("已归档或已结束的任务不能添加审美分支")
+        source_round = next(
+            (
+                item for item in record.get("rounds") or []
+                if item.get("id") == source_round_id and item.get("phase") == "deep"
+            ),
+            None,
+        )
+        if source_round is None:
+            raise FileNotFoundError(f"深度探索轮次不存在: {source_round_id}")
+        deep = _deep_state(record)
+        if any(
+            (item.get("branch") or {}).get("source_round_id") == source_round_id
+            for item in deep["parent_sets"]
+        ):
+            raise ValueError("这一代已经添加过审美分支")
+        if source_round.get("parent_set_id") != deep.get("active_parent_set_id"):
+            raise ValueError("只能从当前最新一代添加审美分支")
+        source_parent_set = next(
+            (item for item in deep["parent_sets"] if item.get("id") == source_round.get("parent_set_id")),
+            None,
+        )
+        if source_parent_set is None:
+            raise ValueError("这一代缺少可回交的父本集记录")
+        used_round_ids = _parent_set_round_ids(record, source_parent_set)
+        if used_round_ids and used_round_ids[-1] != source_round_id:
+            raise ValueError("只能从当前最新一代添加审美分支")
+
+        by_id = {item.get("id"): item for item in record.get("candidates") or []}
+        source_candidates = [
+            by_id.get(candidate_id) for candidate_id in source_round.get("candidate_ids") or []
+        ]
+        if any(item is None for item in source_candidates):
+            raise ValueError("这一代的候选记录不完整，无法建立审美分支")
+        if any(
+            item is not None and (item.get("generation") or {}).get("status") in {"pending", "generating"}
+            for item in source_candidates
+        ):
+            raise ValueError("请等待这一代生成完成后再添加审美分支")
+        selected: list[dict] = []
+        for candidate_id in selected_ids:
+            candidate = by_id.get(candidate_id)
+            if candidate is None:
+                raise FileNotFoundError(f"候选不存在: {candidate_id}")
+            if candidate.get("round_id") != source_round_id:
+                raise ValueError("审美分支只能挑选当前代的子代")
+            generation = candidate.get("generation") or {}
+            if generation.get("status") != "done" or not generation.get("path") or generation.get("deleted_at"):
+                raise ValueError("审美分支只能挑选已生成且未删除的子代")
+            selected.append(candidate)
+
+        parents: list[dict] = []
+        normalized_keys: set[tuple[tuple[str, float], ...]] = set()
+        for inherited in source_parent_set.get("parents") or []:
+            _append_parent_snapshot(
+                parents,
+                normalized_keys,
+                parent_id=str(inherited.get("id")),
+                source=str(inherited.get("source") or "custom"),
+                artist_string=str(inherited.get("artist_string") or ""),
+                candidate_id=inherited.get("representative_candidate_id") or inherited.get("candidate_id"),
+            )
+        inherited_count = len(parents)
+        for candidate in selected:
+            _append_parent_snapshot(
+                parents,
+                normalized_keys,
+                parent_id=str(candidate.get("id")),
+                source="candidate",
+                artist_string=str(candidate.get("artist_string") or ""),
+                candidate_id=str(candidate.get("id")),
+                metadata={"source_round_id": source_round_id},
+            )
+        if len(parents) == inherited_count:
+            raise ValueError("挑选的子代与当前父本重复，请重新选择")
+
+        _validate_parent_snapshot(record, parents)
+        source_generation = int(
+            source_round.get("generation")
+            or int(source_parent_set.get("generation") or source_parent_set.get("number") or 1) + 1
+        )
+        branch = {
             "id": uuid.uuid4().hex[:12],
-            "number": len(deep["parent_sets"]) + 1,
-            "status": "active",
-            "created_at": now,
-            "updated_at": now,
-            "parents": parents,
-            "comparisons": [],
-            "suggested_target_count": style_explore_algorithm.suggest_deep_candidate_count(len(parents)),
-            "used_round_ids": [],
+            "name": branch_name,
+            "source_round_id": source_round_id,
+            "source_parent_set_id": source_parent_set["id"],
+            "selected_candidate_ids": selected_ids,
+            "created_at": _now(),
         }
-        deep["parent_sets"].append(parent_set)
-        deep["active_parent_set_id"] = parent_set["id"]
+        _activate_parent_snapshot(record, parents, generation=source_generation, branch=branch)
         _save_run(record)
         return _full_run(record)
 
@@ -795,6 +971,8 @@ def record_deep_preference(
         )
         if parent_set is None:
             raise FileNotFoundError(f"父本集不存在: {parent_set_id}")
+        if _parent_set_round_ids(record, parent_set):
+            raise ValueError("该父本集已经生成候选，不能再修改两两偏好")
         parents = {item.get("id"): item for item in parent_set.get("parents") or []}
         if left_parent_id not in parents or right_parent_id not in parents:
             raise ValueError("偏好比较包含不属于当前父本集的项目")
@@ -826,6 +1004,7 @@ def append_deep_round(
     negative: str,
     params: dict | None = None,
     algorithm: dict | None = None,
+    parent_set_id: str | None = None,
 ) -> dict:
     """用当前父本集生成一轮带谱系的候选，并复用现有串行生图 worker。"""
 
@@ -838,11 +1017,14 @@ def append_deep_round(
         if record.get("archived_at") or record.get("status") == "cancelled":
             raise ValueError("已归档或已结束的任务不能创建深度轮次")
         deep = _deep_state(record)
+        requested_parent_set_id = str(parent_set_id or deep.get("active_parent_set_id") or "")
+        if requested_parent_set_id != str(deep.get("active_parent_set_id") or ""):
+            raise ValueError("只能为当前待生成的一代创建深度候选")
         parent_set = next(
             (
                 item
                 for item in deep["parent_sets"]
-                if item.get("id") == deep.get("active_parent_set_id")
+                if item.get("id") == requested_parent_set_id
             ),
             None,
         )
@@ -922,6 +1104,7 @@ def append_deep_round(
             "target_count": int(target_count),
             "random_seed": seed,
             "parent_set_id": parent_set["id"],
+            "generation": int(parent_set.get("generation") or parent_set.get("number") or 1) + 1,
             "suggested_next_parent_count": style_explore_algorithm.suggest_next_parent_count(int(target_count)),
             "prompt_snapshot": snapshot,
             "algorithm": normalized_algorithm,

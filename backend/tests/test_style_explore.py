@@ -557,6 +557,14 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertTrue(any(candidate["lineage"]["parent_ids"] for candidate in deep_candidates))
         self.assertEqual(deep_run["status"], "draft")
         self.assertEqual(deep_run["deep"]["parent_sets"][0]["used_round_ids"], [deep_round["id"]])
+        with self.assertRaisesRegex(ValueError, "生成候选"):
+            explore.record_deep_preference(
+                run["id"],
+                parent_set["id"],
+                parent_set["parents"][0]["id"],
+                parent_set["parents"][1]["id"],
+                "right",
+            )
 
     def test_deep_candidate_parents_require_treasure_but_custom_strings_may_use_external_ids(self):
         pool = explore.create_pool("深度池", "a\nb\nc\n")
@@ -573,6 +581,144 @@ class StyleExploreServiceTest(unittest.TestCase):
         parent = custom["deep"]["parent_sets"][0]["parents"][0]
         self.assertEqual(parent["source"], "custom")
         self.assertEqual(parent["artist_string"], "0.8::outside::")
+
+    def test_aesthetic_branch_backcrosses_selected_children_with_source_parents(self):
+        pool = explore.create_pool("回交池", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
+        run = explore.create_run(
+            pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1, "random_seed": 7}
+        )
+        with_parents = explore.set_deep_parent_set(
+            run["id"], [], ["0.8::a::, 1.0::b::", "0.7::c::, 1.1::d::"]
+        )
+        first_parent_set = with_parents["deep"]["parent_sets"][0]
+        self.assertEqual(first_parent_set["generation"], 1)
+        preferred = explore.record_deep_preference(
+            run["id"],
+            first_parent_set["id"],
+            first_parent_set["parents"][0]["id"],
+            first_parent_set["parents"][1]["id"],
+            "left",
+        )
+        first_parent_set = preferred["deep"]["parent_sets"][0]
+        self.assertEqual(first_parent_set["parents"][0]["preference"], 2.0)
+
+        generated = explore.append_deep_round(
+            run["id"], 5, "deep", "negative", {"steps": 28}, {"random_seed": 20260824}
+        )
+        second_generation = generated["rounds"][-1]
+        self.assertEqual(second_generation["generation"], 2)
+        all_children = [
+            item for item in generated["candidates"] if item.get("round_id") == second_generation["id"]
+        ]
+        children = all_children[:2]
+        with self.assertRaisesRegex(ValueError, "生成完成"):
+            explore.create_aesthetic_branch(
+                run["id"], second_generation["id"], "过早分支", [children[0]["id"]]
+            )
+        for child in all_children:
+            path = explore._active_dir(run["id"]) / f"{child['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], child["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+        explore.apply_candidate_reviews(
+            run["id"], [{"candidate_id": children[0]["id"], "tag": "special"}]
+        )
+        before_branch = {
+            item["id"]: (item["review"]["label"], item["generation"]["path"])
+            for item in explore.get_run(run["id"])["candidates"]
+            if item["id"] in {child["id"] for child in children}
+        }
+
+        branched = explore.create_aesthetic_branch(
+            run["id"], second_generation["id"], "柔和光影", [item["id"] for item in children]
+        )
+        next_parent_set = branched["deep"]["parent_sets"][-1]
+        self.assertEqual(next_parent_set["generation"], 2)
+        self.assertEqual(next_parent_set["branch"]["name"], "柔和光影")
+        self.assertEqual(next_parent_set["branch"]["source_round_id"], second_generation["id"])
+        self.assertEqual(next_parent_set["branch"]["source_parent_set_id"], first_parent_set["id"])
+        self.assertEqual(next_parent_set["branch"]["selected_candidate_ids"], [item["id"] for item in children])
+        self.assertEqual(len(next_parent_set["parents"]), len(first_parent_set["parents"]) + len(children))
+        self.assertTrue(all(item["preference"] == 1.0 for item in next_parent_set["parents"]))
+        next_parent_ids = {item["id"] for item in next_parent_set["parents"]}
+        self.assertTrue({item["id"] for item in first_parent_set["parents"]}.issubset(next_parent_ids))
+        self.assertTrue({item["id"] for item in children}.issubset(next_parent_ids))
+        refreshed_children = {
+            item["id"]: item for item in branched["candidates"] if item["id"] in {child["id"] for child in children}
+        }
+        self.assertEqual(
+            {item_id: (item["review"]["label"], item["generation"]["path"]) for item_id, item in refreshed_children.items()},
+            before_branch,
+        )
+        self.assertTrue(all(Path(item["generation"]["path"]).is_file() for item in refreshed_children.values()))
+
+        with self.assertRaisesRegex(ValueError, "已经添加"):
+            explore.create_aesthetic_branch(
+                run["id"], second_generation["id"], "重复分支", [children[0]["id"]]
+            )
+
+        third_generation_run = explore.append_deep_round(
+            run["id"], 5, "deep", "negative", {"steps": 28}, {"random_seed": 20260825}
+        )
+        third_generation = third_generation_run["rounds"][-1]
+        self.assertEqual(third_generation["generation"], 3)
+        self.assertEqual(third_generation["parent_set_id"], next_parent_set["id"])
+
+        third_children = [
+            item for item in third_generation_run["candidates"] if item.get("round_id") == third_generation["id"]
+        ]
+        for child in third_children:
+            path = explore._active_dir(run["id"]) / f"{child['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], child["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+        fourth_parent_run = explore.create_aesthetic_branch(
+            run["id"], third_generation["id"], "清透皮肤", [third_children[0]["id"]]
+        )
+        fourth_parent_set = fourth_parent_run["deep"]["parent_sets"][-1]
+        self.assertEqual(fourth_parent_set["generation"], 3)
+        self.assertEqual(fourth_parent_set["branch"]["source_parent_set_id"], next_parent_set["id"])
+        self.assertTrue(next_parent_ids.issubset({item["id"] for item in fourth_parent_set["parents"]}))
+
+    def test_aesthetic_branch_rejects_historical_round_and_cross_round_children(self):
+        pool = explore.create_pool("线性池", "a\nb\nc\nd\ne\nf\n")
+        run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
+        explore.set_deep_parent_set(run["id"], [], ["0.8::a::", "1.0::b::"])
+        first = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", algorithm={"random_seed": 101}
+        )["rounds"][-1]
+        second_run = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", algorithm={"random_seed": 102}
+        )
+        second = second_run["rounds"][-1]
+        candidates_by_round = {
+            round_id: [item for item in second_run["candidates"] if item.get("round_id") == round_id]
+            for round_id in (first["id"], second["id"])
+        }
+        for candidates in candidates_by_round.values():
+            for child in candidates:
+                path = explore._active_dir(run["id"]) / f"{child['id']}.png"
+                path.write_bytes(b"fake")
+                explore.update_candidate(
+                    run["id"], child["id"], {"generation": {"status": "done", "path": str(path)}}
+                )
+        legacy = explore._load_run(run["id"])
+        legacy["deep"]["parent_sets"][0].pop("used_round_ids", None)
+        legacy["deep"]["parent_sets"][0].pop("generation", None)
+        for round_record in legacy["rounds"]:
+            round_record.pop("generation", None)
+        explore._save_run(legacy)
+
+        with self.assertRaisesRegex(ValueError, "最新一代"):
+            explore.create_aesthetic_branch(
+                run["id"], first["id"], "历史分支", [candidates_by_round[first["id"]][0]["id"]]
+            )
+        with self.assertRaisesRegex(ValueError, "当前代"):
+            explore.create_aesthetic_branch(
+                run["id"], second["id"], "跨轮误选", [candidates_by_round[first["id"]][0]["id"]]
+            )
 
 
 if __name__ == "__main__":

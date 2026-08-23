@@ -186,6 +186,12 @@ class StyleExploreDeepParentsIn(BaseModel):
     custom_artist_strings: list[str] = []
 
 
+class StyleExploreAestheticBranchIn(BaseModel):
+    source_round_id: str = ""
+    name: str = ""
+    candidate_ids: list[str] = []
+
+
 class StyleExploreDeepPreferenceIn(BaseModel):
     left_parent_id: str = ""
     right_parent_id: str = ""
@@ -193,6 +199,7 @@ class StyleExploreDeepPreferenceIn(BaseModel):
 
 
 class StyleExploreDeepRoundIn(BaseModel):
+    parent_set_id: Optional[str] = None
     target_count: int = 10
     positive: str = ""
     negative: str = ""

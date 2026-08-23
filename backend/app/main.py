@@ -65,6 +65,7 @@ from .schemas import (
     StyleExploreResumeIn,
     StyleExploreReviewsIn,
     StyleExploreBasicRoundIn,
+    StyleExploreAestheticBranchIn,
     StyleExploreDeepParentsIn,
     StyleExploreDeepPreferenceIn,
     StyleExploreDeepRoundIn,
@@ -753,6 +754,21 @@ def style_explore_deep_parents_set(run_id: str, body: StyleExploreDeepParentsIn)
         raise _as_http(e, 400)
 
 
+@app.post("/api/style-explore/runs/{run_id}/deep/branches")
+def style_explore_aesthetic_branch_create(run_id: str, body: StyleExploreAestheticBranchIn):
+    try:
+        return style_explore_service.create_aesthetic_branch(
+            run_id,
+            body.source_round_id,
+            body.name,
+            body.candidate_ids,
+        )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
 @app.post("/api/style-explore/runs/{run_id}/deep/parents/{parent_set_id}/preferences")
 def style_explore_deep_preference_record(
     run_id: str,
@@ -783,6 +799,7 @@ def style_explore_deep_round_append(run_id: str, body: StyleExploreDeepRoundIn):
             body.negative,
             body.params,
             body.algorithm,
+            body.parent_set_id,
         )
     except FileNotFoundError as e:
         raise _as_http(e, 404)

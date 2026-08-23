@@ -254,7 +254,9 @@ export const api = {
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/parents`, { method: "PUT", body: JSON.stringify(payload) }),
   styleExploreRecordDeepPreference: (runId: string, parentSetId: string, payload: { left_parent_id: string; right_parent_id: string; result: "left" | "right" | "neither" | "skip" }) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/parents/${encodeURIComponent(parentSetId)}/preferences`, { method: "POST", body: JSON.stringify(payload) }),
-  styleExploreAppendDeepRound: (runId: string, payload: Omit<StyleExploreRunCreatePayload, "pool_id" | "name" | "phase">) =>
+  styleExploreCreateDeepBranch: (runId: string, payload: { source_round_id: string; name: string; candidate_ids: string[] }) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/branches`, { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreAppendDeepRound: (runId: string, payload: Omit<StyleExploreRunCreatePayload, "pool_id" | "name" | "phase"> & { parent_set_id?: string }) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/rounds/deep`, { method: "POST", body: JSON.stringify(payload) }),
   styleExploreRetryFailed: (runId: string) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/retry-failed`, { method: "POST" }),

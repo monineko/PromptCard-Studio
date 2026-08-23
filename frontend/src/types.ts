@@ -432,6 +432,14 @@ export type StyleExploreDeepPreference = {
   created_at: string;
 };
 
+export type StyleExploreDeepBranch = {
+  id: string;
+  name: string;
+  source_round_id: string;
+  source_parent_set_id: string;
+  selected_candidate_ids: string[];
+};
+
 export type StyleExploreDeepParentSet = {
   id: string;
   number: number;
@@ -442,6 +450,8 @@ export type StyleExploreDeepParentSet = {
   comparisons: StyleExploreDeepPreference[];
   suggested_target_count: number;
   used_round_ids?: string[];
+  generation?: number;
+  branch?: StyleExploreDeepBranch;
 };
 
 export type StyleExploreRound = {
@@ -455,6 +465,7 @@ export type StyleExploreRound = {
   parent_set_id?: string;
   suggested_next_parent_count?: number;
   candidate_ids?: string[];
+  generation?: number;
 };
 
 export type StyleExploreDeepState = {
