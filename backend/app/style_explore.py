@@ -444,6 +444,8 @@ def _public_run(record: dict) -> dict:
 
 def _full_run(record: dict) -> dict:
     """完整任务详情同时携带列表视图需要的统计字段。"""
+    if record.get("deep") or any(item.get("phase") == "deep" for item in record.get("rounds") or []):
+        _deep_state(record)
     return {**record, **_public_run(record)}
 
 
@@ -650,11 +652,72 @@ def append_basic_round(
 
 
 def _deep_state(record: dict) -> dict:
-    """返回任务内唯一的深度探索状态容器，并兼容旧任务的首次访问。"""
+    """返回深度探索状态，并把旧的单链数据投影为一个家族。"""
 
     deep = record.setdefault("deep", {})
     deep.setdefault("active_parent_set_id", None)
     deep.setdefault("parent_sets", [])
+    families = deep.setdefault("families", [])
+    parent_sets = deep["parent_sets"]
+    if parent_sets and not families:
+        now = str(parent_sets[0].get("created_at") or record.get("created_at") or _now())
+        family_id = uuid.uuid5(
+            uuid.NAMESPACE_URL, f"style-explore:{record.get('id')}:family:1"
+        ).hex[:12]
+        root = next((item for item in parent_sets if not item.get("branch")), parent_sets[0])
+        active_parent_set_id = str(
+            deep.get("active_parent_set_id")
+            or next((item.get("id") for item in reversed(parent_sets) if item.get("status") == "active"), "")
+            or parent_sets[-1].get("id")
+        )
+        families.append(
+            {
+                "id": family_id,
+                "number": 1,
+                "created_at": now,
+                "updated_at": str(parent_sets[-1].get("updated_at") or now),
+                "root_parent_set_id": root.get("id"),
+                "active_parent_set_id": active_parent_set_id,
+            }
+        )
+        deep["active_family_id"] = family_id
+        deep["active_parent_set_id"] = active_parent_set_id
+        for parent_set in parent_sets:
+            parent_set.setdefault("family_id", family_id)
+        by_parent_set = {item.get("id"): item for item in parent_sets}
+        for round_record in record.get("rounds") or []:
+            parent_set = by_parent_set.get(round_record.get("parent_set_id"))
+            if round_record.get("phase") == "deep" and parent_set:
+                round_record.setdefault("family_id", parent_set.get("family_id"))
+    deep.setdefault("active_family_id", families[-1].get("id") if families else None)
+    by_family = {item.get("id"): item for item in families}
+    by_parent_set = {item.get("id"): item for item in parent_sets}
+    for family in families:
+        family_sets = sorted(
+            (item for item in parent_sets if item.get("family_id") == family.get("id")),
+            key=lambda item: int(item.get("number") or 0),
+        )
+        for index, parent_set in enumerate(family_sets):
+            if parent_set.get("generation") is None:
+                source_parent = by_parent_set.get((parent_set.get("branch") or {}).get("source_parent_set_id"))
+                parent_set["generation"] = (
+                    int(source_parent.get("generation") or 1) + 1
+                    if source_parent
+                    else 1 if index == 0 else int(family_sets[index - 1].get("generation") or index) + 1
+                )
+    for parent_set in parent_sets:
+        family = by_family.get(parent_set.get("family_id"))
+        if family and parent_set.get("id") == family.get("active_parent_set_id"):
+            parent_set["status"] = "active"
+    sibling_counts: dict[str, int] = {}
+    for round_record in record.get("rounds") or []:
+        parent_set = by_parent_set.get(round_record.get("parent_set_id"))
+        if round_record.get("phase") == "deep" and parent_set:
+            round_record.setdefault("family_id", parent_set.get("family_id"))
+            round_record.setdefault("generation", int(parent_set.get("generation") or 1) + 1)
+            parent_set_id = str(parent_set.get("id") or "")
+            sibling_counts[parent_set_id] = sibling_counts.get(parent_set_id, 0) + 1
+            round_record.setdefault("sibling_index", sibling_counts[parent_set_id])
     return deep
 
 
@@ -719,20 +782,22 @@ def _activate_parent_snapshot(
     record: dict,
     parents: list[dict],
     *,
+    family_id: str,
     generation: int,
     branch: dict | None = None,
 ) -> dict:
-    """把已校验父本固化为唯一活跃父本集。"""
+    """把已校验父本固化为指定家族的活跃父本集。"""
 
     deep = _deep_state(record)
     now = _now()
     for existing in deep["parent_sets"]:
-        if existing.get("status") == "active":
+        if existing.get("family_id") == family_id and existing.get("status") == "active":
             existing["status"] = "used"
             existing["updated_at"] = now
     parent_set = {
         "id": uuid.uuid4().hex[:12],
         "number": len(deep["parent_sets"]) + 1,
+        "family_id": family_id,
         "generation": max(1, int(generation)),
         "status": "active",
         "created_at": now,
@@ -745,8 +810,38 @@ def _activate_parent_snapshot(
     if branch:
         parent_set["branch"] = dict(branch)
     deep["parent_sets"].append(parent_set)
+    family = next((item for item in deep["families"] if item.get("id") == family_id), None)
+    if family is None:
+        raise ValueError("深度探索家族不存在")
+    family["active_parent_set_id"] = parent_set["id"]
+    family["updated_at"] = now
+    deep["active_family_id"] = family_id
     deep["active_parent_set_id"] = parent_set["id"]
     return parent_set
+
+
+def _create_family(record: dict, parents: list[dict]) -> tuple[dict, dict]:
+    """以一份普通父本快照创建互不干扰的新家族。"""
+
+    deep = _deep_state(record)
+    now = _now()
+    family = {
+        "id": uuid.uuid4().hex[:12],
+        "number": len(deep["families"]) + 1,
+        "created_at": now,
+        "updated_at": now,
+        "root_parent_set_id": None,
+        "active_parent_set_id": None,
+    }
+    deep["families"].append(family)
+    parent_set = _activate_parent_snapshot(
+        record,
+        parents,
+        family_id=family["id"],
+        generation=1,
+    )
+    family["root_parent_set_id"] = parent_set["id"]
+    return family, parent_set
 
 
 def _parent_set_round_ids(record: dict, parent_set: dict) -> list[str]:
@@ -767,7 +862,7 @@ def set_deep_parent_set(
     candidate_ids: list[str] | None = None,
     custom_artist_strings: list[str] | None = None,
 ) -> dict:
-    """从本任务 Treasure 与自定义串建立一份不可变父本快照。"""
+    """从本任务 Treasure 与自定义串建立一个独立家族及其第一代父本。"""
 
     with _lock:
         record = _load_run(run_id)
@@ -818,16 +913,7 @@ def set_deep_parent_set(
             raise ValueError("请至少选择一张 Treasure 或输入一条 Artist String")
 
         _validate_parent_snapshot(record, parents)
-        deep = _deep_state(record)
-        generation = max(
-            [
-                int(item.get("generation") or item.get("number") or 2)
-                for item in record.get("rounds") or []
-                if item.get("phase") == "deep"
-            ],
-            default=1,
-        )
-        _activate_parent_snapshot(record, parents, generation=generation)
+        _create_family(record, parents)
         _save_run(record)
         return _full_run(record)
 
@@ -838,7 +924,7 @@ def create_aesthetic_branch(
     name: str,
     candidate_ids: list[str] | None = None,
 ) -> dict:
-    """把某代选中的优秀子代与该代父本回交，固化为下一代父本集。"""
+    """把某代优秀子代与本家族第一代父本回交，固化为下一代父本集。"""
 
     branch_name = str(name or "").strip()
     if not branch_name:
@@ -865,34 +951,43 @@ def create_aesthetic_branch(
         if source_round is None:
             raise FileNotFoundError(f"深度探索轮次不存在: {source_round_id}")
         deep = _deep_state(record)
-        if any(
-            (item.get("branch") or {}).get("source_round_id") == source_round_id
-            for item in deep["parent_sets"]
-        ):
-            raise ValueError("这一代已经添加过审美分支")
-        if source_round.get("parent_set_id") != deep.get("active_parent_set_id"):
-            raise ValueError("只能从当前最新一代添加审美分支")
         source_parent_set = next(
             (item for item in deep["parent_sets"] if item.get("id") == source_round.get("parent_set_id")),
             None,
         )
         if source_parent_set is None:
             raise ValueError("这一代缺少可回交的父本集记录")
-        used_round_ids = _parent_set_round_ids(record, source_parent_set)
-        if used_round_ids and used_round_ids[-1] != source_round_id:
-            raise ValueError("只能从当前最新一代添加审美分支")
+        family = next(
+            (item for item in deep["families"] if item.get("id") == source_parent_set.get("family_id")),
+            None,
+        )
+        if family is None:
+            raise ValueError("这一代缺少所属家族记录")
+        if any(
+            (item.get("branch") or {}).get("source_parent_set_id") == source_parent_set.get("id")
+            for item in deep["parent_sets"]
+        ):
+            raise ValueError("这一代已经添加过审美分支")
+        if source_parent_set.get("id") != family.get("active_parent_set_id"):
+            raise ValueError("只能从本家族当前最新一代添加审美分支")
+        sibling_round_ids = set(_parent_set_round_ids(record, source_parent_set))
+        if source_round_id not in sibling_round_ids:
+            raise ValueError("审美分支来源不属于本家族当前代")
 
         by_id = {item.get("id"): item for item in record.get("candidates") or []}
-        source_candidates = [
-            by_id.get(candidate_id) for candidate_id in source_round.get("candidate_ids") or []
+        generation_candidates = [
+            by_id.get(candidate_id)
+            for round_record in record.get("rounds") or []
+            if round_record.get("id") in sibling_round_ids
+            for candidate_id in round_record.get("candidate_ids") or []
         ]
-        if any(item is None for item in source_candidates):
+        if any(item is None for item in generation_candidates):
             raise ValueError("这一代的候选记录不完整，无法建立审美分支")
         if any(
             item is not None and (item.get("generation") or {}).get("status") in {"pending", "generating"}
-            for item in source_candidates
+            for item in generation_candidates
         ):
-            raise ValueError("请等待这一代生成完成后再添加审美分支")
+            raise ValueError("请等待这一代所有轮次生成完成后再添加审美分支")
         selected: list[dict] = []
         for candidate_id in selected_ids:
             candidate = by_id.get(candidate_id)
@@ -905,9 +1000,15 @@ def create_aesthetic_branch(
                 raise ValueError("审美分支只能挑选已生成且未删除的子代")
             selected.append(candidate)
 
+        root_parent_set = next(
+            (item for item in deep["parent_sets"] if item.get("id") == family.get("root_parent_set_id")),
+            None,
+        )
+        if root_parent_set is None:
+            raise ValueError("本家族第一代父本记录缺失，无法回交")
         parents: list[dict] = []
         normalized_keys: set[tuple[tuple[str, float], ...]] = set()
-        for inherited in source_parent_set.get("parents") or []:
+        for inherited in root_parent_set.get("parents") or []:
             _append_parent_snapshot(
                 parents,
                 normalized_keys,
@@ -940,10 +1041,18 @@ def create_aesthetic_branch(
             "name": branch_name,
             "source_round_id": source_round_id,
             "source_parent_set_id": source_parent_set["id"],
+            "root_parent_set_id": root_parent_set["id"],
+            "family_id": family["id"],
             "selected_candidate_ids": selected_ids,
             "created_at": _now(),
         }
-        _activate_parent_snapshot(record, parents, generation=source_generation, branch=branch)
+        _activate_parent_snapshot(
+            record,
+            parents,
+            family_id=family["id"],
+            generation=source_generation,
+            branch=branch,
+        )
         _save_run(record)
         return _full_run(record)
 
@@ -1006,7 +1115,7 @@ def append_deep_round(
     algorithm: dict | None = None,
     parent_set_id: str | None = None,
 ) -> dict:
-    """用当前父本集生成一轮带谱系的候选，并复用现有串行生图 worker。"""
+    """为某家族当前代新增一轮同辈候选，并复用现有串行生图 worker。"""
 
     if not 1 <= int(target_count) <= 1000:
         raise ValueError("目标生成数量需在 1~1000 之间")
@@ -1018,8 +1127,6 @@ def append_deep_round(
             raise ValueError("已归档或已结束的任务不能创建深度轮次")
         deep = _deep_state(record)
         requested_parent_set_id = str(parent_set_id or deep.get("active_parent_set_id") or "")
-        if requested_parent_set_id != str(deep.get("active_parent_set_id") or ""):
-            raise ValueError("只能为当前待生成的一代创建深度候选")
         parent_set = next(
             (
                 item
@@ -1030,6 +1137,14 @@ def append_deep_round(
         )
         if parent_set is None:
             raise ValueError("请先确认当前深度探索父本集")
+        family = next(
+            (item for item in deep["families"] if item.get("id") == parent_set.get("family_id")),
+            None,
+        )
+        if family is None:
+            raise ValueError("当前父本集缺少所属家族记录")
+        if parent_set.get("id") != family.get("active_parent_set_id"):
+            raise ValueError("只能为该家族当前最新一代新增候选")
         parents = parent_set.get("parents") or []
         if int(target_count) <= len(parents):
             raise ValueError("深度候选数量必须大于父本数，以保留变异与随机注入名额")
@@ -1083,6 +1198,8 @@ def append_deep_round(
                     "generation": {"status": "pending"},
                     "review": {"heart": False, "rating": None, "label": None, "preliminary_label": None},
                     "lineage": {
+                        "family_id": family["id"],
+                        "parent_set_id": parent_set["id"],
                         "parent_ids": list(generated_candidate.parent_ids),
                         "operation": generated_candidate.operation,
                         "operations": [generated_candidate.operation],
@@ -1104,7 +1221,9 @@ def append_deep_round(
             "target_count": int(target_count),
             "random_seed": seed,
             "parent_set_id": parent_set["id"],
+            "family_id": family["id"],
             "generation": int(parent_set.get("generation") or parent_set.get("number") or 1) + 1,
+            "sibling_index": len(_parent_set_round_ids(record, parent_set)) + 1,
             "suggested_next_parent_count": style_explore_algorithm.suggest_next_parent_count(int(target_count)),
             "prompt_snapshot": snapshot,
             "algorithm": normalized_algorithm,
@@ -1112,9 +1231,11 @@ def append_deep_round(
         }
         rounds.append(round_record)
         record.setdefault("candidates", []).extend(candidates)
-        parent_set["status"] = "used"
         parent_set.setdefault("used_round_ids", []).append(round_id)
         parent_set["updated_at"] = _now()
+        family["updated_at"] = parent_set["updated_at"]
+        deep["active_family_id"] = family["id"]
+        deep["active_parent_set_id"] = parent_set["id"]
         record["status"] = "draft"
         record["status_reason"] = None
         record["target_count"] = len(record["candidates"])

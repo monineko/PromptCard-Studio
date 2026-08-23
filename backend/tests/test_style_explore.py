@@ -582,7 +582,7 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(parent["source"], "custom")
         self.assertEqual(parent["artist_string"], "0.8::outside::")
 
-    def test_aesthetic_branch_backcrosses_selected_children_with_source_parents(self):
+    def test_aesthetic_branch_backcrosses_selected_children_with_family_root_parents(self):
         pool = explore.create_pool("回交池", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
         run = explore.create_run(
             pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1, "random_seed": 7}
@@ -680,9 +680,12 @@ class StyleExploreServiceTest(unittest.TestCase):
         fourth_parent_set = fourth_parent_run["deep"]["parent_sets"][-1]
         self.assertEqual(fourth_parent_set["generation"], 3)
         self.assertEqual(fourth_parent_set["branch"]["source_parent_set_id"], next_parent_set["id"])
-        self.assertTrue(next_parent_ids.issubset({item["id"] for item in fourth_parent_set["parents"]}))
+        fourth_parent_ids = {item["id"] for item in fourth_parent_set["parents"]}
+        self.assertTrue({item["id"] for item in first_parent_set["parents"]}.issubset(fourth_parent_ids))
+        self.assertIn(third_children[0]["id"], fourth_parent_ids)
+        self.assertFalse({item["id"] for item in children}.issubset(fourth_parent_ids))
 
-    def test_aesthetic_branch_rejects_historical_round_and_cross_round_children(self):
+    def test_same_generation_supports_sibling_rounds_and_one_branch(self):
         pool = explore.create_pool("线性池", "a\nb\nc\nd\ne\nf\n")
         run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
         explore.set_deep_parent_set(run["id"], [], ["0.8::a::", "1.0::b::"])
@@ -711,14 +714,83 @@ class StyleExploreServiceTest(unittest.TestCase):
             round_record.pop("generation", None)
         explore._save_run(legacy)
 
-        with self.assertRaisesRegex(ValueError, "最新一代"):
-            explore.create_aesthetic_branch(
-                run["id"], first["id"], "历史分支", [candidates_by_round[first["id"]][0]["id"]]
-            )
         with self.assertRaisesRegex(ValueError, "当前代"):
             explore.create_aesthetic_branch(
                 run["id"], second["id"], "跨轮误选", [candidates_by_round[first["id"]][0]["id"]]
             )
+        branched = explore.create_aesthetic_branch(
+            run["id"], first["id"], "同代首堆分支", [candidates_by_round[first["id"]][0]["id"]]
+        )
+        self.assertEqual(first["generation"], second["generation"])
+        self.assertEqual(first["sibling_index"], 1)
+        self.assertEqual(second["sibling_index"], 2)
+        self.assertEqual(first["family_id"], second["family_id"])
+        self.assertEqual(branched["deep"]["parent_sets"][-1]["branch"]["source_round_id"], first["id"])
+        with self.assertRaisesRegex(ValueError, "当前最新一代|已经添加"):
+            explore.create_aesthetic_branch(
+                run["id"], second["id"], "重复分支", [candidates_by_round[second["id"]][0]["id"]]
+            )
+
+    def test_ordinary_parent_sets_create_independent_families(self):
+        pool = explore.create_pool("家族池", "a\nb\nc\nd\ne\nf\n")
+        run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
+        first = explore.set_deep_parent_set(run["id"], [], ["0.8::a::", "1.0::b::"])
+        first_family = first["deep"]["families"][0]
+        first_root = first["deep"]["parent_sets"][0]
+        first_round = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=first_root["id"], algorithm={"random_seed": 1}
+        )["rounds"][-1]
+
+        second = explore.set_deep_parent_set(run["id"], [], ["0.9::c::", "1.1::d::"])
+        self.assertEqual(len(second["deep"]["families"]), 2)
+        second_family = second["deep"]["families"][1]
+        second_root = second["deep"]["parent_sets"][-1]
+        self.assertEqual(first_family["root_parent_set_id"], first_root["id"])
+        self.assertEqual(second_family["root_parent_set_id"], second_root["id"])
+        self.assertEqual(first_root["generation"], 1)
+        self.assertEqual(second_root["generation"], 1)
+        self.assertNotEqual(first_root["family_id"], second_root["family_id"])
+
+        first_again = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=first_root["id"], algorithm={"random_seed": 2}
+        )["rounds"][-1]
+        second_round = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=second_root["id"], algorithm={"random_seed": 3}
+        )["rounds"][-1]
+        self.assertEqual(first_again["generation"], 2)
+        self.assertEqual(first_again["sibling_index"], 2)
+        self.assertEqual(first_again["family_id"], first_round["family_id"])
+        self.assertEqual(second_round["generation"], 2)
+        self.assertEqual(second_round["sibling_index"], 1)
+        self.assertNotEqual(second_round["family_id"], first_round["family_id"])
+
+    def test_legacy_single_chain_is_exposed_as_one_stable_family(self):
+        pool = explore.create_pool("旧链池", "a\nb\nc\n")
+        run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
+        created = explore.set_deep_parent_set(run["id"], [], ["0.8::a::", "1.0::b::"])
+        root = created["deep"]["parent_sets"][0]
+        explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=root["id"], algorithm={"random_seed": 11}
+        )
+        legacy = explore._load_run(run["id"])
+        legacy["deep"].pop("families", None)
+        legacy["deep"].pop("active_family_id", None)
+        for parent_set in legacy["deep"]["parent_sets"]:
+            parent_set.pop("family_id", None)
+        for round_record in legacy["rounds"]:
+            round_record.pop("family_id", None)
+            round_record.pop("sibling_index", None)
+        explore._save_run(legacy)
+
+        first_read = explore.get_run(run["id"])
+        second_read = explore.get_run(run["id"])
+        self.assertEqual(len(first_read["deep"]["families"]), 1)
+        self.assertEqual(first_read["deep"]["families"][0]["id"], second_read["deep"]["families"][0]["id"])
+        self.assertEqual(first_read["deep"]["parent_sets"][0]["family_id"], first_read["deep"]["families"][0]["id"])
+        self.assertEqual(first_read["rounds"][-1]["family_id"], first_read["deep"]["families"][0]["id"])
+        self.assertEqual(first_read["deep"]["parent_sets"][0]["generation"], 1)
+        self.assertEqual(first_read["rounds"][-1]["generation"], 2)
+        self.assertEqual(first_read["rounds"][-1]["sibling_index"], 1)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
-import { ArrowDown, ArrowRight, ArrowUp, Check, CircleHelp, GitBranch, Heart, Pause, Play, Plus, Sparkles, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowRight, ArrowUp, Check, CircleHelp, GitBranch, Heart, Pause, Play, Plus, Repeat2, Sparkles, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../../api";
+import type { StyleExploreCandidate, StyleExploreDeepFamily, StyleExploreDeepParent, StyleExploreDeepParentSet, StyleExploreDeepState, StyleExploreRound, StyleExploreRun } from "../../types";
 import { AlbumStackCard } from "../gallery/AlbumStackCard";
 import { ReviewMode, type ReviewChoice } from "../gallery/ReviewMode";
 import { Modal } from "../UI";
-import type { StyleExploreCandidate, StyleExploreDeepParent, StyleExploreDeepState, StyleExploreRun } from "../../types";
 
 const buttonClass = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-2 text-sm transition-colors hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-45";
 const primaryButtonClass = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
@@ -18,16 +18,16 @@ const DEEP_REVIEW_CHOICES: ReviewChoice[] = [
 ];
 
 const HELP: Record<string, { title: string; text: string }> = {
-  parents: { title: "当前父本集", text: "父本是 Artist String，不是图片本身。Treasure 图片仅作为代表和筛选依据；自定义串没有代表图也可参与，并允许包含当前 ArtistPool 之外的 ID。后代可以继承这些 ID，但算法新增、替换和随机注入的 ID 仍来自当前池子。" },
-  preference: { title: "可选偏好排序", text: "不排序时所有父本等权。排序只影响交叉和变异时的抽取概率，不会让低偏好父本完全失去产生后代的机会。" },
-  suggestion: { title: "建议出图数", text: "系统按父本数给出建议：通常为 4 × 父本数后取最接近的 5，最低为 10；下一轮建议数为 sqrt(出图数) 并限制在 3 到 10。所有数值都可由你覆盖。" },
-  lineage: { title: "代际探索链", text: "每代候选以图片堆表示。完成一代后，可从其中勾选优秀子代建立唯一的后续审美分支；原父本与选中子代会由服务端去重合并成下一代父本，原轮次和正式筛选不会改变。" },
-  algorithm: { title: "深度候选如何产生", text: "每个父本至少保留一次局部变异，其余候选由父本交叉、ID 增删替换、权重扰动与少量 Split-Beta 随机注入组成。权重始终限制在当前范围并按 0.1 离散，等价串会去重。" },
-  review: { title: "深度轮次筛选", text: "生成完成后仍使用 Treasure、Special、Reject 正式筛选。只有你再次点击“建立下一轮父本集”并确认，当前父本才会更新；未选中的 Treasure 不会丢失。" },
+  parents: { title: "家族第一代父本", text: "每次建立普通父本集都会创建一个独立家族。父本是 Artist String，Treasure 图片只是代表图；该家族后续审美分支只会与本家族第一代父本回交，不会接触其他家族。" },
+  suggestion: { title: "建议出图数", text: "系统按父本数给出建议，所有数值均可覆盖。同一代可以使用“新增一轮”再次生成，新增图片与原轮次是同辈关系。" },
+  lineage: { title: "家族与代际探索链", text: "每个普通父本集开启一个独立家族，家族横向排列。家族内第一代显示为父本横幅，下一代可有多个同辈图片堆；悬停图片堆会高亮它与来源轮次、家族第一代父本之间的关系。" },
+  algorithm: { title: "深度候选如何产生", text: "每个父本至少保留一次局部变异，其余候选由父本交叉、ID 增删替换、权重扰动与少量随机注入组成。审美分支使用本家族第一代父本与当前选中子代回交。" },
 };
 
+type Connector = { familyId: string; root: { x: number; y: number }; current: { x: number; y: number }; source?: { x: number; y: number } };
+
 function deepState(run: StyleExploreRun): StyleExploreDeepState {
-  return run.deep ?? { active_parent_set_id: null, parent_sets: [] };
+  return run.deep ?? { active_parent_set_id: null, active_family_id: null, families: [], parent_sets: [] };
 }
 
 function candidateForParent(run: StyleExploreRun, parent: StyleExploreDeepParent): StyleExploreCandidate | undefined {
@@ -55,16 +55,13 @@ function Guide({ step, children }: { step: number; children: ReactNode }) {
   return <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-2 text-xs leading-relaxed text-[var(--muted)]"><span className="mr-1 font-semibold text-[var(--accent)]">第 {step} 步</span>{children}</div>;
 }
 
-export function StyleExploreDeepExplorer({
-  run,
-  positive,
-  negative,
-  params,
-  algorithm,
-  onRunChange,
-  onPreviewCandidate,
-  notify,
-}: {
+function familyWidth(rounds: StyleExploreRound[]) {
+  const counts = new Map<number, number>();
+  rounds.forEach((round) => counts.set(round.generation ?? 2, (counts.get(round.generation ?? 2) ?? 0) + 1));
+  return Math.max(920, Math.max(3, ...counts.values()) * 360 + 48);
+}
+
+export function StyleExploreDeepExplorer({ run, positive, negative, params, algorithm, onRunChange, onPreviewCandidate, notify }: {
   run: StyleExploreRun;
   positive: string;
   negative: string;
@@ -77,50 +74,37 @@ export function StyleExploreDeepExplorer({
   const deep = deepState(run);
   const parentSets = deep.parent_sets;
   const rounds = (run.rounds ?? []).filter((round) => round.phase === "deep");
-  const activeParentSet = parentSets.find((item) => item.id === deep.active_parent_set_id) ?? parentSets.find((item) => item.status === "active") ?? null;
+  const families: StyleExploreDeepFamily[] = deep.families?.length ? deep.families : [];
   const treasures = useMemo(() => run.candidates.filter((candidate) => candidate.review.label === "treasure" && candidate.generation.status === "done"), [run.candidates]);
   const [selectedTreasureIds, setSelectedTreasureIds] = useState<Set<string>>(new Set());
   const [customText, setCustomText] = useState("");
   const [choosingParents, setChoosingParents] = useState(false);
-  const [pairwiseOpen, setPairwiseOpen] = useState(false);
-  const [pairIndex, setPairIndex] = useState(0);
+  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(deep.active_family_id ?? families.at(-1)?.id ?? null);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [selectedParentSetId, setSelectedParentSetId] = useState<string | null>(null);
+  const [pairwiseOpen, setPairwiseOpen] = useState(false);
+  const [pairIndex, setPairIndex] = useState(0);
   const [reviewingRoundId, setReviewingRoundId] = useState<string | null>(null);
   const [branchSourceRoundId, setBranchSourceRoundId] = useState<string | null>(null);
   const [branchName, setBranchName] = useState("");
   const [branchCandidateIds, setBranchCandidateIds] = useState<Set<string>>(new Set());
+  const [repeatParentSetId, setRepeatParentSetId] = useState<string | null>(null);
   const [targetCount, setTargetCount] = useState(10);
   const [helpKey, setHelpKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hoveredRoundId, setHoveredRoundId] = useState<string | null>(null);
+  const [connector, setConnector] = useState<Connector | null>(null);
+  const familyRefs = useRef(new Map<string, HTMLDivElement>());
+  const rootRefs = useRef(new Map<string, HTMLDivElement>());
+  const roundRefs = useRef(new Map<string, HTMLDivElement>());
 
-  useEffect(() => {
-    const selectedSet = parentSets.find((item) => item.id === selectedParentSetId) ?? activeParentSet;
-    const next = selectedSet?.suggested_target_count ?? suggestedTargetCount(selectedSet?.parents.length ?? 0);
-    setTargetCount(next);
-  }, [activeParentSet, parentSets, selectedParentSetId]);
-
-  useEffect(() => {
-    if (activeParentSet || choosingParents || selectedTreasureIds.size || treasures.length === 0) return;
-    setSelectedTreasureIds(new Set(treasures.map((candidate) => candidate.id)));
-  }, [activeParentSet, choosingParents, selectedTreasureIds.size, treasures]);
-
-  useEffect(() => {
-    if (selectedRoundId !== null && !rounds.some((round) => round.id === selectedRoundId)) setSelectedRoundId(rounds[rounds.length - 1]?.id ?? null);
-    if (selectedRoundId === null && selectedParentSetId === null && rounds.length) setSelectedRoundId(rounds[rounds.length - 1].id);
-  }, [run.id, rounds, selectedParentSetId, selectedRoundId]);
-
-  useEffect(() => {
-    if (selectedRoundId) {
-      const selected = rounds.find((round) => round.id === selectedRoundId);
-      if (selected?.parent_set_id) setSelectedParentSetId(selected.parent_set_id);
-      return;
-    }
-    if (!parentSets.some((item) => item.id === selectedParentSetId)) setSelectedParentSetId(activeParentSet?.id ?? null);
-  }, [activeParentSet?.id, parentSets, rounds, selectedParentSetId, selectedRoundId]);
-
+  const familyById = (familyId?: string | null) => families.find((family) => family.id === familyId) ?? null;
+  const selectedFamily = familyById(selectedFamilyId) ?? familyById(deep.active_family_id) ?? families.at(-1) ?? null;
+  const familyActiveParentSet = selectedFamily ? parentSets.find((item) => item.id === selectedFamily.active_parent_set_id) ?? null : null;
   const selectedRound = rounds.find((round) => round.id === selectedRoundId) ?? null;
-  const selectedParentSet = parentSets.find((item) => item.id === selectedParentSetId) ?? activeParentSet;
+  const explicitParentSet = parentSets.find((item) => item.id === selectedParentSetId && (!selectedFamily || item.family_id === selectedFamily.id));
+  const selectedParentSet = explicitParentSet ?? (selectedRound ? parentSets.find((item) => item.id === selectedRound.parent_set_id) : null) ?? familyActiveParentSet;
+  const pairingParentSet = selectedParentSet && selectedFamily && selectedParentSet.family_id === selectedFamily.id ? selectedParentSet : familyActiveParentSet;
   const selectedRoundCandidates = useMemo(() => run.candidates.filter((candidate) => candidate.round_id === selectedRound?.id || selectedRound?.candidate_ids?.includes(candidate.id)), [run.candidates, selectedRound]);
   const unreviewedRoundCandidates = selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done" && !candidate.review.label);
   const roundDoneCount = selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done").length;
@@ -129,12 +113,49 @@ export function StyleExploreDeepExplorer({
   const taskPendingCount = run.candidates.filter((candidate) => ["pending", "generating"].includes(candidate.generation.status)).length;
   const taskDoneCount = run.candidates.filter((candidate) => candidate.generation.status === "done").length;
   const taskProgress = run.candidates.length ? Math.round((taskDoneCount / run.candidates.length) * 100) : 0;
-  const pairCandidates = activeParentSet ? buildPairs(activeParentSet.parents) : [];
+  const pairCandidates = pairingParentSet ? buildPairs(pairingParentSet.parents) : [];
   const currentPair = pairCandidates[pairIndex] ?? null;
   const branchSourceRound = rounds.find((round) => round.id === branchSourceRoundId) ?? null;
-  const branchCandidates = branchSourceRound
-    ? run.candidates.filter((candidate) => candidate.round_id === branchSourceRound.id && candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at)
-    : [];
+  const branchCandidates = branchSourceRound ? run.candidates.filter((candidate) => candidate.round_id === branchSourceRound.id && candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at) : [];
+
+  useEffect(() => {
+    if (!families.length) {
+      setSelectedFamilyId(null);
+      return;
+    }
+    if (!families.some((family) => family.id === selectedFamilyId)) setSelectedFamilyId(deep.active_family_id ?? families.at(-1)?.id ?? null);
+  }, [deep.active_family_id, families, run.id, selectedFamilyId]);
+
+  useEffect(() => {
+    const next = selectedParentSet?.suggested_target_count ?? suggestedTargetCount(selectedParentSet?.parents.length ?? 0);
+    setTargetCount(next);
+  }, [selectedParentSet?.id]);
+
+  useEffect(() => {
+    if (families.length || choosingParents || selectedTreasureIds.size || treasures.length === 0) return;
+    setSelectedTreasureIds(new Set(treasures.map((candidate) => candidate.id)));
+  }, [choosingParents, families.length, selectedTreasureIds.size, treasures]);
+
+  useEffect(() => {
+    if (!hoveredRoundId) {
+      setConnector(null);
+      return;
+    }
+    const round = rounds.find((item) => item.id === hoveredRoundId);
+    const parentSet = parentSets.find((item) => item.id === round?.parent_set_id);
+    const family = familyById(parentSet?.family_id ?? round?.family_id);
+    const canvas = family ? familyRefs.current.get(family.id) : null;
+    const root = family ? rootRefs.current.get(family.id) : null;
+    const current = roundRefs.current.get(hoveredRoundId);
+    if (!round || !parentSet || !family || !canvas || !root || !current) {
+      setConnector(null);
+      return;
+    }
+    const canvasRect = canvas.getBoundingClientRect();
+    const point = (rect: DOMRect, edge: "top" | "bottom") => ({ x: rect.left - canvasRect.left + rect.width / 2, y: (edge === "top" ? rect.top : rect.bottom) - canvasRect.top });
+    const sourceElement = parentSet.branch?.source_round_id ? roundRefs.current.get(parentSet.branch.source_round_id) : null;
+    setConnector({ familyId: family.id, root: point(root.getBoundingClientRect(), "bottom"), current: point(current.getBoundingClientRect(), "top"), source: sourceElement ? point(sourceElement.getBoundingClientRect(), "bottom") : undefined });
+  }, [hoveredRoundId, run]);
 
   const act = async (work: () => Promise<StyleExploreRun | void>) => {
     setBusy(true);
@@ -158,49 +179,40 @@ export function StyleExploreDeepExplorer({
     const custom_artist_strings = customText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     if (!selectedTreasureIds.size && !custom_artist_strings.length) throw new Error("请至少选择一张 Treasure 或输入一条 Artist String");
     const next = await api.styleExploreSetDeepParents(run.id, { candidate_ids: [...selectedTreasureIds], custom_artist_strings });
+    const family = next.deep?.families?.find((item) => item.id === next.deep?.active_family_id) ?? next.deep?.families?.at(-1);
     setCustomText("");
     setSelectedTreasureIds(new Set());
     setChoosingParents(false);
     setSelectedRoundId(null);
-    setSelectedParentSetId(next.deep?.active_parent_set_id ?? null);
-    notify("当前父本集已确认；可直接创建深度轮次，也可先进行偏好排序");
+    setSelectedFamilyId(family?.id ?? null);
+    setSelectedParentSetId(family?.active_parent_set_id ?? next.deep?.active_parent_set_id ?? null);
+    notify(`已创建家族 ${family?.number ?? ""}；该父本集固定为第一代`);
     return next;
   });
 
   const recordPreference = (result: "left" | "right" | "skip" | "neither") => {
-    if (!activeParentSet || !currentPair) return;
+    if (!pairingParentSet || !currentPair) return;
     void act(async () => {
-      const next = await api.styleExploreRecordDeepPreference(run.id, activeParentSet.id, {
-        left_parent_id: currentPair.left.id,
-        right_parent_id: currentPair.right.id,
-        result,
-      });
+      const next = await api.styleExploreRecordDeepPreference(run.id, pairingParentSet.id, { left_parent_id: currentPair.left.id, right_parent_id: currentPair.right.id, result });
       if (pairIndex + 1 >= pairCandidates.length) {
         setPairwiseOpen(false);
-        notify("偏好排序已保存；未比较的父本仍按中等权重参与");
+        notify("当前父本集的偏好排序已保存");
       } else setPairIndex((value) => value + 1);
       return next;
     });
   };
 
-  const appendRound = () => {
-    if (!selectedParentSet) return;
-    void act(async () => {
-      if (!Number.isInteger(targetCount) || targetCount < 1) throw new Error("出图数至少为 1");
-      const next = await api.styleExploreAppendDeepRound(run.id, {
-        parent_set_id: selectedParentSet.id,
-        target_count: targetCount,
-        positive,
-        negative,
-        params,
-        algorithm,
-      });
-      const latestRound = [...(next.rounds ?? [])].reverse().find((round) => round.phase === "deep");
-      setSelectedRoundId(latestRound?.id ?? null);
-      notify(`已创建深度轮次，建议从 ${suggestedNextParentCount(targetCount)} 个候选中确认下一轮父本`);
-      return next;
-    });
-  };
+  const appendRoundFor = (parentSet: StyleExploreDeepParentSet, count: number, repeated: boolean) => void act(async () => {
+    if (!Number.isInteger(count) || count <= parentSet.parents.length) throw new Error(`出图数必须大于父本数（${parentSet.parents.length}）`);
+    const next = await api.styleExploreAppendDeepRound(run.id, { parent_set_id: parentSet.id, target_count: count, positive, negative, params, algorithm });
+    const latestRound = [...(next.rounds ?? [])].reverse().find((round) => round.phase === "deep" && round.parent_set_id === parentSet.id);
+    setSelectedFamilyId(parentSet.family_id ?? null);
+    setSelectedParentSetId(parentSet.id);
+    setSelectedRoundId(latestRound?.id ?? null);
+    setRepeatParentSetId(null);
+    notify(repeated ? `已新增同代第 ${latestRound?.sibling_index ?? ""} 轮，共 ${count} 张候选` : `已创建下一代候选，建议从 ${suggestedNextParentCount(count)} 张中挑选分支样本`);
+    return next;
+  });
 
   const openBranch = (roundId: string) => {
     setBranchSourceRoundId(roundId);
@@ -220,29 +232,18 @@ export function StyleExploreDeepExplorer({
       const name = branchName.trim();
       if (!name) throw new Error("请为审美分支命名");
       if (!branchCandidateIds.size) throw new Error("请至少选择一张优秀子代");
-      const next = await api.styleExploreCreateDeepBranch(run.id, {
-        source_round_id: branchSourceRound.id,
-        name,
-        candidate_ids: [...branchCandidateIds],
-      });
+      const next = await api.styleExploreCreateDeepBranch(run.id, { source_round_id: branchSourceRound.id, name, candidate_ids: [...branchCandidateIds] });
       const parentSet = (next.deep?.parent_sets ?? []).find((item) => item.branch?.source_round_id === branchSourceRound.id);
+      setSelectedFamilyId(parentSet?.family_id ?? null);
       setSelectedRoundId(null);
       setSelectedParentSetId(parentSet?.id ?? null);
       setBranchSourceRoundId(null);
-      notify(`已建立「${name}」审美分支；选择下方空图片堆后即可创建下一代候选`);
+      notify(`已建立「${name}」：本家族第一代父本与选中子代将生成下一代`);
       return next;
     });
   };
 
-  const controlRound = (action: "start" | "pause" | "resume" | "retry") => {
-    void act(async () => {
-      const next = action === "start" ? await api.styleExploreStartRun(run.id)
-        : action === "pause" ? await api.styleExplorePauseRun(run.id)
-          : action === "resume" ? await api.styleExploreResumeRun(run.id, params)
-            : await api.styleExploreRetryFailed(run.id);
-      return next;
-    });
-  };
+  const controlRound = (action: "start" | "pause" | "resume" | "retry") => void act(async () => action === "start" ? api.styleExploreStartRun(run.id) : action === "pause" ? api.styleExplorePauseRun(run.id) : action === "resume" ? api.styleExploreResumeRun(run.id, params) : api.styleExploreRetryFailed(run.id));
 
   const applyRoundReviews = async (moves: { path: string; tag: string }[]) => {
     const result = await api.styleExploreApplyReviews(run.id, moves.map((move) => ({ candidate_id: move.path, tag: move.tag })));
@@ -250,75 +251,97 @@ export function StyleExploreDeepExplorer({
     return result;
   };
 
-  const sortedRounds = [...rounds].sort((left, right) => (left.generation ?? left.number ?? 0) - (right.generation ?? right.number ?? 0));
-  const initialParentSet = [...parentSets].sort((left, right) => (left.number ?? 0) - (right.number ?? 0)).find((parentSet) => !parentSet.branch);
-  const emptyActiveParentSet = parentSets.find((parentSet) => parentSet.id === deep.active_parent_set_id && !rounds.some((round) => round.parent_set_id === parentSet.id));
-  const hasDeepHistory = parentSets.length > 0 || rounds.length > 0;
+  const chooseRound = (round: StyleExploreRound) => {
+    setSelectedRoundId(round.id);
+    setSelectedParentSetId(round.parent_set_id ?? null);
+    setSelectedFamilyId(round.family_id ?? parentSets.find((item) => item.id === round.parent_set_id)?.family_id ?? null);
+  };
+
+  const chooseFamily = (family: StyleExploreDeepFamily) => {
+    if (selectedFamily?.id !== family.id) {
+      setSelectedRoundId(null);
+      setSelectedParentSetId(family.active_parent_set_id);
+    }
+    setSelectedFamilyId(family.id);
+  };
 
   return <section className="glass mt-5 rounded-2xl p-5" aria-labelledby="deep-explore-title">
     <div className="flex flex-wrap items-start gap-3">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white" style={{ background: "var(--accent)" }}><GitBranch size={20} /></div>
-      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 id="deep-explore-title" className="font-semibold">深度探索</h2><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("algorithm")} aria-label="查看深度探索算法说明"><CircleHelp size={15} /></button></div><p className="mt-1 text-xs text-[var(--muted)]">从当前任务的 Treasure 与自定义 Artist String 建立父本集，逐代交叉、变异；每代可建立唯一的审美分支进入下一代。</p></div>
+      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 id="deep-explore-title" className="font-semibold">深度探索</h2><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("algorithm")}><CircleHelp size={15} /></button></div><p className="mt-1 text-xs text-[var(--muted)]">每个普通父本集开启一个独立家族；家族内通过“第一代父本 + 优秀子代”回交，并允许同代新增多轮候选。</p></div>
+      <button className={buttonClass} onClick={() => setChoosingParents(true)} disabled={busy || run.status === "running"}><Plus size={14} />建立普通父本集（新家族）</button>
     </div>
 
-    {(!activeParentSet || choosingParents) && <div className="mt-5 space-y-4">
-      <Guide step={1}>先从本任务的 Treasure 选择代表图，或补充任意自定义 Artist String；池外 ID 可以继承到后代，而算法主动新增、替换和随机注入的 ID 仍来自当前 ArtistPool。这不会移动图片或影响既有 Treasure 档案。</Guide>
+    {(!families.length || choosingParents) && <div className="mt-5 space-y-4">
+      <Guide step={1}>从本任务 Treasure 选择代表图，或输入任意 Artist String。确认后会创建一个全新家族；不会覆盖或改写已有家族。</Guide>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{treasures.map((candidate) => {
         const selected = selectedTreasureIds.has(candidate.id);
         return <button key={candidate.id} type="button" onClick={() => toggleTreasure(candidate.id)} className={`overflow-hidden rounded-xl border text-left transition-colors ${selected ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--border)] bg-[var(--input)]/30 hover:bg-[var(--hover)]"}`}><div className="relative aspect-[3/4] bg-[var(--hover)]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="Treasure 候选" loading="lazy" />{selected && <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-[var(--accent)] px-2 py-1 text-xs font-medium text-white"><Check size={12} />已选</span>}</div><code className="block max-h-14 overflow-hidden px-3 py-2 text-xs text-[var(--accent)]">{candidate.artist_string}</code></button>;
-      })}{treasures.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)] sm:col-span-2">当前任务还没有 Treasure。可先完成基础探索筛选，或直接添加自定义 Artist String。</div>}</div>
-      <label className="block text-sm">自定义 Artist String <span className="text-xs text-[var(--muted)]">（一行一条，无代表图片时作为文字父本）</span><textarea className={`${inputClass} mt-1 min-h-24 font-mono text-xs`} value={customText} onChange={(event) => setCustomText(event.target.value)} placeholder="0.8::artist_a::, 1.1::artist_b::" /></label>
-      <div className="flex flex-wrap items-center gap-3"><button className={primaryButtonClass} onClick={confirmParents} disabled={busy}><Plus size={15} />确认当前父本集</button>{activeParentSet && <button className={buttonClass} onClick={() => setChoosingParents(false)} disabled={busy}>取消</button>}<span className="text-xs text-[var(--muted)]">已选择 {selectedTreasureIds.size} 张 Treasure</span></div>
+      })}{treasures.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)] sm:col-span-2">当前任务还没有 Treasure，也可以直接添加自定义 Artist String。</div>}</div>
+      <label className="block text-sm">自定义 Artist String <span className="text-xs text-[var(--muted)]">（一行一条）</span><textarea className={`${inputClass} mt-1 min-h-24 font-mono text-xs`} value={customText} onChange={(event) => setCustomText(event.target.value)} placeholder="0.8::artist_a::, 1.1::artist_b::" /></label>
+      <div className="flex flex-wrap items-center gap-3"><button className={primaryButtonClass} onClick={confirmParents} disabled={busy}><Plus size={15} />创建新家族</button>{families.length > 0 && <button className={buttonClass} onClick={() => setChoosingParents(false)} disabled={busy}>取消</button>}<span className="text-xs text-[var(--muted)]">已选择 {selectedTreasureIds.size} 张 Treasure</span></div>
     </div>}
 
-    {activeParentSet && !choosingParents && <div className="mt-5 space-y-5">
-      <Guide step={2}>当前父本集包含 {activeParentSet.parents.length} 条 Artist String。你可以跳过排序直接开始；排序只会调整抽样倾向。</Guide>
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">当前父本集 · {activeParentSet.parents.length} 条</h3><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("parents")} aria-label="父本集说明"><CircleHelp size={14} /></button><button className={`${buttonClass} ml-auto`} onClick={() => { setPairIndex(0); setPairwiseOpen(true); }} disabled={busy || activeParentSet.parents.length < 2 || Boolean(activeParentSet.used_round_ids?.length)} title={activeParentSet.used_round_ids?.length ? "两两偏好只在当前父本集生成前生效" : undefined}><Heart size={14} />帮我排序（可选）</button><button className={buttonClass} onClick={() => setChoosingParents(true)} disabled={busy || run.status === "running"}><Plus size={14} />建立普通父本集</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{activeParentSet.parents.map((parent) => { const candidate = candidateForParent(run, parent); return <div key={parent.id} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--input)]/35">{candidate ? <img className="aspect-[3/2] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="父本代表图" loading="lazy" /> : <div className="flex aspect-[3/2] items-center justify-center bg-[var(--hover)] px-4 text-center text-xs text-[var(--muted)]">自定义 Artist String<br />无代表图片</div>}<code className="block max-h-14 overflow-hidden px-3 py-2 text-xs text-[var(--accent)]">{parent.artist_string}</code></div>; })}</div></div>
-    </div>}
-
-    {hasDeepHistory && <div className="mt-6 border-t border-[var(--border)] pt-5">
-      <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">代际探索链</h3><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("lineage")} aria-label="代际探索链说明"><CircleHelp size={14} /></button></div>
-      <div className="mt-4 space-y-3">
-        <div className="glass flex flex-wrap items-center gap-2 rounded-xl p-3 text-sm"><span className="font-medium">基础探索</span><span className="text-xs text-[var(--muted)]">{treasures.length} 个 Treasure 档案</span></div>
-        {initialParentSet && <div className="flex items-center gap-3 border-l border-[var(--border)] pl-3"><div className="w-24 shrink-0 text-xs text-[var(--muted)]">第 1 代</div><div className={`w-72 min-w-0 rounded-2xl p-1 ${selectedParentSet?.id === initialParentSet.id && !selectedRoundId ? "ring-2 ring-[var(--accent)]" : ""}`}><AlbumStackCard title="第一代父本集" subtitle={`${initialParentSet.parents.length} 条 Artist String`} count={initialParentSet.parents.length} date={initialParentSet.created_at?.slice(0, 10)} coverUrls={initialParentSet.parents.map((parent) => candidateForParent(run, parent)).filter((candidate): candidate is StyleExploreCandidate => Boolean(candidate)).slice(0, 3).map((candidate) => api.styleExploreCandidateImageUrl(run.id, candidate.id))} color="#7c8cff" icon={GitBranch} index={0} onOpen={() => { setSelectedRoundId(null); setSelectedParentSetId(initialParentSet.id); }} /></div></div>}
-        {sortedRounds.map((round, index) => {
-          const roundCandidates = run.candidates.filter((candidate) => candidate.round_id === round.id);
-          const parentSet = parentSets.find((item) => item.id === round.parent_set_id);
-          const hasNextBranch = parentSets.some((item) => item.branch?.source_round_id === round.id);
-          const hasPending = roundCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status));
-          const canAddBranch = roundCandidates.some((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at) && !hasPending;
-          const parentRoundIds = parentSet?.used_round_ids?.length ? parentSet.used_round_ids : sortedRounds.filter((item) => item.parent_set_id === parentSet?.id).map((item) => item.id);
-          const isLatestActiveRound = parentSet?.id === deep.active_parent_set_id && parentRoundIds[parentRoundIds.length - 1] === round.id;
-          const generation = round.generation ?? index + 2;
-          return <div key={round.id} className="flex items-center gap-3 border-l border-[var(--border)] pl-3">
-            <div className="w-24 shrink-0 text-xs text-[var(--muted)]"><div>第 {generation} 代</div>{parentSet?.branch?.name && <div className="mt-1 truncate font-medium text-[var(--accent)]">{parentSet.branch.name}</div>}</div>
-            <div className={`w-72 min-w-0 rounded-2xl p-1 ${selectedRoundId === round.id ? "ring-2 ring-[var(--accent)]" : ""}`}><AlbumStackCard title={`第 ${generation} 代候选`} subtitle={`${round.status} · ${roundCandidates.length} 张`} count={roundCandidates.length} date={round.created_at?.slice(0, 10)} coverUrls={roundCandidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at).slice(0, 3).map((candidate) => api.styleExploreCandidateImageUrl(run.id, candidate.id))} color="#7c8cff" icon={GitBranch} index={generation - 1} onOpen={() => { setSelectedRoundId(round.id); setSelectedParentSetId(round.parent_set_id ?? null); }} /></div>
-            <button className={buttonClass} onClick={() => openBranch(round.id)} disabled={busy || hasNextBranch || run.status === "running" || !canAddBranch || !isLatestActiveRound} title={hasNextBranch ? "该代已建立后续审美分支" : !isLatestActiveRound ? "只能从当前最新一代继续" : !canAddBranch ? "请等待本代生成完成" : undefined}><Plus size={14} />{hasNextBranch ? "已建立分支" : !isLatestActiveRound ? "历史代" : !canAddBranch ? "等待本代完成" : "添加审美分支"}</button>
-          </div>;
-        })}
-        {emptyActiveParentSet && <div className="flex items-center gap-3 border-l border-dashed border-[var(--accent)] pl-3">
-          <div className="w-24 shrink-0 text-xs text-[var(--muted)]"><div>第 {(emptyActiveParentSet.generation ?? 1) + 1} 代</div><div className="mt-1 truncate font-medium text-[var(--accent)]">{emptyActiveParentSet.branch?.name}</div></div>
-          <button type="button" className={`w-72 rounded-2xl border border-dashed p-4 text-left transition-colors hover:bg-[var(--hover)] ${selectedParentSet?.id === emptyActiveParentSet.id && !selectedRoundId ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`} onClick={() => { setSelectedRoundId(null); setSelectedParentSetId(emptyActiveParentSet.id); }}><div className="flex items-center gap-2 text-sm font-medium"><Plus size={16} />空图片堆</div><p className="mt-1 text-xs text-[var(--muted)]">{emptyActiveParentSet.parents.length} 条合并父本 · 选择后在下方创建本代候选</p></button>
-        </div>}
+    {families.length > 0 && !choosingParents && <div className="mt-6 border-t border-[var(--border)] pt-5">
+      <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">代际探索链</h3><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("lineage")}><CircleHelp size={14} /></button><span className="text-xs text-[var(--muted)]">横向滚动切换家族 · 悬停图片堆查看谱系连线</span></div>
+      <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--input)]/15 pb-3">
+        <div className="flex w-max min-w-full items-stretch">
+          {families.map((family) => {
+            const familyParentSets = parentSets.filter((item) => item.family_id === family.id);
+            const familyRounds = rounds.filter((round) => (round.family_id ?? parentSets.find((item) => item.id === round.parent_set_id)?.family_id) === family.id).sort((a, b) => (a.generation ?? 2) - (b.generation ?? 2) || (a.sibling_index ?? a.number) - (b.sibling_index ?? b.number));
+            const rootParentSet = familyParentSets.find((item) => item.id === family.root_parent_set_id) ?? familyParentSets[0];
+            const activeSet = familyParentSets.find((item) => item.id === family.active_parent_set_id) ?? familyParentSets.at(-1);
+            const generations = [...new Set(familyRounds.map((round) => round.generation ?? 2))];
+            const emptyGeneration = activeSet && !familyRounds.some((round) => round.parent_set_id === activeSet.id) ? (activeSet.generation ?? 1) + 1 : null;
+            const width = familyWidth(familyRounds);
+            return <div key={family.id} ref={(node) => { if (node) familyRefs.current.set(family.id, node); else familyRefs.current.delete(family.id); }} className={`relative shrink-0 border-r border-[var(--border)] px-5 py-4 last:border-r-0 ${selectedFamily?.id === family.id ? "bg-[var(--accent)]/[0.035]" : ""}`} style={{ width }} onClick={() => chooseFamily(family)}>
+              {connector?.familyId === family.id && <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible" aria-hidden><path d={`M ${connector.root.x} ${connector.root.y} V ${connector.current.y - 20} Q ${connector.root.x} ${connector.current.y} ${connector.current.x} ${connector.current.y}`} fill="none" stroke="var(--accent)" strokeWidth="3" strokeDasharray="7 5" opacity="0.75" />{connector.source && <path d={`M ${connector.source.x} ${connector.source.y} V ${(connector.source.y + connector.current.y) / 2} H ${connector.current.x} V ${connector.current.y}`} fill="none" stroke="var(--accent)" strokeWidth="4" opacity="0.95" />}</svg>}
+              <div className="mb-3 flex items-center justify-between"><div><span className="text-sm font-semibold">家族 {family.number}</span><span className="ml-2 text-xs text-[var(--muted)]">独立谱系</span></div>{selectedFamily?.id === family.id && <span className="rounded-full bg-[var(--accent)]/15 px-2 py-1 text-[10px] font-medium text-[var(--accent)]">当前查看</span>}</div>
+              {rootParentSet && <div ref={(node) => { if (node) rootRefs.current.set(family.id, node); else rootRefs.current.delete(family.id); }} className={`relative z-30 rounded-xl border bg-[var(--input)]/55 p-3 transition-colors ${selectedParentSet?.id === rootParentSet.id && !selectedRound ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`} onClick={(event) => { event.stopPropagation(); setSelectedFamilyId(family.id); setSelectedParentSetId(rootParentSet.id); setSelectedRoundId(null); }}>
+                <div className="flex items-center gap-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><strong className="text-sm">第一代父本集</strong><button className="text-[var(--muted)] hover:text-[var(--accent)]" onClick={(event) => { event.stopPropagation(); setHelpKey("parents"); }}><CircleHelp size={13} /></button></div><p className="mt-1 text-xs text-[var(--muted)]">{rootParentSet.parents.length} 条 Artist String · 创建于 {rootParentSet.created_at?.slice(0, 10)}</p><code className="mt-1 block truncate text-[10px] text-[var(--accent)]">{rootParentSet.parents.map((parent) => parent.artist_string).join("  |  ")}</code></div><div className="flex shrink-0 -space-x-3">{rootParentSet.parents.map((parent) => candidateForParent(run, parent)).filter((candidate): candidate is StyleExploreCandidate => Boolean(candidate)).slice(0, 6).map((candidate) => <img key={candidate.id} className="h-14 w-11 rounded-lg border-2 border-white object-cover shadow" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="父本代表图" />)}{!rootParentSet.parents.some((parent) => candidateForParent(run, parent)) && <div className="flex h-14 w-28 items-center justify-center rounded-lg bg-[var(--hover)] text-[10px] text-[var(--muted)]">自定义文字父本</div>}</div></div>
+              </div>}
+              <div className="relative z-30 mt-5 space-y-5">
+                {generations.map((generation) => {
+                  const generationRounds = familyRounds.filter((round) => (round.generation ?? 2) === generation);
+                  return <div key={generation} className="min-h-[335px]"><div className="mb-2 flex items-center gap-2 text-xs text-[var(--muted)]"><span>第 {generation} 代</span>{generationRounds[0] && parentSets.find((item) => item.id === generationRounds[0].parent_set_id)?.branch?.name && <span className="font-medium text-[var(--accent)]">经「{parentSets.find((item) => item.id === generationRounds[0].parent_set_id)?.branch?.name}」回交</span>}</div><div className="flex items-start gap-3">{generationRounds.map((round, roundIndex) => {
+                    const roundCandidates = run.candidates.filter((candidate) => candidate.round_id === round.id);
+                    const parentSet = familyParentSets.find((item) => item.id === round.parent_set_id);
+                    const hasNextBranch = familyParentSets.some((item) => item.branch?.source_parent_set_id === parentSet?.id);
+                    const siblingRoundIds = new Set(familyRounds.filter((item) => item.parent_set_id === parentSet?.id).map((item) => item.id));
+                    const siblingCandidates = run.candidates.filter((candidate) => siblingRoundIds.has(String(candidate.round_id)));
+                    const hasPending = siblingCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status));
+                    const canBranch = siblingCandidates.some((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at) && !hasPending;
+                    const isCurrentGeneration = parentSet?.id === family.active_parent_set_id;
+                    return <div key={round.id} className="flex w-[345px] shrink-0 items-start gap-2">
+                      <div ref={(node) => { if (node) roundRefs.current.set(round.id, node); else roundRefs.current.delete(round.id); }} onMouseEnter={() => setHoveredRoundId(round.id)} onMouseLeave={() => setHoveredRoundId(null)} className={`w-60 rounded-2xl p-1 transition-shadow ${selectedRoundId === round.id ? "ring-2 ring-[var(--accent)]" : ""}`}><AlbumStackCard title={`候选堆 ${round.sibling_index ?? roundIndex + 1}`} subtitle={`${round.status} · ${roundCandidates.length} 张`} count={roundCandidates.length} date={round.created_at?.slice(0, 10)} coverUrls={roundCandidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at).slice(0, 3).map((candidate) => api.styleExploreCandidateImageUrl(run.id, candidate.id))} color="#7c8cff" icon={GitBranch} index={roundIndex} onOpen={(event) => { event.stopPropagation(); chooseRound(round); }} /></div>
+                      <div className="mt-10 flex w-24 shrink-0 flex-col gap-2"><button className={`${buttonClass} px-2 text-xs`} onClick={(event) => { event.stopPropagation(); openBranch(round.id); }} disabled={busy || hasNextBranch || run.status === "running" || !canBranch || !isCurrentGeneration} title={hasNextBranch ? "这一代已建立后续分支" : !isCurrentGeneration ? "历史代不能继续分支" : !canBranch ? "请等待本代所有轮次完成" : undefined}><GitBranch size={13} />{hasNextBranch ? "已分支" : "新建分支"}</button><button className={`${buttonClass} px-2 text-xs`} onClick={(event) => { event.stopPropagation(); if (parentSet) { setSelectedFamilyId(family.id); setSelectedParentSetId(parentSet.id); setTargetCount(parentSet.suggested_target_count ?? suggestedTargetCount(parentSet.parents.length)); setRepeatParentSetId(parentSet.id); } }} disabled={busy || run.status === "running" || !isCurrentGeneration || hasNextBranch}><Repeat2 size={13} />新增一轮</button></div>
+                    </div>;
+                  })}</div></div>;
+                })}
+                {emptyGeneration && activeSet && <div className="min-h-[210px]"><div className="mb-2 text-xs text-[var(--muted)]">第 {emptyGeneration} 代{activeSet.branch?.name && <span className="ml-2 font-medium text-[var(--accent)]">经「{activeSet.branch.name}」回交</span>}</div><button type="button" className={`w-72 rounded-2xl border border-dashed p-5 text-left transition-colors hover:bg-[var(--hover)] ${selectedParentSet?.id === activeSet.id && !selectedRound ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`} onClick={(event) => { event.stopPropagation(); setSelectedFamilyId(family.id); setSelectedRoundId(null); setSelectedParentSetId(activeSet.id); }}><div className="flex items-center gap-2 text-sm font-medium"><Plus size={16} />空图片堆</div><p className="mt-1 text-xs text-[var(--muted)]">选择后在下方设置张数并创建本代候选</p></button></div>}
+              </div>
+            </div>;
+          })}
+        </div>
       </div>
     </div>}
 
-    {selectedParentSet && !rounds.some((round) => round.parent_set_id === selectedParentSet.id) && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">创建第 {(selectedParentSet.generation ?? 1) + 1} 代深度候选</h3><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("suggestion")} aria-label="出图建议说明"><CircleHelp size={14} /></button></div><Guide step={3}>将使用当前选中的父本集，建议生成 {selectedParentSet.suggested_target_count ?? suggestedTargetCount(selectedParentSet.parents.length)} 张；生成后可从该代建立审美分支。</Guide><div className="mt-3 flex flex-wrap items-end gap-3"><label className="w-36 text-sm">本轮出图数<input className={`${inputClass} mt-1`} type="number" min={selectedParentSet.parents.length + 1} max={1000} value={targetCount} onChange={(event) => setTargetCount(Math.max(selectedParentSet.parents.length + 1, Math.min(1000, Number(event.target.value) || 1)))} /></label><button className={primaryButtonClass} onClick={appendRound} disabled={busy || run.status === "running"}><Sparkles size={15} />创建深度候选</button></div></div>}
+    {pairingParentSet && !choosingParents && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4"><div className="flex flex-wrap items-center gap-2"><div><h3 className="text-sm font-semibold">家族 {selectedFamily?.number} · 当前父本集</h3><p className="mt-1 text-xs text-[var(--muted)]">第 {pairingParentSet.generation ?? 1} 代育种父本 · {pairingParentSet.parents.length} 条 Artist String</p></div><button className={`${buttonClass} ml-auto`} onClick={() => { setPairIndex(0); setPairwiseOpen(true); }} disabled={busy || pairingParentSet.parents.length < 2 || Boolean(pairingParentSet.used_round_ids?.length)}><Heart size={14} />帮我排序（可选）</button></div></div>}
 
-    {selectedRound && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div><h3 className="text-sm font-semibold">深度第 {rounds.findIndex((item) => item.id === selectedRound.id) + 1} 轮</h3><p className="mt-1 text-xs text-[var(--muted)]">{selectedRoundCandidates.length} 条候选 · 已完成 {roundDoneCount} · 待生成 {selectedRoundCandidates.length - roundDoneCount - roundFailedCount}{roundFailedCount ? ` · 失败 ${roundFailedCount}` : ""}</p></div>
-        <div className="ml-auto flex flex-wrap gap-2">{run.status === "draft" && taskPendingCount > 0 && <button className={primaryButtonClass} onClick={() => controlRound("start")} disabled={busy}><Play size={14} />开始任务生成</button>}{run.status === "running" && <button className={buttonClass} onClick={() => controlRound("pause")} disabled={busy}><Pause size={14} />暂停任务生成</button>}{run.status === "paused" && taskPendingCount > 0 && <button className={primaryButtonClass} onClick={() => controlRound("resume")} disabled={busy}><Play size={14} />继续全部待生成</button>}{run.candidates.some((candidate) => candidate.generation.status === "failed") && <button className={buttonClass} onClick={() => controlRound("retry")} disabled={busy}>失败重试</button>}{unreviewedRoundCandidates.length > 0 && !selectedRoundCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)) && <button className={buttonClass} onClick={() => setReviewingRoundId(selectedRound.id)} disabled={busy}><ArrowDown size={14} />按轮筛选</button>}</div>
-      </div>
-      <div className="mt-3 space-y-2"><div className="flex justify-between text-xs text-[var(--muted)]"><span>本轮进度 {roundDoneCount}/{selectedRoundCandidates.length}</span><span>{roundProgress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[var(--hover)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-500" style={{ width: `${roundProgress}%` }} /></div><div className="flex justify-between text-[10px] text-[var(--muted)]"><span>任务总进度 {taskDoneCount}/{run.candidates.length}</span><span>{taskProgress}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[var(--hover)]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${taskProgress}%` }} /></div>{taskPendingCount > 0 && <p className="text-[10px] text-[var(--muted)]">任务使用同一个串行队列；继续后会把页面当前生图参数应用到所有尚未请求的候选，先补完较早轮次，再进入当前轮次。权重与候选串不会改变。</p>}</div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at).map((candidate) => <button type="button" key={candidate.id} className="overflow-hidden rounded-lg border border-[var(--border)] text-left transition-colors hover:border-[var(--accent)]" onClick={() => onPreviewCandidate(candidate.id)}><img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="深度候选" loading="lazy" /><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button>)}</div>
+    {selectedParentSet && !rounds.some((round) => round.parent_set_id === selectedParentSet.id) && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">创建第 {(selectedParentSet.generation ?? 1) + 1} 代候选</h3><button className="rounded-full text-[var(--muted)] hover:text-[var(--accent)]" onClick={() => setHelpKey("suggestion")}><CircleHelp size={14} /></button></div><Guide step={3}>使用家族 {selectedFamily?.number} 的当前父本集生成第一轮；之后可在图片堆右侧继续“新增一轮”。</Guide><div className="mt-3 flex flex-wrap items-end gap-3"><label className="w-36 text-sm">本轮出图数<input className={`${inputClass} mt-1`} type="number" min={selectedParentSet.parents.length + 1} max={1000} value={targetCount} onChange={(event) => setTargetCount(Math.max(selectedParentSet.parents.length + 1, Math.min(1000, Number(event.target.value) || 1)))} /></label><button className={primaryButtonClass} onClick={() => appendRoundFor(selectedParentSet, targetCount, false)} disabled={busy || run.status === "running"}><Sparkles size={15} />创建候选轮</button></div></div>}
+
+    {selectedRound && <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--input)]/25 p-4"><div className="flex flex-wrap items-center gap-2"><div><h3 className="text-sm font-semibold">家族 {familyById(selectedRound.family_id ?? parentSets.find((item) => item.id === selectedRound.parent_set_id)?.family_id)?.number} · 第 {selectedRound.generation ?? 2} 代 · 候选堆 {selectedRound.sibling_index ?? 1}</h3><p className="mt-1 text-xs text-[var(--muted)]">{selectedRoundCandidates.length} 条候选 · 已完成 {roundDoneCount} · 待生成 {selectedRoundCandidates.length - roundDoneCount - roundFailedCount}{roundFailedCount ? ` · 失败 ${roundFailedCount}` : ""}</p></div><div className="ml-auto flex flex-wrap gap-2">{run.status === "draft" && taskPendingCount > 0 && <button className={primaryButtonClass} onClick={() => controlRound("start")} disabled={busy}><Play size={14} />开始任务生成</button>}{run.status === "running" && <button className={buttonClass} onClick={() => controlRound("pause")} disabled={busy}><Pause size={14} />暂停任务生成</button>}{run.status === "paused" && taskPendingCount > 0 && <button className={primaryButtonClass} onClick={() => controlRound("resume")} disabled={busy}><Play size={14} />继续全部待生成</button>}{run.candidates.some((candidate) => candidate.generation.status === "failed") && <button className={buttonClass} onClick={() => controlRound("retry")} disabled={busy}>失败重试</button>}{unreviewedRoundCandidates.length > 0 && !selectedRoundCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status)) && <button className={buttonClass} onClick={() => setReviewingRoundId(selectedRound.id)} disabled={busy}><ArrowDown size={14} />按轮筛选</button>}</div></div>
+      <div className="mt-3 space-y-2"><div className="flex justify-between text-xs text-[var(--muted)]"><span>本轮进度 {roundDoneCount}/{selectedRoundCandidates.length}</span><span>{roundProgress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[var(--hover)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-500" style={{ width: `${roundProgress}%` }} /></div><div className="flex justify-between text-[10px] text-[var(--muted)]"><span>任务总进度 {taskDoneCount}/{run.candidates.length}</span><span>{taskProgress}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[var(--hover)]"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${taskProgress}%` }} /></div></div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{selectedRoundCandidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at).map((candidate) => <button type="button" key={candidate.id} className="overflow-hidden rounded-lg border border-[var(--border)] text-left hover:border-[var(--accent)]" onClick={() => onPreviewCandidate(candidate.id)}><img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="深度候选" loading="lazy" /><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button>)}</div>
     </div>}
 
-    {branchSourceRound && <Modal open onClose={() => setBranchSourceRoundId(null)} title="添加审美分支" wide><div className="space-y-4"><p className="text-sm leading-6 text-[var(--muted)]">从第 {branchSourceRound.generation ?? sortedRounds.findIndex((round) => round.id === branchSourceRound.id) + 2} 代勾选优秀子代。服务端会将该代使用的父本与选中子代去重合并为下一代父本；不会改变图片的 Treasure、Special 或 Reject 筛选结果。</p><label className="block text-sm">分支名称<input className={`${inputClass} mt-1`} value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="例如：柔和光影" autoFocus /></label><div><div className="mb-2 flex items-center justify-between text-sm"><span>优秀子代</span><span className="text-xs text-[var(--muted)]">已选 {branchCandidateIds.size} 张</span></div><div className="grid max-h-[48vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">{branchCandidates.map((candidate) => { const checked = branchCandidateIds.has(candidate.id); return <button type="button" key={candidate.id} onClick={() => toggleBranchCandidate(candidate.id)} className={`overflow-hidden rounded-xl border text-left ${checked ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`}><div className="relative aspect-[3/4]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="可选优秀子代" loading="lazy" />{checked && <span className="absolute left-2 top-2 rounded-full bg-[var(--accent)] p-1 text-white"><Check size={14} /></span>}</div><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button>; })}{branchCandidates.length === 0 && <p className="rounded-xl border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)] sm:col-span-2">本代没有可用于分支的已完成图片。</p>}</div></div><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => setBranchSourceRoundId(null)} disabled={busy}>取消</button><button className={primaryButtonClass} onClick={createBranch} disabled={busy || !branchName.trim() || branchCandidateIds.size === 0}><GitBranch size={15} />确认建立分支</button></div></div></Modal>}
+    {repeatParentSetId && (() => { const parentSet = parentSets.find((item) => item.id === repeatParentSetId); return parentSet ? <Modal open onClose={() => setRepeatParentSetId(null)} title={`第 ${(parentSet.generation ?? 1) + 1} 代 · 新增一轮`}><div className="space-y-4"><p className="text-sm leading-6 text-[var(--muted)]">新一轮会复用左侧候选堆完全相同的父本关系，生成结果与已有图片属于同一代、同辈，不会创建审美分支。</p><label className="block text-sm">新增图片数<input className={`${inputClass} mt-1`} type="number" min={parentSet.parents.length + 1} max={1000} value={targetCount} onChange={(event) => setTargetCount(Math.max(parentSet.parents.length + 1, Math.min(1000, Number(event.target.value) || 1)))} /></label><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => setRepeatParentSetId(null)}>取消</button><button className={primaryButtonClass} onClick={() => appendRoundFor(parentSet, targetCount, true)} disabled={busy}><Repeat2 size={14} />确认新增一轮</button></div></div></Modal> : null; })()}
 
-    {pairwiseOpen && activeParentSet && <Modal open onClose={() => setPairwiseOpen(false)} title="可选偏好排序" wide>{currentPair ? <div className="space-y-4"><Guide step={2}>选择更符合本次目标的一方，也可跳过或选择都不合适。{pairIndex + 1} / {pairCandidates.length}</Guide><div className="grid gap-3 sm:grid-cols-2">{(["left", "right"] as const).map((side) => { const parent = currentPair[side]; const candidate = candidateForParent(run, parent); return <div key={side} className="overflow-hidden rounded-xl border border-[var(--border)]">{candidate ? <img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`${side} 父本代表图`} /> : <div className="flex aspect-[3/4] items-center justify-center bg-[var(--hover)] text-sm text-[var(--muted)]">自定义串 · 无代表图</div>}<code className="block max-h-24 overflow-auto p-3 text-xs text-[var(--accent)]">{parent.artist_string}</code><button className={`${side === "left" ? primaryButtonClass : buttonClass} m-3`} onClick={() => recordPreference(side)} disabled={busy}>{side === "left" ? <ArrowUp size={14} /> : <ArrowRight size={14} />}选择这一方</button></div>; })}</div><div className="flex flex-wrap justify-end gap-2"><button className={buttonClass} onClick={() => recordPreference("skip")} disabled={busy}>跳过</button><button className={buttonClass} onClick={() => recordPreference("neither")} disabled={busy}>都不合适</button><button className={buttonClass} onClick={() => setPairwiseOpen(false)}>结束排序</button></div></div> : <div className="space-y-3"><p className="text-sm text-[var(--muted)]">当前父本不足两条，或本次比较已完成。</p><button className={buttonClass} onClick={() => setPairwiseOpen(false)}>关闭</button></div>}</Modal>}
+    {branchSourceRound && <Modal open onClose={() => setBranchSourceRoundId(null)} title="添加审美分支" wide><div className="space-y-4"><p className="text-sm leading-6 text-[var(--muted)]">从这个候选堆勾选优秀子代。系统会把它们与本家族第一代父本去重合并，用于生成下一代；其他家族以及 Treasure、Special、Reject 结果都不会改变。</p><label className="block text-sm">分支名称<input className={`${inputClass} mt-1`} value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="例如：柔和光影" autoFocus /></label><div><div className="mb-2 flex items-center justify-between text-sm"><span>优秀子代</span><span className="text-xs text-[var(--muted)]">已选 {branchCandidateIds.size} 张</span></div><div className="grid max-h-[48vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">{branchCandidates.map((candidate) => { const checked = branchCandidateIds.has(candidate.id); return <button type="button" key={candidate.id} onClick={() => toggleBranchCandidate(candidate.id)} className={`overflow-hidden rounded-xl border text-left ${checked ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`}><div className="relative aspect-[3/4]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="可选优秀子代" loading="lazy" />{checked && <span className="absolute left-2 top-2 rounded-full bg-[var(--accent)] p-1 text-white"><Check size={14} /></span>}</div><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button>; })}</div></div><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => setBranchSourceRoundId(null)} disabled={busy}>取消</button><button className={primaryButtonClass} onClick={createBranch} disabled={busy || !branchName.trim() || branchCandidateIds.size === 0}><GitBranch size={15} />确认建立分支</button></div></div></Modal>}
 
-    {reviewingRoundId && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${reviewingRoundId}-${unreviewedRoundCandidates.map((candidate) => candidate.id).join("-")}`} items={unreviewedRoundCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart }))} categoryLabel={`${run.name} · 深度第 ${Math.max(1, rounds.findIndex((item) => item.id === reviewingRoundId) + 1)} 轮`} choices={DEEP_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyRoundReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setReviewingRoundId(null); notify(result.message); }} onCancel={() => setReviewingRoundId(null)} /></div>, document.body)}
+    {pairwiseOpen && pairingParentSet && <Modal open onClose={() => setPairwiseOpen(false)} title="可选偏好排序" wide>{currentPair ? <div className="space-y-4"><Guide step={2}>本次评分只影响这个父本集即将生成的候选。{pairIndex + 1} / {pairCandidates.length}</Guide><div className="grid gap-3 sm:grid-cols-2">{(["left", "right"] as const).map((side) => { const parent = currentPair[side]; const candidate = candidateForParent(run, parent); return <div key={side} className="overflow-hidden rounded-xl border border-[var(--border)]">{candidate ? <img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="父本代表图" /> : <div className="flex aspect-[3/4] items-center justify-center bg-[var(--hover)] text-sm text-[var(--muted)]">自定义串 · 无代表图</div>}<code className="block max-h-24 overflow-auto p-3 text-xs text-[var(--accent)]">{parent.artist_string}</code><button className={`${side === "left" ? primaryButtonClass : buttonClass} m-3`} onClick={() => recordPreference(side)} disabled={busy}>{side === "left" ? <ArrowUp size={14} /> : <ArrowRight size={14} />}选择这一方</button></div>; })}</div><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => recordPreference("skip")} disabled={busy}>跳过</button><button className={buttonClass} onClick={() => recordPreference("neither")} disabled={busy}>都不合适</button><button className={buttonClass} onClick={() => setPairwiseOpen(false)}>结束排序</button></div></div> : <p className="text-sm text-[var(--muted)]">当前父本不足两条，或本次比较已完成。</p>}</Modal>}
+
+    {reviewingRoundId && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${reviewingRoundId}-${unreviewedRoundCandidates.map((candidate) => candidate.id).join("-")}`} items={unreviewedRoundCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart }))} categoryLabel={`${run.name} · 深度候选轮`} choices={DEEP_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyRoundReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setReviewingRoundId(null); notify(result.message); }} onCancel={() => setReviewingRoundId(null)} /></div>, document.body)}
 
     <Modal open={helpKey !== null} onClose={() => setHelpKey(null)} title={helpKey ? HELP[helpKey].title : "说明"}>{helpKey && <p className="text-sm leading-7 text-[var(--muted)]">{HELP[helpKey].text}</p>}</Modal>
   </section>;

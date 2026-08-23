@@ -437,12 +437,15 @@ export type StyleExploreDeepBranch = {
   name: string;
   source_round_id: string;
   source_parent_set_id: string;
+  root_parent_set_id?: string;
+  family_id?: string;
   selected_candidate_ids: string[];
 };
 
 export type StyleExploreDeepParentSet = {
   id: string;
   number: number;
+  family_id?: string;
   status: "active" | "used";
   created_at: string;
   updated_at: string;
@@ -454,6 +457,15 @@ export type StyleExploreDeepParentSet = {
   branch?: StyleExploreDeepBranch;
 };
 
+export type StyleExploreDeepFamily = {
+  id: string;
+  number: number;
+  created_at: string;
+  updated_at: string;
+  root_parent_set_id: string;
+  active_parent_set_id: string;
+};
+
 export type StyleExploreRound = {
   id: string;
   number: number;
@@ -463,13 +475,17 @@ export type StyleExploreRound = {
   created_at: string;
   random_seed?: number;
   parent_set_id?: string;
+  family_id?: string;
   suggested_next_parent_count?: number;
   candidate_ids?: string[];
   generation?: number;
+  sibling_index?: number;
 };
 
 export type StyleExploreDeepState = {
   active_parent_set_id: string | null;
+  active_family_id?: string | null;
+  families?: StyleExploreDeepFamily[];
   parent_sets: StyleExploreDeepParentSet[];
 };
 
