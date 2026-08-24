@@ -23,6 +23,7 @@ from . import library as library_service
 from . import novelai as novelai_service
 from . import style_explore_algorithm
 from .config import PROJECT_ROOT
+from .generation_timing import COOL_MAX, COOL_MIN, RETRY_WAIT_MAX, RETRY_WAIT_MIN, cool_down
 
 
 STYLE_EXPLORE_DIR = PROJECT_ROOT / "style_explore"
@@ -32,6 +33,10 @@ RUNS_DIR = STYLE_EXPLORE_DIR / "runs"
 POOLS_INDEX_FILE = POOLS_DIR / "index.json"
 DEFAULT_POOL_ID = "artists_backup"
 DEFAULT_POOL_FILE = POOLS_DIR / f"{DEFAULT_POOL_ID}.txt"
+DEFAULT_POOL_SEEDS = {
+    "artists_backup": {"name": "artists_backup", "source_name": "artists_backup.txt"},
+    "BV1ru8Y6gE3L": {"name": "BV1ru8Y6gE3L", "source_name": "BV1ru8Y6gE3L.txt"},
+}
 IMPORT_ORIGINAL_BACKUP = "import-original.txt"
 POOL_REPORT_PREVIEW_LIMIT = 20
 
@@ -51,24 +56,30 @@ def ensure_storage() -> None:
     POOLS_DIR.mkdir(parents=True, exist_ok=True)
     POOL_BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    if DEFAULT_POOL_FILE.is_file():
-        index = _read_json(POOLS_INDEX_FILE, [])
-        if not isinstance(index, list):
-            index = []
-        if not any(item.get("id") == DEFAULT_POOL_ID for item in index if isinstance(item, dict)):
-            ids, _ = _normalize_ids(DEFAULT_POOL_FILE.read_text(encoding="utf-8"))
-            if ids:
-                now = _now()
-                index.append(
-                    {
-                        "id": DEFAULT_POOL_ID,
-                        "name": "artists_backup",
-                        "source_name": "artists_backup.txt",
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                )
-                _save_pool_index(index)
+    index = _read_json(POOLS_INDEX_FILE, [])
+    if not isinstance(index, list):
+        index = []
+    changed = False
+    for pool_id, seed in DEFAULT_POOL_SEEDS.items():
+        seed_file = POOLS_DIR / seed["source_name"]
+        if not seed_file.is_file() or any(item.get("id") == pool_id for item in index if isinstance(item, dict)):
+            continue
+        ids, _ = _normalize_ids(seed_file.read_text(encoding="utf-8"))
+        if not ids:
+            continue
+        now = _now()
+        index.append(
+            {
+                "id": pool_id,
+                "name": seed["name"],
+                "source_name": seed["source_name"],
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        changed = True
+    if changed:
+        _save_pool_index(index)
 
 
 def _write_json(path: Path, value: dict | list) -> None:
@@ -108,21 +119,56 @@ def _split_pool_entries(content: str) -> list[str]:
     return parts
 
 
+_NUMERICAL_EMPHASIS_ITEM = re.compile(
+    r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*::\s*(.*?)(?:\s*::)?$"
+)
+_EMPHASIS_BRACKET_CHARS = "{}[]"
+
+
+def _normalize_pool_entry(value: str) -> tuple[str, bool, int]:
+    """移除可粘贴的 NovelAI 权重语法，只保留 Artist ID 本体。"""
+    bracket_count = sum(value.count(char) for char in _EMPHASIS_BRACKET_CHARS)
+    if bracket_count:
+        value = value.translate(str.maketrans("", "", _EMPHASIS_BRACKET_CHARS))
+    normalized = value.strip()
+    # 官网复制的串常见为 ``0.8::artist, ::``：逗号会把关闭符单独拆成一项。
+    # 该项不是 Artist ID，丢弃后即可与 ``0.8::artist::`` 得到同一结果。
+    if normalized == "::":
+        return "", False, bracket_count
+    match = _NUMERICAL_EMPHASIS_ITEM.match(normalized)
+    if match is None:
+        return normalized, False, bracket_count
+    return match.group(1).strip(), True, bracket_count
+
+
 def _normalize_ids(content: str) -> tuple[list[str], dict]:
     """兼容两种池子格式，保序去重并返回可展示的导入统计。"""
     seen: set[str] = set()
     ids: list[str] = []
     duplicate_entries: list[str] = []
     skipped_entries: list[dict[str, str]] = []
-    report = {"input_count": 0, "duplicate_count": 0, "skipped_count": 0}
+    report = {
+        "input_count": 0,
+        "duplicate_count": 0,
+        "skipped_count": 0,
+        "weight_syntax_stripped_count": 0,
+        "bracket_chars_stripped_count": 0,
+    }
     for part in _split_pool_entries(content):
-        value = part.strip()
-        if not value:
+        raw_value = part.strip()
+        if not raw_value:
             continue
         report["input_count"] += 1
-        if value.startswith("#"):
+        if raw_value.startswith("#"):
             report["skipped_count"] += 1
-            skipped_entries.append({"value": value, "reason": "comment"})
+            skipped_entries.append({"value": raw_value, "reason": "comment"})
+            continue
+        value, stripped_weight, bracket_count = _normalize_pool_entry(raw_value)
+        report["weight_syntax_stripped_count"] += int(stripped_weight)
+        report["bracket_chars_stripped_count"] += bracket_count
+        if not value:
+            report["skipped_count"] += 1
+            skipped_entries.append({"value": raw_value, "reason": "empty_after_normalization"})
             continue
         if value in seen:
             report["duplicate_count"] += 1
@@ -149,7 +195,13 @@ def _normalize_ids(content: str) -> tuple[list[str], dict]:
         if has_unescaped_comma
         else "one_id_per_line"
     )
-    warnings = ["comment_lines_skipped"] if skipped_entries else []
+    warnings: list[str] = []
+    if any(item["reason"] == "comment" for item in skipped_entries):
+        warnings.append("comment_lines_skipped")
+    if report["weight_syntax_stripped_count"]:
+        warnings.append("numerical_emphasis_stripped")
+    if report["bracket_chars_stripped_count"]:
+        warnings.append("emphasis_brackets_stripped")
     normalized_content = _pool_text(ids)
     return ids, {
         **report,
@@ -172,6 +224,8 @@ def _normalize_ids(content: str) -> tuple[list[str], dict]:
             "normalized_format": "one_id_per_line",
             "literal_comma_escape": "\\,",
             "comment_prefix": "#",
+            "numerical_emphasis": "N::artist_id[::] is normalized to artist_id",
+            "removed_emphasis_brackets": list(_EMPHASIS_BRACKET_CHARS),
         },
     }
 
@@ -1572,6 +1626,19 @@ def _create_basic_candidates(record: dict) -> None:
     )
 
 
+def _cool_down(run_id: str, min_sec: float = COOL_MIN, max_sec: float = COOL_MAX) -> bool:
+    """与普通批量生成共用的请求冷却，并在等待期间响应暂停/结束。"""
+
+    def is_cancelled() -> bool:
+        with _lock:
+            try:
+                return _load_run(run_id).get("status") != "running"
+            except (FileNotFoundError, ValueError):
+                return True
+
+    return cool_down(min_sec, max_sec, is_cancelled)
+
+
 def _worker_loop(run_id: str) -> None:
     """探索专属串行 worker：一张完成即写入任务记录与专属 active 目录。"""
     try:
@@ -1598,9 +1665,17 @@ def _worker_loop(run_id: str) -> None:
 
             try:
                 snapshot = candidate.get("prompt_snapshot") or record.get("prompt_snapshot") or {}
+                raw_artist_string = str(candidate.get("artist_string") or "")
+                try:
+                    artist_string = style_explore_algorithm.build_artist_string(
+                        style_explore_algorithm.parse_artist_string(raw_artist_string)
+                    )
+                except ValueError:
+                    # 手工补录的非标准候选仍按原文生成，避免修复过程意外改写用户提示词。
+                    artist_string = raw_artist_string
                 prompt = ", ".join(
                     part.strip().rstrip(",")
-                    for part in [str(snapshot.get("positive") or ""), str(candidate["artist_string"])]
+                    for part in [str(snapshot.get("positive") or ""), artist_string]
                     if part and part.strip()
                 )
                 params = dict(snapshot.get("params") or {})
@@ -1622,8 +1697,11 @@ def _worker_loop(run_id: str) -> None:
                     item = next(x for x in latest["candidates"] if x["id"] == candidate["id"])
                     item["generation"] = {**item.get("generation", {}), "status": "failed", "error": str(exc)[:500]}
                     _save_run(latest)
+                if not _cool_down(run_id, RETRY_WAIT_MIN, RETRY_WAIT_MAX):
+                    return
                 continue
 
+            more_pending = False
             with _lock:
                 latest = _load_run(run_id)
                 item = next(x for x in latest["candidates"] if x["id"] == candidate["id"])
@@ -1640,6 +1718,12 @@ def _worker_loop(run_id: str) -> None:
                     "error": None,
                 }
                 _save_run(latest)
+                more_pending = any(
+                    current.get("generation", {}).get("status") == "pending"
+                    for current in latest.get("candidates") or []
+                )
+            if more_pending and not _cool_down(run_id):
+                return
     finally:
         with _lock:
             try:

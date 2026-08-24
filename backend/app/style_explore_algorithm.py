@@ -313,7 +313,9 @@ def build_artist_string(artist_weights: Sequence[ArtistWeight]) -> str:
             raise ValueError("Artist ID 不能为空")
         if not math.isfinite(item.weight):
             raise ValueError("Artist 权重必须是有限数字")
-        parts.append(f"{item.weight:.1f}::{artist_id}::")
+        # 结束分隔符前保留空格，避免 ID 首尾数字与 ``::`` 紧连时被官网
+        # 编辑器误识别为另一段数值权重；空格不改变 Artist ID 的提示词语义。
+        parts.append(f"{item.weight:.1f}::{artist_id} ::")
     return ", ".join(parts)
 
 

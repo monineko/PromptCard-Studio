@@ -306,6 +306,17 @@ class StyleExploreAlgorithmTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不能为空"):
             build_artist_string([ArtistWeight("", 1.0)])
 
+    def test_artist_string_leaves_a_safe_gap_before_closing_delimiter(self):
+        artist_string = build_artist_string(
+            [ArtistWeight("3artist", 1.4), ArtistWeight("artist9", 0.7)]
+        )
+
+        self.assertEqual(artist_string, "1.4::3artist ::, 0.7::artist9 ::")
+        self.assertEqual(
+            parse_artist_string(artist_string),
+            (ArtistWeight("3artist", 1.4), ArtistWeight("artist9", 0.7)),
+        )
+
     def test_dispersion_mapping_is_monotonic(self):
         _, concentrated_beta = dispersion_to_beta_shape(0.0)
         _, spread_beta = dispersion_to_beta_shape(1.0)

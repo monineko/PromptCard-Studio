@@ -13,7 +13,6 @@
 import itertools
 import json
 import os
-import random
 import threading
 import time
 import uuid
@@ -23,19 +22,15 @@ from pathlib import Path
 from . import cards as cards_service
 from . import novelai as novelai_service
 from .config import PROJECT_ROOT
+from .generation_timing import COOL_MAX, COOL_MIN, RETRY_WAIT_MAX, RETRY_WAIT_MIN, cool_down
 
 BATCH_DIR = PROJECT_ROOT / "batch_runs"
 RECORD_FILE = BATCH_DIR / "active.json"
 
 DEFAULT_ESTIMATE_SEC = 30.0
 
-# 请求间隔（与 ANR sleep_for_cool 一致）：每张图片**收到之后**再随机等待 4~6 秒
-# （最短 4 秒），避免连续请求过快触发 NovelAI 限流；
-# 请求失败后先等待 8~15 秒再重试，同一张图连续 3 次失败才中断并暂停任务。
-COOL_MIN = 4.0
-COOL_MAX = 6.0
-RETRY_WAIT_MIN = 8.0
-RETRY_WAIT_MAX = 15.0
+# 请求间隔由 generation_timing 统一维护：每张图片完成后随机等待 4~6 秒；
+# 失败重试前等待 8~15 秒，避免连续请求过快触发 NovelAI 限流。
 MAX_RETRIES = 2  # 首次 + 2 次重试 = 连续 3 次失败才暂停
 
 _lock = threading.Lock()
@@ -213,13 +208,7 @@ def _next_pending(record: dict) -> dict | None:
 
 def _cool_down(min_sec: float, max_sec: float) -> None:
     """随机等待，期间响应暂停/结束请求（分片检查事件）。"""
-    remain = random.uniform(min_sec, max_sec)
-    while remain > 0:
-        if _stop_event.is_set() or _ended.is_set():
-            return
-        step = min(0.5, remain)
-        time.sleep(step)
-        remain -= step
+    cool_down(min_sec, max_sec, lambda: _stop_event.is_set() or _ended.is_set())
 
 
 def _worker_loop() -> None:

@@ -72,6 +72,8 @@ class StyleExploreServiceTest(unittest.TestCase):
             }
 
         explore.novelai_service.generate_text2image = fake_generate
+        self.old_cool_down = explore._cool_down
+        explore._cool_down = lambda *_args: True
         coordinator.release("style_explore")
 
     def tearDown(self):
@@ -80,6 +82,7 @@ class StyleExploreServiceTest(unittest.TestCase):
         explore._assert_batch_idle = self.old_batch_check
         explore.novelai_service.is_configured = self.old_is_configured
         explore.novelai_service.generate_text2image = self.old_generate
+        explore._cool_down = self.old_cool_down
         explore.library_service._library_root = self.old_library_root
         (
             explore.cards_service.PROMPTCARDS_DIR,
@@ -124,6 +127,47 @@ class StyleExploreServiceTest(unittest.TestCase):
         original_backup = explore.POOL_BACKUPS_DIR / pool["id"] / backups[0]["name"]
         self.assertEqual(original_backup.read_text(encoding="utf-8"), content)
 
+    def test_pool_strips_numerical_emphasis_and_brackets_from_imported_ids(self):
+        pool = explore.create_pool(
+            "带权重池",
+            "2::artist::, -1.5::{artist2}::\n[artist3]\n{{artist4}}\nname\\,with-comma\n",
+        )
+
+        self.assertEqual(
+            explore.get_pool(pool["id"])["ids"],
+            ["artist", "artist2", "artist3", "artist4", "name\\,with-comma"],
+        )
+        self.assertEqual(pool["weight_syntax_stripped_count"], 2)
+        self.assertEqual(pool["bracket_chars_stripped_count"], 8)
+        self.assertIn("numerical_emphasis_stripped", pool["warnings"])
+        self.assertIn("emphasis_brackets_stripped", pool["warnings"])
+
+    def test_pool_save_strips_comma_split_novelai_artist_weights(self):
+        pool = explore.create_pool("待保存池", "old_artist\n")
+        pasted = (
+            "0.8::ningmeng_jing_jing_jing_jing, ::, 0.9::setmen, ::, "
+            "1.0::haruasana, ::, 0.8::chen_bin, ::, 1.2::mugenstudio, "
+            "1.5::setmen, ::, 0.6::yottacc,::,1.3::mozukun43,::,"
+        )
+
+        updated = explore.update_pool(pool["id"], pasted)
+
+        self.assertEqual(updated["count"], 7)
+        self.assertEqual(updated["weight_syntax_stripped_count"], 8)
+        self.assertEqual(
+            explore.get_pool(pool["id"])["ids"],
+            ["ningmeng_jing_jing_jing_jing", "setmen", "haruasana", "chen_bin", "mugenstudio", "yottacc", "mozukun43"],
+        )
+
+    def test_pool_save_strips_brackets_from_comma_split_weighted_entries(self):
+        pool = explore.create_pool("带括号待保存池", "old_artist\n")
+
+        updated = explore.update_pool(pool["id"], "{0.8::artist_a}, ::, [1.1::artist2], ::,")
+
+        self.assertEqual(updated["weight_syntax_stripped_count"], 2)
+        self.assertEqual(updated["bracket_chars_stripped_count"], 4)
+        self.assertEqual(explore.get_pool(pool["id"])["ids"], ["artist_a", "artist2"])
+
     def test_default_artist_pool_seed_is_indexed_on_first_access(self):
         default_file = explore.POOLS_DIR / "artists_backup.txt"
         default_file.parent.mkdir(parents=True, exist_ok=True)
@@ -136,6 +180,17 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(pools[0]["name"], "artists_backup")
         self.assertEqual(pools[0]["count"], 2)
         self.assertEqual(explore.get_pool("artists_backup")["ids"], ["ciloranko", "wlop"])
+
+    def test_all_packaged_default_artist_pools_are_indexed_on_first_access(self):
+        explore.POOLS_DIR.mkdir(parents=True, exist_ok=True)
+        (explore.POOLS_DIR / "artists_backup.txt").write_text("ciloranko\n", encoding="utf-8")
+        (explore.POOLS_DIR / "BV1ru8Y6gE3L.txt").write_text("yuming_li\notonoha_aika\n", encoding="utf-8")
+
+        pools = explore.list_pools()
+
+        self.assertEqual([pool["id"] for pool in pools], ["artists_backup", "BV1ru8Y6gE3L"])
+        self.assertEqual([pool["name"] for pool in pools], ["artists_backup", "BV1ru8Y6gE3L"])
+        self.assertEqual(explore.get_pool("BV1ru8Y6gE3L")["ids"], ["yuming_li", "otonoha_aika"])
 
     def test_pool_update_creates_backup_and_run_snapshots_ids(self):
         pool = explore.create_pool("原池", "a\nb\n")
@@ -218,6 +273,103 @@ class StyleExploreServiceTest(unittest.TestCase):
         moved = explore.get_run(run["id"])["candidates"][0]
         self.assertIn("treasure", Path(moved["generation"]["path"]).parts)
         self.assertTrue(explore.candidate_image_file(run["id"], candidate["id"]).is_file())
+
+    def test_worker_cools_down_between_successful_generation_requests(self):
+        pool = explore.create_pool("节流池", "a\nb\n")
+        run = explore.create_run(pool["id"], 2, "base", "neg", algorithm={"artist_count": 1})
+        calls: list[str] = []
+        old_cool_down = getattr(explore, "_cool_down", None)
+        explore._cool_down = lambda current_run_id, *_args: calls.append(current_run_id) or True
+        try:
+            self.generate_gate.set()
+            explore.start_run(run["id"])
+            for _ in range(100):
+                current = explore.get_run(run["id"])
+                if current["status"] == "generated":
+                    break
+                time.sleep(0.02)
+            self.assertEqual(current["status"], "generated")
+            self.assertEqual(calls, [run["id"]])
+        finally:
+            if old_cool_down is None:
+                delattr(explore, "_cool_down")
+            else:
+                explore._cool_down = old_cool_down
+
+    def test_worker_uses_retry_cool_down_after_a_failed_generation_request(self):
+        pool = explore.create_pool("失败节流池", "a\nb\n")
+        run = explore.create_run(pool["id"], 2, "base", "neg", algorithm={"artist_count": 1})
+        attempts: list[str] = []
+        cool_down_calls: list[tuple[str, float, float]] = []
+        old_generate = explore.novelai_service.generate_text2image
+        old_cool_down = explore._cool_down
+
+        def fail_once(_prompt, _negative, _params, output_dir=None):
+            attempts.append("request")
+            if len(attempts) == 1:
+                raise RuntimeError("temporary failure")
+            return {
+                "path": str(Path(output_dir or self.tmp.name) / "fake.png"),
+                "name": "fake.png",
+                "seed": 42,
+                "width": 1,
+                "height": 1,
+                "elapsed_ms": 1,
+                "anlas": None,
+            }
+
+        explore.novelai_service.generate_text2image = fail_once
+        explore._cool_down = lambda current_run_id, minimum, maximum: (
+            cool_down_calls.append((current_run_id, minimum, maximum)) or True
+        )
+        try:
+            explore.start_run(run["id"])
+            for _ in range(100):
+                current = explore.get_run(run["id"])
+                if current["status"] == "generated":
+                    break
+                time.sleep(0.02)
+            self.assertEqual(current["status"], "generated")
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(
+                cool_down_calls,
+                [(run["id"], explore.RETRY_WAIT_MIN, explore.RETRY_WAIT_MAX)],
+            )
+        finally:
+            explore.novelai_service.generate_text2image = old_generate
+            explore._cool_down = old_cool_down
+
+    def test_worker_reserializes_legacy_artist_string_before_generation(self):
+        pool = explore.create_pool("旧串池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg")
+        explore.add_candidates(run["id"], [{"id": "legacy", "artist_string": "1.4::artist9::"}])
+        prompts: list[str] = []
+        old_generate = explore.novelai_service.generate_text2image
+
+        def capture_prompt(prompt, _negative, _params, output_dir=None):
+            prompts.append(prompt)
+            return {
+                "path": str(Path(output_dir or self.tmp.name) / "fake.png"),
+                "name": "fake.png",
+                "seed": 42,
+                "width": 1,
+                "height": 1,
+                "elapsed_ms": 1,
+                "anlas": None,
+            }
+
+        explore.novelai_service.generate_text2image = capture_prompt
+        try:
+            explore.start_run(run["id"])
+            for _ in range(100):
+                current = explore.get_run(run["id"])
+                if current["status"] == "generated":
+                    break
+                time.sleep(0.02)
+            self.assertEqual(current["status"], "generated")
+            self.assertEqual(prompts, ["base, 1.4::artist9 ::"])
+        finally:
+            explore.novelai_service.generate_text2image = old_generate
 
     def test_task_can_be_renamed_and_append_round_keeps_its_own_snapshot(self):
         pool = explore.create_pool("池", "a\nb\n")
@@ -580,7 +732,7 @@ class StyleExploreServiceTest(unittest.TestCase):
         custom = explore.set_deep_parent_set(run["id"], [], ["0.8::outside::"])
         parent = custom["deep"]["parent_sets"][0]["parents"][0]
         self.assertEqual(parent["source"], "custom")
-        self.assertEqual(parent["artist_string"], "0.8::outside::")
+        self.assertEqual(parent["artist_string"], "0.8::outside ::")
 
     def test_aesthetic_branch_backcrosses_selected_children_with_family_root_parents(self):
         pool = explore.create_pool("回交池", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
