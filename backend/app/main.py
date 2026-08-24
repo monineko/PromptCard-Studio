@@ -87,7 +87,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="PromptCard Studio for NovelAI", version="1.0.2", lifespan=_lifespan)
+app = FastAPI(title="PromptCard Studio for NovelAI", version="1.2.0", lifespan=_lifespan)
 
 # 本地 Web 应用：只允许本机来源（127.0.0.1 / localhost 任意端口，含前端开发服务器），
 # 防止外部网页跨域读取本地数据或触发关闭等操作
