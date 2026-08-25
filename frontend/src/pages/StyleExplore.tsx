@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, ChevronDown, ChevronUp, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, ChevronUp, CircleAlert, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
@@ -84,9 +84,9 @@ function ParameterHelp({ entry, onOpen }: { entry: HelpEntry; onOpen: (entry: He
 }
 
 function ParameterControl({
-  label, help, value, onChange, min, max, step, defaultValue, integer, onOpenHelp,
+  label, help, value, onChange, min, max, step, defaultValue, integer, onOpenHelp, advancedAction,
 }: {
-  label: string; help: HelpEntry; value: number; onChange: (value: number) => void; min: number; max: number; step: number; defaultValue: number; integer?: boolean; onOpenHelp: (entry: HelpEntry) => void;
+  label: string; help: HelpEntry; value: number; onChange: (value: number) => void; min: number; max: number; step: number; defaultValue: number; integer?: boolean; onOpenHelp: (entry: HelpEntry) => void; advancedAction?: { label: string; onClick: () => void };
 }) {
   const safeValue = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : defaultValue;
   const precision = step < 1 ? 1 : 0;
@@ -99,7 +99,7 @@ function ParameterControl({
     }
   };
   return <div className="min-w-0 text-sm">
-    <div className="mb-1 flex items-center justify-between gap-2"><label className="min-w-0">{label}<ParameterHelp entry={help} onOpen={onOpenHelp} /></label><button type="button" className="shrink-0 rounded-md p-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]" aria-label={`恢复“${label}”默认值`} title="恢复默认值" onClick={() => onChange(defaultValue)}><RotateCcw size={14} /></button></div>
+    <div className="mb-1 flex items-center justify-between gap-2"><label className="min-w-0">{label}<ParameterHelp entry={help} onOpen={onOpenHelp} />{advancedAction && <span className="group relative inline-flex align-middle"><button type="button" className="ml-1 inline-flex rounded-full text-[var(--muted)] hover:text-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" aria-label={advancedAction.label} onClick={(event) => { event.preventDefault(); advancedAction.onClick(); }}><CircleAlert size={15} aria-hidden="true" /></button><span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-xs font-normal text-[var(--text)] shadow-xl group-hover:block group-focus-within:block">{advancedAction.label}</span></span>}</label><button type="button" className="shrink-0 rounded-md p-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]" aria-label={`恢复“${label}”默认值`} title="恢复默认值" onClick={() => onChange(defaultValue)}><RotateCcw size={14} /></button></div>
     <div className="flex items-center gap-2"><input className={inputClass} type="number" min={min} max={max} step={step} value={displayValue} onChange={(event) => apply(event.target.value)} /><span className="shrink-0 text-xs text-[var(--muted)]">{min}–{max}</span></div>
     <input className="mt-2 w-full accent-[var(--accent)]" type="range" min={min} max={max} step={step} value={safeValue} aria-label={label} onChange={(event) => apply(event.target.value)} />
   </div>;
@@ -156,10 +156,10 @@ function SplitBetaPreview({ lower, upper, mode, leftDispersion, rightDispersion 
   </section>;
 }
 
-function WeightParameters({ targetCount, setTargetCount, minArtistCount, setMinArtistCount, lower, setLower, upper, setUpper, mode, setMode, leftDispersion, setLeftDispersion, rightDispersion, setRightDispersion, softBalanceStrength, setSoftBalanceStrength, setHelpEntry }: { targetCount: number; setTargetCount: (value: number) => void; minArtistCount: number; setMinArtistCount: (value: number) => void; lower: number; setLower: (value: number) => void; upper: number; setUpper: (value: number) => void; mode: number; setMode: (value: number) => void; leftDispersion: number; setLeftDispersion: (value: number) => void; rightDispersion: number; setRightDispersion: (value: number) => void; softBalanceStrength: number; setSoftBalanceStrength: (value: number) => void; setHelpEntry: (entry: HelpEntry) => void }) {
+function WeightParameters({ targetCount, setTargetCount, minArtistCount, setMinArtistCount, maxArtistCount, lower, setLower, upper, setUpper, mode, setMode, leftDispersion, setLeftDispersion, rightDispersion, setRightDispersion, softBalanceStrength, setSoftBalanceStrength, setHelpEntry, onOpenAdvancedSettings }: { targetCount: number; setTargetCount: (value: number) => void; minArtistCount: number; setMinArtistCount: (value: number) => void; maxArtistCount: number; lower: number; setLower: (value: number) => void; upper: number; setUpper: (value: number) => void; mode: number; setMode: (value: number) => void; leftDispersion: number; setLeftDispersion: (value: number) => void; rightDispersion: number; setRightDispersion: (value: number) => void; softBalanceStrength: number; setSoftBalanceStrength: (value: number) => void; setHelpEntry: (entry: HelpEntry) => void; onOpenAdvancedSettings: () => void }) {
   return <section className="glass rounded-2xl p-5"><div><h2 className="font-semibold">权重参数</h2><p className="mt-1 text-xs text-[var(--muted)]">控制 Artist String 的随机权重分布；下方图表会即时反映当前的 Split-Beta 参数。</p></div><div className="mt-4 grid gap-x-4 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
     <ParameterControl label="目标图片数" help={{ title: "目标图片数", description: "本次基础探索要生成的候选图片数。数值越大，覆盖的 Artist String 组合越多，也会增加生成耗时和消耗。" }} value={targetCount} onChange={setTargetCount} min={1} max={1000} step={1} defaultValue={20} integer onOpenHelp={setHelpEntry} />
-    <ParameterControl label="最少抽取 ID 数目" help={{ title: "最少抽取 ID 数目", description: "每张候选图都会重新决定实际抽取数量，并从这个下限随机到 10；若池子不足 10 个，则随机到池子大小。例如设为 2 时，每次会随机抽取 2～10 个 ID，而非固定 2 个。" }} value={minArtistCount} onChange={setMinArtistCount} min={1} max={10} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} />
+    <ParameterControl label="最少抽取 ID 数目" help={{ title: "最少抽取 ID 数目", description: `每张候选图都会重新决定实际抽取数量，并从这个下限随机到当前上限 ${maxArtistCount}；若池子不足，则以池子大小为准。` }} value={minArtistCount} onChange={setMinArtistCount} min={1} max={maxArtistCount} step={1} defaultValue={2} integer onOpenHelp={setHelpEntry} advancedAction={{ label: "高级设置：调整最大抽取ID数目", onClick: onOpenAdvancedSettings }} />
     <ParameterControl label="权重下界" help={{ title: "权重下界", description: "本轮随机权重不会低于这个值。它与上界共同限定可出现的权重范围，必须不大于众数。" }} value={lower} onChange={setLower} min={-3} max={3} step={0.1} defaultValue={0.1} onOpenHelp={setHelpEntry} />
     <ParameterControl label="权重上界" help={{ title: "权重上界", description: "本轮随机权重不会高于这个值。它与下界共同限定可出现的权重范围，必须不小于众数。" }} value={upper} onChange={setUpper} min={-3} max={3} step={0.1} defaultValue={2} onOpenHelp={setHelpEntry} />
     <ParameterControl label="众数" help={{ title: "众数", description: "Split-Beta 分布的中心。随机采样最倾向于靠近它，但不会保证每个画师 ID 都取该权重。众数必须落在上下界之间。" }} value={mode} onChange={setMode} min={Math.min(lower, upper)} max={Math.max(lower, upper)} step={0.1} defaultValue={0.8} onOpenHelp={setHelpEntry} />
@@ -172,6 +172,7 @@ function WeightParameters({ targetCount, setTargetCount, minArtistCount, setMinA
 export function StyleExplore() {
   const navigate = useNavigate();
   const addToast = useStore((s) => s.addToast);
+  const settings = useStore((s) => s.settings);
   const refreshCategories = useStore((s) => s.refreshCategories);
   const workspacePositive = useStore((s) => s.positive);
   const workspaceNegative = useStore((s) => s.negative);
@@ -201,6 +202,7 @@ export function StyleExplore() {
   const [targetCount, setTargetCount] = useState(20);
   const [taskName, setTaskName] = useState("");
   const [minArtistCount, setMinArtistCount] = useState(2);
+  const maxArtistCount = Math.max(10, Math.min(30, Math.round(settings?.style_explore_max_artist_count ?? 10)));
   const [lower, setLower] = useState(0.1);
   const [upper, setUpper] = useState(2);
   const [mode, setMode] = useState(0.8);
@@ -231,14 +233,15 @@ export function StyleExplore() {
     const latestBasicRound = [...((next.rounds ?? []) as unknown as SnapshotRound[])].reverse().find((round) => round.phase === "basic");
     const source = latestBasicRound?.algorithm ?? next.algorithm ?? {};
     setTargetCount(Math.max(1, Math.min(1000, finiteNumber(latestBasicRound?.target_count ?? next.target_count, 20))));
-    setMinArtistCount(Math.max(1, Math.min(10, finiteNumber(source.min_artist_count ?? source.artist_count, 2))));
+    const restoredMinArtistCount = Math.round(Math.max(1, Math.min(maxArtistCount, finiteNumber(source.min_artist_count ?? source.artist_count, 2))));
+    setMinArtistCount(restoredMinArtistCount);
     setLower(Math.max(-3, Math.min(3, finiteNumber(source.lower, 0.1))));
     setUpper(Math.max(-3, Math.min(3, finiteNumber(source.upper, 2))));
     setMode(Math.max(-3, Math.min(3, finiteNumber(source.mode, 0.8))));
     setLeftDispersion(Math.max(0, Math.min(1, finiteNumber(source.left_dispersion, 0.4))));
     setRightDispersion(Math.max(0, Math.min(1, finiteNumber(source.right_dispersion, 0.4))));
     setSoftBalanceStrength(Math.max(0, Math.min(1, finiteNumber(source.soft_balance_strength, 0))));
-  }, []);
+  }, [maxArtistCount]);
 
   const refresh = useCallback(async () => {
     const [nextPools, nextRuns] = await Promise.all([api.styleExplorePools(), api.styleExploreRuns(showArchived)]);
@@ -268,6 +271,7 @@ export function StyleExplore() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
   useEffect(() => { setEditRunName(run?.name ?? ""); }, [run?.id, run?.name]);
+  useEffect(() => { setMinArtistCount((current) => Math.min(current, maxArtistCount)); }, [maxArtistCount]);
   useEffect(() => {
     if (run?.status !== "running") return;
     const timer = window.setInterval(() => void loadRun(run.id).catch(() => {}), 1800);
@@ -340,7 +344,7 @@ export function StyleExplore() {
     if (!poolId) throw new Error("请先选择 ArtistPool");
     const created = await api.styleExploreCreateRun({
       name: taskName, pool_id: poolId, target_count: targetCount, positive, negative, params: { ...params, vibes }, phase: "basic",
-      algorithm: { min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength },
+      algorithm: { min_artist_count: minArtistCount, max_artist_count: maxArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength },
     });
     setTaskName(""); selectRun(created.id); setRun(created); setCreateRunDialogOpen(false); await refresh(); addToast("已创建基础探索任务；确认参数后即可开始生成");
   });
@@ -354,7 +358,7 @@ export function StyleExplore() {
     await api.styleExploreUpdateCandidate(run.id, candidateId, { review: { preliminary_label: current === label ? null : label } });
     await loadRun(run.id);
   });
-  const currentRoundPayload = () => ({ target_count: targetCount, positive, negative, params: { ...params, vibes }, algorithm: { min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength } });
+  const currentRoundPayload = () => ({ target_count: targetCount, positive, negative, params: { ...params, vibes }, algorithm: { min_artist_count: minArtistCount, max_artist_count: maxArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength } });
   const appendRound = () => void withBusy(async () => {
     if (!run) return;
     const next = await api.styleExploreAppendBasicRound(run.id, currentRoundPayload());
@@ -476,9 +480,9 @@ export function StyleExplore() {
         </section>
       </main>
     </div>
-    <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} minArtistCount={minArtistCount} setMinArtistCount={setMinArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} />
+      <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} minArtistCount={minArtistCount} setMinArtistCount={setMinArtistCount} maxArtistCount={maxArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} onOpenAdvancedSettings={() => navigate("/settings", { state: { scrollTarget: "style-explore-max-artist-count" } })} />
     {run && <section className="glass rounded-2xl p-5">
-      <div className={`flex gap-3 ${candidateCollapsed ? "items-center" : "items-start"}`}><div><h2 className="font-semibold">本任务候选</h2>{!candidateCollapsed && <p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p>}</div>{candidateCollapsed ? <button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => setCandidateCollapsed(false)}><ChevronDown size={15} />展开</button> : <button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button>}</div>
+      <div className={`flex gap-3 ${candidateCollapsed ? "items-center" : "items-start"}`}><div><h2 className="font-semibold">本任务候选</h2>{!candidateCollapsed && <p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p>}</div>{candidateCollapsed ? <button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => setCandidateCollapsed(false)}><ChevronDown size={15} />展开</button> : <div className="ml-auto flex shrink-0 gap-2"><button className={`${ghostButtonClass} w-32`} onClick={() => setCandidateCollapsed(true)} aria-label="顶部收起本任务候选"><ChevronUp size={15} />收起</button><button className={`${ghostButtonClass} w-32`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button></div>}</div>
       {!candidateCollapsed && <><div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{basicCandidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
         {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
         <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
@@ -496,12 +500,12 @@ export function StyleExplore() {
         {openExploreItems.length > 0 ? <GalleryMasonry items={openExploreItems} selectionMode={exploreSelecting} selectedPaths={exploreSelectedIds} onToggleSelect={(item) => toggleExploreSelection(item.path)} onItemClick={(item) => setPreviewCandidateId(item.path)} getImageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} /> : <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--muted)]">这个牌堆还没有图片。</div>}
       </div>}
     </section>}
-    {run && <StyleExploreDeepExplorer run={run} positive={positive} negative={negative} params={{ ...params, vibes }} algorithm={{ min_artist_count: minArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength }} onRunChange={(next) => { setRun(next); void refresh(); }} onPreviewCandidate={setPreviewCandidateId} notify={addToast} />}
+      {run && <StyleExploreDeepExplorer run={run} positive={positive} negative={negative} params={{ ...params, vibes }} algorithm={{ min_artist_count: minArtistCount, max_artist_count: maxArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength }} onRunChange={(next) => { setRun(next); void refresh(); }} onPreviewCandidate={setPreviewCandidateId} notify={addToast} />}
   </div>{formalReviewing && run && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${formalReviewCandidates.map((candidate) => candidate.id).join("-")}`} items={formalReviewCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart, annotation: candidate.review.preliminary_label ? String(candidate.review.preliminary_label) : undefined }))} categoryLabel={`${run.name} · 基础探索`} choices={EXPLORE_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyFormalReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setFormalReviewing(false); addToast(result.message); }} onCancel={() => setFormalReviewing(false)} /></div>, document.body)}<Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
   </Modal><Modal open={poolImportResult !== null} onClose={() => setPoolImportResult(null)} title="ArtistPool 导入结果" wide>
     {poolImportResult && <div className="space-y-4 text-sm"><p className="text-[var(--muted)]">支持英文逗号或换行分隔；导入内容已规范化为一行一个 Artist ID。数值权重（如 1.2::artist::）及权重括号会自动移除，只保留 ID；原始 TXT 已作为首次备份保留。</p><div className="grid gap-3 sm:grid-cols-4">{[["输入项", poolImportResult.input_count ?? poolImportResult.original_count ?? 0], ["有效 ID", poolImportResult.valid_count ?? poolImportResult.ids.length], ["重复", poolImportResult.duplicate_count ?? 0], ["跳过", poolImportResult.skipped_count ?? poolImportResult.skipped ?? 0]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">{label}</div><div className="mt-1 text-lg font-semibold">{value}</div></div>)}</div>{(poolImportResult.warnings ?? []).length > 0 && <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{poolImportResult.warnings?.map((warning) => <p key={warning}>{poolImportWarningLabel(warning)}</p>)}</div>}<div><div className="mb-1 text-xs text-[var(--muted)]">规范化后的内容</div><pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--input)] p-3 font-mono text-xs">{poolImportResult.normalized_content ?? poolImportResult.content}</pre></div><div className="flex justify-end"><button className={buttonClass} onClick={() => setPoolImportResult(null)}>确认</button></div></div>}
-  </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览" maxW="max-w-5xl">
+  </Modal><Modal open={previewCandidateId !== null} onClose={() => setPreviewCandidateId(null)} title="候选预览" maxW="max-w-5xl" zIndex={60}>
     {run && previewCandidate && <><div className="flex min-h-[50vh] items-center justify-center rounded-xl bg-black/15 p-2"><img className="max-h-[82vh] max-w-full rounded-lg object-contain" src={api.styleExploreCandidateImageUrl(run.id, previewCandidate.id)} alt="放大候选预览" /></div><code className="mt-3 block break-all text-xs text-[var(--accent)]">{previewCandidate.artist_string}</code><div className="mt-4 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => createArtistCard(previewCandidate.id)} disabled={busy}>创建画师串 Card</button><button className={buttonClass} onClick={() => void withBusy(async () => { await api.styleExploreCopyCandidateToLibrary(run.id, previewCandidate.id); addToast("已复制到普通 Image Library，探索原图仍保留"); })} disabled={busy}>复制到图库</button></div></>}
   </Modal><Modal open={cardDialog !== null} onClose={() => setCardDialog(null)} title="创建画师串 Card">
     <p className="mb-3 text-sm text-[var(--muted)]">将当前 Artist String 保存为「画师串」Card；候选图会自动复制到普通图库，并设为该 Card 的演示图。</p>
@@ -512,7 +516,7 @@ export function StyleExplore() {
     <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-[var(--border)] p-3 text-sm"><div className="text-xs text-[var(--muted)]">任务名称</div><div className="mt-1 break-all">{taskName.trim() || `${pool?.name ?? "ArtistPool"} 探索`}</div></div><div className="rounded-xl border border-[var(--border)] p-3 text-sm"><div className="text-xs text-[var(--muted)]">ArtistPool</div><div className="mt-1 break-all">{pool ? `${pool.name} · ${pool.count} 个 ID` : "尚未选择 ArtistPool"}</div></div></div>
     <div className="mt-3 grid gap-3 lg:grid-cols-2"><div className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">正面提示词</div><code className="mt-1 block max-h-24 overflow-y-auto break-all text-xs">{positive || "（无）"}</code></div><div className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">负面提示词</div><code className="mt-1 block max-h-24 overflow-y-auto break-all text-xs">{negative || "（无）"}</code></div></div>
     <div className="mt-3 rounded-xl border border-[var(--border)] p-3"><div className="text-sm font-medium">生图参数</div><div className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">{Object.entries(params).map(([key, value]) => <div key={key} className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">{key}</span><span className="break-all text-right">{String(value)}</span></div>)}<div className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">vibes</span><span>{vibes.length} 个</span></div></div></div>
-    <div className="mt-3 rounded-xl border border-[var(--border)] p-3"><div className="text-sm font-medium">权重参数</div><div className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">{[["目标图片数", targetCount], ["最少抽取 ID 数目", minArtistCount], ["权重下界", lower], ["权重上界", upper], ["众数", mode], ["左侧离散", leftDispersion], ["右侧离散", rightDispersion], ["软平衡强度", softBalanceStrength]].map(([label, value]) => <div key={String(label)} className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">{label}</span><span>{value}</span></div>)}</div></div>
+        <div className="mt-3 rounded-xl border border-[var(--border)] p-3"><div className="text-sm font-medium">权重参数</div><div className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">{[["目标图片数", targetCount], ["最少抽取 ID 数目", minArtistCount], ["最多抽取 ID 数目", maxArtistCount], ["权重下界", lower], ["权重上界", upper], ["众数", mode], ["左侧离散", leftDispersion], ["右侧离散", rightDispersion], ["软平衡强度", softBalanceStrength]].map(([label, value]) => <div key={String(label)} className="flex justify-between gap-3 border-b border-[var(--border)]/60 py-1"><span className="text-[var(--muted)]">{label}</span><span>{value}</span></div>)}</div></div>
     <div className="mt-5 flex justify-end gap-2"><button className={ghostButtonClass} onClick={() => setCreateRunDialogOpen(false)}>取消</button><button className={buttonClass} onClick={createRun} disabled={busy || !poolId}><WandSparkles size={15} />确认创建任务</button></div>
   </Modal><ConfirmDialog open={confirmState !== null} title={confirmState?.title ?? "确认操作"} message={confirmState?.message ?? ""} danger={confirmState?.danger} onCancel={() => setConfirmState(null)} onConfirm={() => { const action = confirmState?.onConfirm; setConfirmState(null); action?.(); }} /></>;
 }

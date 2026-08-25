@@ -1,11 +1,11 @@
-import { ArrowDown, ArrowRight, ArrowUp, Check, CircleHelp, GitBranch, Heart, Pause, Play, Plus, Repeat2, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Check, CircleHelp, GitBranch, Heart, Pause, Play, Plus, Repeat2, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../../api";
 import type { StyleExploreCandidate, StyleExploreDeepFamily, StyleExploreDeepParent, StyleExploreDeepParentSet, StyleExploreDeepState, StyleExploreRound, StyleExploreRun } from "../../types";
 import { AlbumStackCard } from "../gallery/AlbumStackCard";
 import { ReviewMode, type ReviewChoice } from "../gallery/ReviewMode";
-import { Modal } from "../UI";
+import { ConfirmDialog, Modal } from "../UI";
 
 const buttonClass = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-2 text-sm transition-colors hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-45";
 const primaryButtonClass = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
@@ -25,6 +25,7 @@ const HELP: Record<string, { title: string; text: string }> = {
 };
 
 type Connector = { familyId: string; root: { x: number; y: number }; current: { x: number; y: number }; source?: { x: number; y: number } };
+type ConfirmState = { title: string; message: string; onConfirm: () => void } | null;
 
 function deepState(run: StyleExploreRun): StyleExploreDeepState {
   return run.deep ?? { active_parent_set_id: null, active_family_id: null, families: [], parent_sets: [] };
@@ -94,6 +95,7 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
   const [busy, setBusy] = useState(false);
   const [hoveredRoundId, setHoveredRoundId] = useState<string | null>(null);
   const [connector, setConnector] = useState<Connector | null>(null);
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const familyRefs = useRef(new Map<string, HTMLDivElement>());
   const rootRefs = useRef(new Map<string, HTMLDivElement>());
   const roundRefs = useRef(new Map<string, HTMLDivElement>());
@@ -175,6 +177,12 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
     return next;
   });
 
+  const toggleAllTreasures = () => setSelectedTreasureIds((previous) => (
+    treasures.length > 0 && treasures.every((candidate) => previous.has(candidate.id))
+      ? new Set()
+      : new Set(treasures.map((candidate) => candidate.id))
+  ));
+
   const confirmParents = () => void act(async () => {
     const custom_artist_strings = customText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     if (!selectedTreasureIds.size && !custom_artist_strings.length) throw new Error("请至少选择一张 Treasure 或输入一条 Artist String");
@@ -243,6 +251,53 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
     });
   };
 
+  const requestDeleteRound = (round: StyleExploreRound) => setConfirmState({
+    title: "删除分支",
+    message: `确认删除第 ${round.generation ?? 2} 代候选堆 ${round.sibling_index ?? 1} 吗？候选记录会移除，已生成图片会进入该任务的内部回收目录。`,
+    onConfirm: () => {
+      setConfirmState(null);
+      void act(async () => {
+        const next = await api.styleExploreDeleteDeepRound(run.id, round.id);
+        if (selectedRoundId === round.id) setSelectedRoundId(null);
+        notify("图片堆已删除");
+        return next;
+      });
+    },
+  });
+
+  const requestDeleteParentSet = (parentSet: StyleExploreDeepParentSet) => setConfirmState({
+    title: "删除父本集",
+    message: "确认撤回这个审美分支父本集吗？上一代会恢复为可继续分支的当前代。",
+    onConfirm: () => {
+      setConfirmState(null);
+      void act(async () => {
+        const next = await api.styleExploreDeleteDeepParentSet(run.id, parentSet.id);
+        const family = next.deep?.families?.find((item) => item.id === parentSet.family_id);
+        setSelectedRoundId(null);
+        setSelectedParentSetId(family?.active_parent_set_id ?? null);
+        notify("分支父本集已撤回");
+        return next;
+      });
+    },
+  });
+
+  const requestDeleteFamily = (family: StyleExploreDeepFamily) => setConfirmState({
+    title: "删除父本集（整个家族）",
+    message: `确认删除家族 ${family.number} 吗？这个家族的父本集、图片堆和候选记录都会移除，已生成图片会进入任务内部回收目录；其他家族不受影响。`,
+    onConfirm: () => {
+      setConfirmState(null);
+      void act(async () => {
+        const next = await api.styleExploreDeleteDeepFamily(run.id, family.id);
+        const activeFamily = next.deep?.families?.find((item) => item.id === next.deep?.active_family_id) ?? next.deep?.families?.at(-1);
+        setSelectedRoundId(null);
+        setSelectedFamilyId(activeFamily?.id ?? null);
+        setSelectedParentSetId(activeFamily?.active_parent_set_id ?? null);
+        notify(`家族 ${family.number} 已删除`);
+        return next;
+      });
+    },
+  });
+
   const controlRound = (action: "start" | "pause" | "resume" | "retry") => void act(async () => action === "start" ? api.styleExploreStartRun(run.id) : action === "pause" ? api.styleExplorePauseRun(run.id) : action === "resume" ? api.styleExploreResumeRun(run.id, params) : api.styleExploreRetryFailed(run.id));
 
   const applyRoundReviews = async (moves: { path: string; tag: string }[]) => {
@@ -274,6 +329,7 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
 
     {(!families.length || choosingParents) && <div className="mt-5 space-y-4">
       <Guide step={1}>从本任务 Treasure 选择代表图，或输入任意 Artist String。确认后会创建一个全新家族；不会覆盖或改写已有家族。</Guide>
+      {treasures.length > 0 && <div className="flex items-center justify-between gap-3"><span className="text-xs text-[var(--muted)]">可选 {treasures.length} 张 Treasure</span><button type="button" className={buttonClass} onClick={toggleAllTreasures} disabled={busy}>{treasures.every((candidate) => selectedTreasureIds.has(candidate.id)) ? "取消全选" : "全选 Treasure"}</button></div>}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{treasures.map((candidate) => {
         const selected = selectedTreasureIds.has(candidate.id);
         return <button key={candidate.id} type="button" onClick={() => toggleTreasure(candidate.id)} className={`overflow-hidden rounded-xl border text-left transition-colors ${selected ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--border)] bg-[var(--input)]/30 hover:bg-[var(--hover)]"}`}><div className="relative aspect-[3/4] bg-[var(--hover)]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="Treasure 候选" loading="lazy" />{selected && <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-[var(--accent)] px-2 py-1 text-xs font-medium text-white"><Check size={12} />已选</span>}</div><code className="block max-h-14 overflow-hidden px-3 py-2 text-xs text-[var(--accent)]">{candidate.artist_string}</code></button>;
@@ -296,7 +352,7 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
             const width = familyWidth(familyRounds);
             return <div key={family.id} ref={(node) => { if (node) familyRefs.current.set(family.id, node); else familyRefs.current.delete(family.id); }} className={`relative shrink-0 border-r border-[var(--border)] px-5 py-4 last:border-r-0 ${selectedFamily?.id === family.id ? "bg-[var(--accent)]/[0.035]" : ""}`} style={{ width }} onClick={() => chooseFamily(family)}>
               {connector?.familyId === family.id && <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible" aria-hidden><path d={`M ${connector.root.x} ${connector.root.y} V ${connector.current.y - 20} Q ${connector.root.x} ${connector.current.y} ${connector.current.x} ${connector.current.y}`} fill="none" stroke="var(--accent)" strokeWidth="3" strokeDasharray="7 5" opacity="0.75" />{connector.source && <path d={`M ${connector.source.x} ${connector.source.y} V ${(connector.source.y + connector.current.y) / 2} H ${connector.current.x} V ${connector.current.y}`} fill="none" stroke="var(--accent)" strokeWidth="4" opacity="0.95" />}</svg>}
-              <div className="mb-3 flex items-center justify-between"><div><span className="text-sm font-semibold">家族 {family.number}</span><span className="ml-2 text-xs text-[var(--muted)]">独立谱系</span></div>{selectedFamily?.id === family.id && <span className="rounded-full bg-[var(--accent)]/15 px-2 py-1 text-[10px] font-medium text-[var(--accent)]">当前查看</span>}</div>
+              <div className="mb-3 flex items-center justify-between"><div><span className="text-sm font-semibold">家族 {family.number}</span><span className="ml-2 text-xs text-[var(--muted)]">独立谱系</span></div><div className="flex items-center gap-2">{selectedFamily?.id === family.id && <span className="rounded-full bg-[var(--accent)]/15 px-2 py-1 text-[10px] font-medium text-[var(--accent)]">当前查看</span>}<button type="button" className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40" title="删除父本集（整个家族）" aria-label={`删除家族 ${family.number}`} disabled={busy || run.status === "running"} onClick={(event) => { event.stopPropagation(); requestDeleteFamily(family); }}><Trash2 size={14} /></button></div></div>
               {rootParentSet && <div ref={(node) => { if (node) rootRefs.current.set(family.id, node); else rootRefs.current.delete(family.id); }} className={`relative z-30 rounded-xl border bg-[var(--input)]/55 p-3 transition-colors ${selectedParentSet?.id === rootParentSet.id && !selectedRound ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`} onClick={(event) => { event.stopPropagation(); setSelectedFamilyId(family.id); setSelectedParentSetId(rootParentSet.id); setSelectedRoundId(null); }}>
                 <div className="flex items-center gap-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><strong className="text-sm">第一代父本集</strong><button className="text-[var(--muted)] hover:text-[var(--accent)]" onClick={(event) => { event.stopPropagation(); setHelpKey("parents"); }}><CircleHelp size={13} /></button></div><p className="mt-1 text-xs text-[var(--muted)]">{rootParentSet.parents.length} 条 Artist String · 创建于 {rootParentSet.created_at?.slice(0, 10)}</p><code className="mt-1 block truncate text-[10px] text-[var(--accent)]">{rootParentSet.parents.map((parent) => parent.artist_string).join("  |  ")}</code></div><div className="flex shrink-0 -space-x-3">{rootParentSet.parents.map((parent) => candidateForParent(run, parent)).filter((candidate): candidate is StyleExploreCandidate => Boolean(candidate)).slice(0, 6).map((candidate) => <img key={candidate.id} className="h-14 w-11 rounded-lg border-2 border-white object-cover shadow" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="父本代表图" />)}{!rootParentSet.parents.some((parent) => candidateForParent(run, parent)) && <div className="flex h-14 w-28 items-center justify-center rounded-lg bg-[var(--hover)] text-[10px] text-[var(--muted)]">自定义文字父本</div>}</div></div>
               </div>}
@@ -307,6 +363,7 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
                     const roundCandidates = run.candidates.filter((candidate) => candidate.round_id === round.id);
                     const parentSet = familyParentSets.find((item) => item.id === round.parent_set_id);
                     const hasNextBranch = familyParentSets.some((item) => item.branch?.source_parent_set_id === parentSet?.id);
+                    const isBranchSource = familyParentSets.some((item) => item.branch?.source_round_id === round.id);
                     const siblingRoundIds = new Set(familyRounds.filter((item) => item.parent_set_id === parentSet?.id).map((item) => item.id));
                     const siblingCandidates = run.candidates.filter((candidate) => siblingRoundIds.has(String(candidate.round_id)));
                     const hasPending = siblingCandidates.some((candidate) => ["pending", "generating"].includes(candidate.generation.status));
@@ -314,11 +371,11 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
                     const isCurrentGeneration = parentSet?.id === family.active_parent_set_id;
                     return <div key={round.id} className="flex w-[345px] shrink-0 items-start gap-2">
                       <div ref={(node) => { if (node) roundRefs.current.set(round.id, node); else roundRefs.current.delete(round.id); }} onMouseEnter={() => setHoveredRoundId(round.id)} onMouseLeave={() => setHoveredRoundId(null)} className={`w-60 rounded-2xl p-1 transition-shadow ${selectedRoundId === round.id ? "ring-2 ring-[var(--accent)]" : ""}`}><AlbumStackCard title={`候选堆 ${round.sibling_index ?? roundIndex + 1}`} subtitle={`${round.status} · ${roundCandidates.length} 张`} count={roundCandidates.length} date={round.created_at?.slice(0, 10)} coverUrls={roundCandidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at).slice(0, 3).map((candidate) => api.styleExploreCandidateImageUrl(run.id, candidate.id))} color="#7c8cff" icon={GitBranch} index={roundIndex} onOpen={(event) => { event.stopPropagation(); chooseRound(round); }} /></div>
-                      <div className="mt-10 flex w-24 shrink-0 flex-col gap-2"><button className={`${buttonClass} px-2 text-xs`} onClick={(event) => { event.stopPropagation(); openBranch(round.id); }} disabled={busy || hasNextBranch || run.status === "running" || !canBranch || !isCurrentGeneration} title={hasNextBranch ? "这一代已建立后续分支" : !isCurrentGeneration ? "历史代不能继续分支" : !canBranch ? "请等待本代所有轮次完成" : undefined}><GitBranch size={13} />{hasNextBranch ? "已分支" : "新建分支"}</button><button className={`${buttonClass} px-2 text-xs`} onClick={(event) => { event.stopPropagation(); if (parentSet) { setSelectedFamilyId(family.id); setSelectedParentSetId(parentSet.id); setTargetCount(parentSet.suggested_target_count ?? suggestedTargetCount(parentSet.parents.length)); setRepeatParentSetId(parentSet.id); } }} disabled={busy || run.status === "running" || !isCurrentGeneration || hasNextBranch}><Repeat2 size={13} />新增一轮</button></div>
+                      <div className="mt-10 flex w-24 shrink-0 flex-col gap-2"><button className={`${buttonClass} px-2 text-xs`} onClick={(event) => { event.stopPropagation(); openBranch(round.id); }} disabled={busy || hasNextBranch || run.status === "running" || !canBranch || !isCurrentGeneration} title={hasNextBranch ? "这一代已建立后续分支" : !isCurrentGeneration ? "历史代不能继续分支" : !canBranch ? "请等待本代所有轮次完成" : undefined}><GitBranch size={13} />{hasNextBranch ? "已分支" : "新建分支"}</button><button className={`${buttonClass} px-2 text-xs`} onClick={(event) => { event.stopPropagation(); if (parentSet) { setSelectedFamilyId(family.id); setSelectedParentSetId(parentSet.id); setTargetCount(parentSet.suggested_target_count ?? suggestedTargetCount(parentSet.parents.length)); setRepeatParentSetId(parentSet.id); } }} disabled={busy || run.status === "running" || !isCurrentGeneration || hasNextBranch}><Repeat2 size={13} />新增一轮</button><button className={`${buttonClass} px-2 text-xs text-red-400`} onClick={(event) => { event.stopPropagation(); requestDeleteRound(round); }} disabled={busy || run.status === "running" || isBranchSource} title={isBranchSource ? "请先撤回由该图片堆建立的后续分支" : "删除分支"}><Trash2 size={13} />删除分支</button></div>
                     </div>;
                   })}</div></div>;
                 })}
-                {emptyGeneration && activeSet && <div className="min-h-[210px]"><div className="mb-2 text-xs text-[var(--muted)]">第 {emptyGeneration} 代{activeSet.branch?.name && <span className="ml-2 font-medium text-[var(--accent)]">经「{activeSet.branch.name}」回交</span>}</div><button type="button" className={`w-72 rounded-2xl border border-dashed p-5 text-left transition-colors hover:bg-[var(--hover)] ${selectedParentSet?.id === activeSet.id && !selectedRound ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`} onClick={(event) => { event.stopPropagation(); setSelectedFamilyId(family.id); setSelectedRoundId(null); setSelectedParentSetId(activeSet.id); }}><div className="flex items-center gap-2 text-sm font-medium"><Plus size={16} />空图片堆</div><p className="mt-1 text-xs text-[var(--muted)]">选择后在下方设置张数并创建本代候选</p></button></div>}
+                {emptyGeneration && activeSet && <div className="min-h-[210px]"><div className="mb-2 text-xs text-[var(--muted)]">第 {emptyGeneration} 代{activeSet.branch?.name && <span className="ml-2 font-medium text-[var(--accent)]">经「{activeSet.branch.name}」回交</span>}</div><div className="flex items-start gap-2"><button type="button" className={`w-72 rounded-2xl border border-dashed p-5 text-left transition-colors hover:bg-[var(--hover)] ${selectedParentSet?.id === activeSet.id && !selectedRound ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`} onClick={(event) => { event.stopPropagation(); setSelectedFamilyId(family.id); setSelectedRoundId(null); setSelectedParentSetId(activeSet.id); }}><div className="flex items-center gap-2 text-sm font-medium"><Plus size={16} />空图片堆</div><p className="mt-1 text-xs text-[var(--muted)]">选择后在下方设置张数并创建本代候选</p></button>{activeSet.branch && <button type="button" className="rounded-lg border border-[var(--border)] p-2 text-red-400 hover:bg-red-500/10 disabled:opacity-40" title="删除父本集并撤回分支" aria-label="删除父本集" disabled={busy || run.status === "running"} onClick={(event) => { event.stopPropagation(); requestDeleteParentSet(activeSet); }}><Trash2 size={15} /></button>}</div></div>}
               </div>
             </div>;
           })}
@@ -337,12 +394,13 @@ export function StyleExploreDeepExplorer({ run, positive, negative, params, algo
 
     {repeatParentSetId && (() => { const parentSet = parentSets.find((item) => item.id === repeatParentSetId); return parentSet ? <Modal open onClose={() => setRepeatParentSetId(null)} title={`第 ${(parentSet.generation ?? 1) + 1} 代 · 新增一轮`}><div className="space-y-4"><p className="text-sm leading-6 text-[var(--muted)]">新一轮会复用左侧候选堆完全相同的父本关系，生成结果与已有图片属于同一代、同辈，不会创建审美分支。</p><label className="block text-sm">新增图片数<input className={`${inputClass} mt-1`} type="number" min={parentSet.parents.length + 1} max={1000} value={targetCount} onChange={(event) => setTargetCount(Math.max(parentSet.parents.length + 1, Math.min(1000, Number(event.target.value) || 1)))} /></label><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => setRepeatParentSetId(null)}>取消</button><button className={primaryButtonClass} onClick={() => appendRoundFor(parentSet, targetCount, true)} disabled={busy}><Repeat2 size={14} />确认新增一轮</button></div></div></Modal> : null; })()}
 
-    {branchSourceRound && <Modal open onClose={() => setBranchSourceRoundId(null)} title="添加审美分支" wide><div className="space-y-4"><p className="text-sm leading-6 text-[var(--muted)]">从这个候选堆勾选优秀子代。系统会把它们与本家族第一代父本去重合并，用于生成下一代；其他家族以及 Treasure、Special、Reject 结果都不会改变。</p><label className="block text-sm">分支名称<input className={`${inputClass} mt-1`} value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="例如：柔和光影" autoFocus /></label><div><div className="mb-2 flex items-center justify-between text-sm"><span>优秀子代</span><span className="text-xs text-[var(--muted)]">已选 {branchCandidateIds.size} 张</span></div><div className="grid max-h-[48vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">{branchCandidates.map((candidate) => { const checked = branchCandidateIds.has(candidate.id); return <button type="button" key={candidate.id} onClick={() => toggleBranchCandidate(candidate.id)} className={`overflow-hidden rounded-xl border text-left ${checked ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`}><div className="relative aspect-[3/4]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="可选优秀子代" loading="lazy" />{checked && <span className="absolute left-2 top-2 rounded-full bg-[var(--accent)] p-1 text-white"><Check size={14} /></span>}</div><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button>; })}</div></div><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => setBranchSourceRoundId(null)} disabled={busy}>取消</button><button className={primaryButtonClass} onClick={createBranch} disabled={busy || !branchName.trim() || branchCandidateIds.size === 0}><GitBranch size={15} />确认建立分支</button></div></div></Modal>}
+    {branchSourceRound && <Modal open onClose={() => setBranchSourceRoundId(null)} title="添加审美分支" wide><div className="space-y-4"><p className="text-sm leading-6 text-[var(--muted)]">从这个候选堆勾选优秀子代。系统会把它们与本家族第一代父本去重合并，用于生成下一代；其他家族以及 Treasure、Special、Reject 结果都不会改变。</p><label className="block text-sm">分支名称<input className={`${inputClass} mt-1`} value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="例如：柔和光影" autoFocus /></label><div><div className="mb-2 flex items-center justify-between text-sm"><span>优秀子代</span><span className="text-xs text-[var(--muted)]">已选 {branchCandidateIds.size} 张</span></div><div className="grid max-h-[48vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">{branchCandidates.map((candidate) => { const checked = branchCandidateIds.has(candidate.id); return <div key={candidate.id} className="relative"><button type="button" onClick={() => toggleBranchCandidate(candidate.id)} className={`w-full overflow-hidden rounded-xl border text-left ${checked ? "border-[var(--accent)] ring-1 ring-[var(--accent)]" : "border-[var(--border)]"}`}><div className="relative aspect-[3/4]"><img className="h-full w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="可选优秀子代" loading="lazy" />{checked && <span className="absolute left-2 top-2 rounded-full bg-[var(--accent)] p-1 text-white"><Check size={14} /></span>}</div><code className="block max-h-12 overflow-hidden px-2 py-1.5 text-[10px] text-[var(--accent)]">{candidate.artist_string}</code></button><button type="button" className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-lg bg-black/65 px-2 py-1 text-xs text-white shadow-lg transition-colors hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-white" onClick={(event) => { event.stopPropagation(); onPreviewCandidate(candidate.id); }} aria-label="放大查看优秀子代" title="放大查看"><ZoomIn size={14} />放大</button></div>; })}</div></div><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => setBranchSourceRoundId(null)} disabled={busy}>取消</button><button className={primaryButtonClass} onClick={createBranch} disabled={busy || !branchName.trim() || branchCandidateIds.size === 0}><GitBranch size={15} />确认建立分支</button></div></div></Modal>}
 
     {pairwiseOpen && pairingParentSet && <Modal open onClose={() => setPairwiseOpen(false)} title="可选偏好排序" wide>{currentPair ? <div className="space-y-4"><Guide step={2}>本次评分只影响这个父本集即将生成的候选。{pairIndex + 1} / {pairCandidates.length}</Guide><div className="grid gap-3 sm:grid-cols-2">{(["left", "right"] as const).map((side) => { const parent = currentPair[side]; const candidate = candidateForParent(run, parent); return <div key={side} className="overflow-hidden rounded-xl border border-[var(--border)]">{candidate ? <img className="aspect-[3/4] w-full object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt="父本代表图" /> : <div className="flex aspect-[3/4] items-center justify-center bg-[var(--hover)] text-sm text-[var(--muted)]">自定义串 · 无代表图</div>}<code className="block max-h-24 overflow-auto p-3 text-xs text-[var(--accent)]">{parent.artist_string}</code><button className={`${side === "left" ? primaryButtonClass : buttonClass} m-3`} onClick={() => recordPreference(side)} disabled={busy}>{side === "left" ? <ArrowUp size={14} /> : <ArrowRight size={14} />}选择这一方</button></div>; })}</div><div className="flex justify-end gap-2"><button className={buttonClass} onClick={() => recordPreference("skip")} disabled={busy}>跳过</button><button className={buttonClass} onClick={() => recordPreference("neither")} disabled={busy}>都不合适</button><button className={buttonClass} onClick={() => setPairwiseOpen(false)}>结束排序</button></div></div> : <p className="text-sm text-[var(--muted)]">当前父本不足两条，或本次比较已完成。</p>}</Modal>}
 
     {reviewingRoundId && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${reviewingRoundId}-${unreviewedRoundCandidates.map((candidate) => candidate.id).join("-")}`} items={unreviewedRoundCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart }))} categoryLabel={`${run.name} · 深度候选轮`} choices={DEEP_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyRoundReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setReviewingRoundId(null); notify(result.message); }} onCancel={() => setReviewingRoundId(null)} /></div>, document.body)}
 
     <Modal open={helpKey !== null} onClose={() => setHelpKey(null)} title={helpKey ? HELP[helpKey].title : "说明"}>{helpKey && <p className="text-sm leading-7 text-[var(--muted)]">{HELP[helpKey].text}</p>}</Modal>
+    <ConfirmDialog open={confirmState !== null} title={confirmState?.title ?? "确认删除"} message={confirmState?.message ?? ""} danger onConfirm={() => confirmState?.onConfirm()} onCancel={() => setConfirmState(null)} />
   </section>;
 }

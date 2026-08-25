@@ -87,7 +87,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="PromptCard Studio for NovelAI", version="1.2.1", lifespan=_lifespan)
+app = FastAPI(title="PromptCard Studio for NovelAI", version="1.2.2", lifespan=_lifespan)
 
 # 本地 Web 应用：只允许本机来源（127.0.0.1 / localhost 任意端口，含前端开发服务器），
 # 防止外部网页跨域读取本地数据或触发关闭等操作
@@ -769,6 +769,26 @@ def style_explore_aesthetic_branch_create(run_id: str, body: StyleExploreAesthet
         raise _as_http(e, 400)
 
 
+@app.delete("/api/style-explore/runs/{run_id}/deep/families/{family_id}")
+def style_explore_deep_family_delete(run_id: str, family_id: str):
+    try:
+        return style_explore_service.delete_deep_family(run_id, family_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.delete("/api/style-explore/runs/{run_id}/deep/parents/{parent_set_id}")
+def style_explore_deep_parent_set_delete(run_id: str, parent_set_id: str):
+    try:
+        return style_explore_service.delete_deep_parent_set(run_id, parent_set_id)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
 @app.post("/api/style-explore/runs/{run_id}/deep/parents/{parent_set_id}/preferences")
 def style_explore_deep_preference_record(
     run_id: str,
@@ -801,6 +821,16 @@ def style_explore_deep_round_append(run_id: str, body: StyleExploreDeepRoundIn):
             body.algorithm,
             body.parent_set_id,
         )
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+
+
+@app.delete("/api/style-explore/runs/{run_id}/rounds/deep/{round_id}")
+def style_explore_deep_round_delete(run_id: str, round_id: str):
+    try:
+        return style_explore_service.delete_deep_round(run_id, round_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except ValueError as e:

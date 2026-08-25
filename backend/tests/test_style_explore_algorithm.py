@@ -229,6 +229,41 @@ class StyleExploreAlgorithmTest(unittest.TestCase):
         self.assertTrue(all(2 <= length <= 10 for length in lengths))
         self.assertGreater(len(set(lengths)), 1)
 
+    def test_max_artist_count_can_raise_sampling_ceiling_to_thirty(self):
+        pool = [f"artist_{index}" for index in range(40)]
+        candidates = generate_basic_candidates(
+            pool, 12, 240, WeightSamplingConfig(), random.Random(20260825), 30
+        )
+        lengths = [len(candidate.artist_weights) for candidate in candidates]
+        self.assertTrue(all(12 <= length <= 30 for length in lengths))
+        self.assertTrue(any(length > 10 for length in lengths))
+        self.assertGreater(len(set(lengths)), 1)
+
+        with self.assertRaisesRegex(ValueError, "最多抽取"):
+            generate_basic_candidate(
+                pool, 2, WeightSamplingConfig(), random.Random(1), 31
+            )
+        with self.assertRaisesRegex(ValueError, "不能大于最多"):
+            generate_basic_candidate(
+                pool, 12, WeightSamplingConfig(), random.Random(1), 10
+            )
+
+    def test_deep_candidates_honor_configured_artist_count_ceiling(self):
+        parent = DeepParent.from_artist_string(
+            "wide-parent",
+            ", ".join(f"0.8::artist_{index}::" for index in range(12)),
+        )
+        candidates = generate_deep_candidates(
+            [parent],
+            [f"artist_{index}" for index in range(40)],
+            13,
+            WeightSamplingConfig(),
+            random.Random(20260825),
+            30,
+        )
+        self.assertEqual(len(candidates), 13)
+        self.assertTrue(all(1 <= len(candidate.artist_weights) <= 30 for candidate in candidates))
+
     def test_all_samples_stay_in_range_and_on_tenth_grid(self):
         config = WeightSamplingConfig(
             lower=-2.4, upper=1.7, mode=-0.3, left_dispersion=0.9, right_dispersion=0.8

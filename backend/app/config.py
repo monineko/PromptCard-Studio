@@ -26,6 +26,7 @@ DEFAULT_SETTINGS = {
     "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）
     "hide_backend_panel": False, # 勾选后下次启动自动隐藏后端命令行窗口（Windows）
     "hide_style_explore_top_nav": False,  # 仅隐藏顶部画风探索入口，侧边栏入口保留
+    "style_explore_max_artist_count": 10,  # 画风探索单张候选最多抽取的 Artist ID 数目（10-30）
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
     "effects": {                 # 特效开关（界面个性化）
@@ -67,6 +68,14 @@ def _resolve_library_path(value: str) -> str:
     return str(value)
 
 
+def _normalize_style_explore_max_artist_count(value) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 10
+    return max(10, min(30, parsed))
+
+
 def load_settings() -> dict:
     data = {}
     if CONFIG_FILE.exists():
@@ -75,6 +84,9 @@ def load_settings() -> dict:
         except Exception:
             data = {}
     merged = _deep_merge(DEFAULT_SETTINGS, data)
+    merged["style_explore_max_artist_count"] = _normalize_style_explore_max_artist_count(
+        merged.get("style_explore_max_artist_count")
+    )
     # 迁移：旧项目文件夹名写死的图库路径 → 当前项目默认（落盘，避免每次启动再走旧路径）
     stored = merged.get("library_path") or ""
     if stored and _is_legacy_library_path(stored):
@@ -92,6 +104,9 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> dict:
     merged = _deep_merge(load_settings(), settings)
+    merged["style_explore_max_artist_count"] = _normalize_style_explore_max_artist_count(
+        merged.get("style_explore_max_artist_count")
+    )
     # 默认图库不写绝对路径：空字符串表示"跟随项目"，项目改名/移动后不会失效
     if "library_path" in merged:
         resolved = _resolve_library_path(merged.get("library_path") or "")

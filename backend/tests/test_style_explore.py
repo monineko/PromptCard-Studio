@@ -916,6 +916,101 @@ class StyleExploreServiceTest(unittest.TestCase):
         self.assertEqual(second_round["sibling_index"], 1)
         self.assertNotEqual(second_round["family_id"], first_round["family_id"])
 
+    def test_deep_round_and_empty_branch_parent_set_can_be_undone(self):
+        pool = explore.create_pool("撤回池", "a\nb\nc\nd\ne\nf\n")
+        run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
+        created = explore.set_deep_parent_set(run["id"], [], ["0.8::a::", "1.0::b::"])
+        root = created["deep"]["parent_sets"][0]
+        first = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=root["id"], algorithm={"random_seed": 41}
+        )["rounds"][-1]
+        second_state = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=root["id"], algorithm={"random_seed": 42}
+        )
+        second = second_state["rounds"][-1]
+
+        without_second = explore.delete_deep_round(run["id"], second["id"])
+        self.assertEqual([item["id"] for item in without_second["rounds"] if item.get("phase") == "deep"], [first["id"]])
+        self.assertFalse(any(item.get("round_id") == second["id"] for item in without_second["candidates"]))
+        self.assertEqual(without_second["deep"]["parent_sets"][0]["used_round_ids"], [first["id"]])
+
+        first_candidates = [item for item in without_second["candidates"] if item.get("round_id") == first["id"]]
+        for candidate in first_candidates:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+        branched = explore.create_aesthetic_branch(
+            run["id"], first["id"], "可撤回分支", [first_candidates[0]["id"]]
+        )
+        branch_parent_set = branched["deep"]["parent_sets"][-1]
+        with self.assertRaisesRegex(ValueError, "后续分支"):
+            explore.delete_deep_round(run["id"], first["id"])
+
+        restored = explore.delete_deep_parent_set(run["id"], branch_parent_set["id"])
+        self.assertEqual(len(restored["deep"]["parent_sets"]), 1)
+        self.assertEqual(restored["deep"]["families"][0]["active_parent_set_id"], root["id"])
+        self.assertEqual(restored["deep"]["parent_sets"][0]["status"], "active")
+
+        cleared = explore.delete_deep_round(run["id"], first["id"])
+        self.assertFalse(any(item.get("phase") == "deep" for item in cleared["rounds"]))
+        self.assertFalse(any(item.get("round_id") == first["id"] for item in cleared["candidates"]))
+        self.assertEqual(len(list((explore._run_file(run["id"]).parent / ".trash").glob("*.png"))), 3)
+
+    def test_delete_deep_family_keeps_other_families_intact(self):
+        pool = explore.create_pool("家族删除池", "a\nb\nc\nd\ne\nf\n")
+        run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})
+        first = explore.set_deep_parent_set(run["id"], [], ["0.8::a::", "1.0::b::"])
+        first_family = first["deep"]["families"][0]
+        first_root = first["deep"]["parent_sets"][0]
+        first_round = explore.append_deep_round(
+            run["id"], 3, "deep", "negative", parent_set_id=first_root["id"], algorithm={"random_seed": 51}
+        )["rounds"][-1]
+        second = explore.set_deep_parent_set(run["id"], [], ["0.9::c::", "1.1::d::"])
+        second_family = second["deep"]["families"][-1]
+
+        remaining = explore.delete_deep_family(run["id"], first_family["id"])
+        self.assertEqual([item["id"] for item in remaining["deep"]["families"]], [second_family["id"]])
+        self.assertEqual(remaining["deep"]["active_family_id"], second_family["id"])
+        self.assertFalse(any(item.get("family_id") == first_family["id"] for item in remaining["deep"]["parent_sets"]))
+        self.assertFalse(any(item.get("id") == first_round["id"] for item in remaining["rounds"]))
+        self.assertFalse(any(item.get("round_id") == first_round["id"] for item in remaining["candidates"]))
+        third = explore.set_deep_parent_set(run["id"], [], ["0.7::e::", "1.2::f::"])
+        self.assertEqual([item["number"] for item in third["deep"]["families"]], [2, 3])
+
+    def test_branch_uses_source_round_artist_count_ceiling(self):
+        pool = explore.create_pool(
+            "宽串回交池", "\n".join(f"artist_{index}" for index in range(40))
+        )
+        run = explore.create_run(
+            pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1, "max_artist_count": 10}
+        )
+        created = explore.set_deep_parent_set(
+            run["id"], [], ["0.8::artist_0::", "0.9::artist_1::"]
+        )
+        root = created["deep"]["parent_sets"][0]
+        generated = explore.append_deep_round(
+            run["id"], 20, "deep", "negative", parent_set_id=root["id"],
+            algorithm={"random_seed": 1, "max_artist_count": 30},
+        )
+        deep_round = generated["rounds"][-1]
+        round_candidates = [
+            item for item in generated["candidates"] if item.get("round_id") == deep_round["id"]
+        ]
+        wide_candidate = next(item for item in round_candidates if len(item["ids"]) > 10)
+        for candidate in round_candidates:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+
+        branched = explore.create_aesthetic_branch(
+            run["id"], deep_round["id"], "宽串分支", [wide_candidate["id"]]
+        )
+        self.assertIn(wide_candidate["id"], {item["id"] for item in branched["deep"]["parent_sets"][-1]["parents"]})
+
     def test_legacy_single_chain_is_exposed_as_one_stable_family(self):
         pool = explore.create_pool("旧链池", "a\nb\nc\n")
         run = explore.create_run(pool["id"], 1, "base", "negative", algorithm={"min_artist_count": 1})

@@ -21,6 +21,8 @@ from typing import Sequence
 MIN_WEIGHT = -3.0
 MAX_WEIGHT = 3.0
 WEIGHT_STEP = 0.1
+DEFAULT_MAX_ARTIST_COUNT = 10
+MAX_ARTIST_COUNT = 30
 _EPSILON = 1e-9
 
 
@@ -143,6 +145,7 @@ def generate_deep_candidates(
     candidate_count: int,
     config: WeightSamplingConfig,
     rng: random.Random | None = None,
+    max_artist_count: int = DEFAULT_MAX_ARTIST_COUNT,
 ) -> list[DeepCandidate]:
     """生成一轮可回溯的深度探索候选。
 
@@ -152,8 +155,9 @@ def generate_deep_candidates(
     """
 
     validate_weight_config(config)
+    _validate_artist_count_ceiling(max_artist_count)
     pool = _validated_pool(artist_pool)
-    normalized_parents = _validated_deep_parents(parents, config)
+    normalized_parents = _validated_deep_parents(parents, config, max_artist_count)
     if candidate_count <= len(normalized_parents):
         raise ValueError("深度候选数量必须大于父本数，以保留随机注入名额")
     source = rng if rng is not None else random.Random()
@@ -172,19 +176,19 @@ def generate_deep_candidates(
 
     # 公平性硬约束：即使偏好很低，每个父本也不会失去探索机会。
     for parent in normalized_parents:
-        append_unique(lambda parent=parent: _local_mutation(parent, pool, config, source))
+        append_unique(lambda parent=parent: _local_mutation(parent, pool, config, source, max_artist_count))
 
     remaining = candidate_count - len(results)
     injection_count = min(remaining, max(1, round(candidate_count * 0.1)))
     for _ in range(injection_count):
-        append_unique(lambda: _random_injection(pool, config, source))
+        append_unique(lambda: _random_injection(pool, config, source, max_artist_count))
 
     while len(results) < candidate_count:
         def next_candidate() -> DeepCandidate:
             if len(normalized_parents) > 1 and source.random() < 0.65:
-                return _crossover(normalized_parents, config, source)
+                return _crossover(normalized_parents, config, source, max_artist_count)
             return _local_mutation(
-                _weighted_parent(normalized_parents, source), pool, config, source
+                _weighted_parent(normalized_parents, source), pool, config, source, max_artist_count
             )
 
         append_unique(next_candidate)
@@ -324,21 +328,24 @@ def generate_basic_candidate(
     min_artist_count: int,
     config: WeightSamplingConfig,
     rng: random.Random | None = None,
+    max_artist_count: int = DEFAULT_MAX_ARTIST_COUNT,
 ) -> BasicCandidate:
-    """从最少数量到 10 个 ID 中随机取样，并生成 Artist String。
+    """从设置的最少到最多 ID 数量中随机取样，并生成 Artist String。
 
-    实际上限还受池子大小约束；每个候选都会重新随机实际数量。因此最少
-    数量为 2 时，不是固定抽取 2 个，而是在 2～min(10, 池大小) 间抽取。
+    实际上限还受池子大小约束；每个候选都会重新随机实际数量。
     """
 
     validate_weight_config(config)
     pool = _validated_pool(artist_pool)
-    if not 1 <= min_artist_count <= 10:
-        raise ValueError("最少抽取 ID 数目必须为 1 到 10")
+    _validate_artist_count_ceiling(max_artist_count)
+    if not 1 <= min_artist_count <= MAX_ARTIST_COUNT:
+        raise ValueError("最少抽取 ID 数目必须为 1 到 30")
+    if min_artist_count > max_artist_count:
+        raise ValueError("最少抽取 ID 数目不能大于最多抽取 ID 数目")
     if min_artist_count > len(pool):
         raise ValueError("ArtistPool 中的 ID 数量不足")
     source = rng if rng is not None else random.Random()
-    actual_count = source.randint(min_artist_count, min(10, len(pool)))
+    actual_count = source.randint(min_artist_count, min(max_artist_count, len(pool)))
     selected = source.sample(pool, actual_count)
     continuous = [sample_split_beta_weight(config, source) for _ in selected]
     balanced = soft_balance_weights(continuous, config)
@@ -355,6 +362,7 @@ def generate_basic_candidates(
     candidate_count: int,
     config: WeightSamplingConfig,
     rng: random.Random | None = None,
+    max_artist_count: int = DEFAULT_MAX_ARTIST_COUNT,
 ) -> list[BasicCandidate]:
     """在同一随机源下批量构造基础探索候选。"""
 
@@ -362,13 +370,13 @@ def generate_basic_candidates(
         raise ValueError("候选数量至少为 1")
     source = rng if rng is not None else random.Random()
     return [
-        generate_basic_candidate(artist_pool, min_artist_count, config, source)
+        generate_basic_candidate(artist_pool, min_artist_count, config, source, max_artist_count)
         for _ in range(candidate_count)
     ]
 
 
 def _validated_deep_parents(
-    parents: Sequence[DeepParent], config: WeightSamplingConfig
+    parents: Sequence[DeepParent], config: WeightSamplingConfig, max_artist_count: int
 ) -> list[DeepParent]:
     if not parents:
         raise ValueError("当前父本集不能为空")
@@ -381,8 +389,8 @@ def _validated_deep_parents(
             raise ValueError("父本 ID 不能为空或重复")
         if not math.isfinite(parent.preference) or parent.preference < 0:
             raise ValueError("父本偏好必须是非负有限数字")
-        if not 1 <= len(parent.artist_weights) <= 10:
-            raise ValueError("每个父本必须包含 1 到 10 个 Artist ID")
+        if not 1 <= len(parent.artist_weights) <= max_artist_count:
+            raise ValueError(f"每个父本必须包含 1 到 {max_artist_count} 个 Artist ID")
         ids = [item.artist_id.strip() for item in parent.artist_weights]
         if any(not artist_id for artist_id in ids) or len(ids) != len(set(ids)):
             raise ValueError("父本 Artist ID 不能为空或重复")
@@ -409,6 +417,7 @@ def _local_mutation(
     pool: Sequence[str],
     config: WeightSamplingConfig,
     rng: random.Random,
+    max_artist_count: int,
 ) -> DeepCandidate:
     weights = list(parent.artist_weights)
     used = {item.artist_id for item in weights}
@@ -422,7 +431,7 @@ def _local_mutation(
         actions.append("weight")
     if available_pool_ids:
         actions.append("replace")
-        if len(weights) < 10:
+        if len(weights) < max_artist_count:
             actions.append("add")
     if len(weights) > 1:
         actions.append("remove")
@@ -482,9 +491,9 @@ def _local_mutation(
 
 
 def _random_injection(
-    pool: Sequence[str], config: WeightSamplingConfig, rng: random.Random
+    pool: Sequence[str], config: WeightSamplingConfig, rng: random.Random, max_artist_count: int
 ) -> DeepCandidate:
-    basic = generate_basic_candidate(pool, min(2, len(pool)), config, rng)
+    basic = generate_basic_candidate(pool, min(2, len(pool)), config, rng, max_artist_count)
     return DeepCandidate(
         basic.artist_weights,
         basic.artist_string,
@@ -495,7 +504,8 @@ def _random_injection(
 
 
 def _crossover(
-    parents: Sequence[DeepParent], config: WeightSamplingConfig, rng: random.Random
+    parents: Sequence[DeepParent], config: WeightSamplingConfig, rng: random.Random,
+    max_artist_count: int,
 ) -> DeepCandidate:
     first = _weighted_parent(parents, rng)
     second = _weighted_parent([parent for parent in parents if parent.parent_id != first.parent_id], rng)
@@ -526,7 +536,7 @@ def _crossover(
     ]
     rng.shuffle(union)
     for item in union:
-        if item.artist_id in used or len(child) >= 10 or rng.random() >= 0.55:
+        if item.artist_id in used or len(child) >= max_artist_count or rng.random() >= 0.55:
             continue
         if item.artist_id in shared and rng.random() < 0.5:
             weight = discretize_weight(
@@ -589,6 +599,11 @@ def _validated_pool(artist_pool: Sequence[str]) -> list[str]:
     if len(pool) != len(set(pool)):
         raise ValueError("ArtistPool 不能包含重复 ID")
     return pool
+
+
+def _validate_artist_count_ceiling(max_artist_count: int) -> None:
+    if not 1 <= int(max_artist_count) <= MAX_ARTIST_COUNT:
+        raise ValueError("最多抽取 ID 数目必须为 1 到 30")
 
 
 def _is_step_aligned(value: float) -> bool:

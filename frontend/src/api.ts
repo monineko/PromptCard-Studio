@@ -256,8 +256,14 @@ export const api = {
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/parents/${encodeURIComponent(parentSetId)}/preferences`, { method: "POST", body: JSON.stringify(payload) }),
   styleExploreCreateDeepBranch: (runId: string, payload: { source_round_id: string; name: string; candidate_ids: string[] }) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/branches`, { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreDeleteDeepFamily: (runId: string, familyId: string) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/families/${encodeURIComponent(familyId)}`, { method: "DELETE" }),
+  styleExploreDeleteDeepParentSet: (runId: string, parentSetId: string) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/deep/parents/${encodeURIComponent(parentSetId)}`, { method: "DELETE" }),
   styleExploreAppendDeepRound: (runId: string, payload: Omit<StyleExploreRunCreatePayload, "pool_id" | "name" | "phase"> & { parent_set_id?: string }) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/rounds/deep`, { method: "POST", body: JSON.stringify(payload) }),
+  styleExploreDeleteDeepRound: (runId: string, roundId: string) =>
+    request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/rounds/deep/${encodeURIComponent(roundId)}`, { method: "DELETE" }),
   styleExploreRetryFailed: (runId: string) =>
     request<StyleExploreRun>(`/api/style-explore/runs/${encodeURIComponent(runId)}/retry-failed`, { method: "POST" }),
   styleExploreStartRun: (runId: string) =>

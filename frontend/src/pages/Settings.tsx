@@ -1,5 +1,6 @@
 import { FolderOpen, Images, KeyRound, Power, RefreshCw, Save, Undo2, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { api } from "../api";
 import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
 import { Button, ConfirmDialog } from "../components/UI";
@@ -21,6 +22,7 @@ function isMigratablePath(path: string): boolean {
 }
 
 export function Settings() {
+  const location = useLocation();
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
   const setTheme = useStore((s) => s.setTheme);
@@ -38,6 +40,7 @@ export function Settings() {
     auto_note: true,
     hide_backend_panel: false,
     hide_style_explore_top_nav: false,
+    style_explore_max_artist_count: 10,
   });
   const [dictStatus, setDictStatus] = useState<DictionaryStatus | null>(null);
   const [bgImages, setBgImages] = useState<{ name: string; url: string }[]>([]);
@@ -158,8 +161,20 @@ export function Settings() {
       auto_note: settings.auto_note,
       hide_backend_panel: settings.hide_backend_panel,
       hide_style_explore_top_nav: settings.hide_style_explore_top_nav,
+      style_explore_max_artist_count: settings.style_explore_max_artist_count,
     });
   }, [settings]);
+
+  useEffect(() => {
+    const state = location.state as { scrollTarget?: string } | null;
+    if (state?.scrollTarget !== "style-explore-max-artist-count") return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById("style-explore-max-artist-count");
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.state, settings]);
 
   useEffect(() => {
     api
@@ -676,6 +691,36 @@ export function Settings() {
           </span>
         </label>
 
+        <div
+          id="style-explore-max-artist-count"
+          tabIndex={-1}
+          className="scroll-mt-6 rounded-xl border border-[var(--border)] p-4 outline-none transition-shadow focus:ring-2 focus:ring-[var(--accent)]"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <label htmlFor="style-explore-max-artist-count-range" className="text-sm font-medium">
+              画风探索：最多抽取 ID 数目
+            </label>
+            <span className="min-w-8 text-right text-sm font-semibold text-[var(--accent)]">
+              {form.style_explore_max_artist_count}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
+            设置每张候选图的 Artist String 最多抽取多少个 ID，也会成为“最少抽取 ID 数目”的可选上限。默认 10，可在 10–30 之间调整。
+          </p>
+          <input
+            id="style-explore-max-artist-count-range"
+            type="range"
+            min={10}
+            max={30}
+            step={1}
+            value={form.style_explore_max_artist_count}
+            onChange={(event) => setForm({ ...form, style_explore_max_artist_count: Number(event.target.value) })}
+            className="mt-3 w-full accent-[var(--accent)]"
+            aria-label="画风探索：最多抽取 ID 数目"
+          />
+          <div className="mt-1 flex justify-between text-[11px] text-[var(--muted)]"><span>10</span><span>30</span></div>
+        </div>
+
         <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
           <div className="mb-1 flex items-center gap-2">
             <span className="text-sm font-medium">提示词词典</span>
@@ -732,6 +777,7 @@ export function Settings() {
                 auto_note: form.auto_note,
                 hide_backend_panel: form.hide_backend_panel,
                 hide_style_explore_top_nav: form.hide_style_explore_top_nav,
+                style_explore_max_artist_count: form.style_explore_max_artist_count,
               })
             }
           >

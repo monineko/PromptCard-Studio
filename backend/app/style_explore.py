@@ -806,10 +806,12 @@ def _append_parent_snapshot(
     return True
 
 
-def _validate_parent_snapshot(record: dict, parents: list[dict]) -> None:
+def _validate_parent_snapshot(
+    record: dict, parents: list[dict], algorithm: dict | None = None
+) -> None:
     """通过算法接口提前验证父本集合，避免无效快照进入任务记录。"""
 
-    raw_algorithm = dict(record.get("algorithm") or {})
+    raw_algorithm = {**dict(record.get("algorithm") or {}), **dict(algorithm or {})}
     config = style_explore_algorithm.WeightSamplingConfig(
         lower=float(raw_algorithm.get("lower", 0.1)),
         upper=float(raw_algorithm.get("upper", 2.0)),
@@ -818,6 +820,7 @@ def _validate_parent_snapshot(record: dict, parents: list[dict]) -> None:
         right_dispersion=float(raw_algorithm.get("right_dispersion", 0.4)),
         soft_balance_strength=float(raw_algorithm.get("soft_balance_strength", 0.0)),
     )
+    max_artist_count = int(raw_algorithm.get("max_artist_count", 10))
     style_explore_algorithm.generate_deep_candidates(
         [
             style_explore_algorithm.DeepParent.from_artist_string(
@@ -829,6 +832,7 @@ def _validate_parent_snapshot(record: dict, parents: list[dict]) -> None:
         len(parents) + 1,
         config,
         random.Random(0),
+        max_artist_count,
     )
 
 
@@ -850,7 +854,7 @@ def _activate_parent_snapshot(
             existing["updated_at"] = now
     parent_set = {
         "id": uuid.uuid4().hex[:12],
-        "number": len(deep["parent_sets"]) + 1,
+        "number": max((int(item.get("number") or 0) for item in deep["parent_sets"]), default=0) + 1,
         "family_id": family_id,
         "generation": max(1, int(generation)),
         "status": "active",
@@ -881,7 +885,7 @@ def _create_family(record: dict, parents: list[dict]) -> tuple[dict, dict]:
     now = _now()
     family = {
         "id": uuid.uuid4().hex[:12],
-        "number": len(deep["families"]) + 1,
+        "number": max((int(item.get("number") or 0) for item in deep["families"]), default=0) + 1,
         "created_at": now,
         "updated_at": now,
         "root_parent_set_id": None,
@@ -1085,7 +1089,7 @@ def create_aesthetic_branch(
         if len(parents) == inherited_count:
             raise ValueError("挑选的子代与当前父本重复，请重新选择")
 
-        _validate_parent_snapshot(record, parents)
+        _validate_parent_snapshot(record, parents, source_round.get("algorithm") or {})
         source_generation = int(
             source_round.get("generation")
             or int(source_parent_set.get("generation") or source_parent_set.get("number") or 1) + 1
@@ -1107,6 +1111,170 @@ def create_aesthetic_branch(
             generation=source_generation,
             branch=branch,
         )
+        _save_run(record)
+        return _full_run(record)
+
+
+def _move_removed_candidate_images_to_trash(record: dict, candidates: list[dict]) -> int:
+    """把撤回结构中的任务内图片移入内部回收目录。"""
+
+    task_root = _run_file(str(record.get("id") or "")).parent.resolve()
+    trash_dir = task_root / ".trash"
+    moved = 0
+    for candidate in candidates:
+        raw_path = (candidate.get("generation") or {}).get("path")
+        if not raw_path:
+            continue
+        source = Path(str(raw_path)).resolve()
+        if not source.is_relative_to(task_root) or not source.is_file():
+            continue
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        target = trash_dir / f"{uuid.uuid4().hex[:8]}_{source.name}"
+        shutil.move(str(source), str(target))
+        generation = candidate.setdefault("generation", {})
+        generation["deleted_from"] = str(source)
+        generation["path"] = str(target)
+        # 多图移动中途失败时，已移动部分仍与持久化索引一致。
+        _save_run(record)
+        moved += 1
+    return moved
+
+
+def delete_deep_round(run_id: str, round_id: str) -> dict:
+    """撤回一个深度图片堆；已有后续分支时须先撤回分支。"""
+
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再删除图片堆")
+        round_record = next(
+            (
+                item for item in record.get("rounds") or []
+                if item.get("id") == round_id and item.get("phase") == "deep"
+            ),
+            None,
+        )
+        if round_record is None:
+            raise FileNotFoundError(f"深度探索轮次不存在: {round_id}")
+        deep = _deep_state(record)
+        if any(
+            (item.get("branch") or {}).get("source_round_id") == round_id
+            for item in deep["parent_sets"]
+        ):
+            raise ValueError("该图片堆已有后续分支，请先删除后续分支父本集")
+        candidates = [
+            item for item in record.get("candidates") or []
+            if item.get("round_id") == round_id or item.get("id") in set(round_record.get("candidate_ids") or [])
+        ]
+        if any((item.get("generation") or {}).get("status") == "generating" for item in candidates):
+            raise ValueError("该图片堆仍有图片正在生成，请等待当前请求结束")
+        removed_ids = {str(item.get("id")) for item in candidates}
+        _move_removed_candidate_images_to_trash(record, candidates)
+        record["candidates"] = [
+            item for item in record.get("candidates") or [] if str(item.get("id")) not in removed_ids
+        ]
+        record["rounds"] = [item for item in record.get("rounds") or [] if item.get("id") != round_id]
+        parent_set = next(
+            (item for item in deep["parent_sets"] if item.get("id") == round_record.get("parent_set_id")),
+            None,
+        )
+        if parent_set is not None:
+            parent_set["used_round_ids"] = [
+                item for item in _parent_set_round_ids(record, parent_set) if item != round_id
+            ]
+            sibling_rounds = [
+                item for item in record["rounds"]
+                if item.get("phase") == "deep" and item.get("parent_set_id") == parent_set.get("id")
+            ]
+            for index, sibling in enumerate(sibling_rounds, 1):
+                sibling["sibling_index"] = index
+            parent_set["updated_at"] = _now()
+        record["target_count"] = len(record["candidates"])
+        _save_run(record)
+        return _full_run(record)
+
+
+def delete_deep_parent_set(run_id: str, parent_set_id: str) -> dict:
+    """撤回家族最新的空分支父本集，并恢复上一代为活跃父本。"""
+
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再删除父本集")
+        deep = _deep_state(record)
+        parent_set = next(
+            (item for item in deep["parent_sets"] if item.get("id") == parent_set_id), None
+        )
+        if parent_set is None:
+            raise FileNotFoundError(f"父本集不存在: {parent_set_id}")
+        family = next(
+            (item for item in deep["families"] if item.get("id") == parent_set.get("family_id")), None
+        )
+        if family is None:
+            raise ValueError("父本集缺少所属家族记录")
+        if parent_set.get("id") == family.get("root_parent_set_id"):
+            raise ValueError("第一代父本集代表整个家族，请使用删除家族")
+        if parent_set.get("id") != family.get("active_parent_set_id"):
+            raise ValueError("只能删除家族当前最新的父本集")
+        if _parent_set_round_ids(record, parent_set):
+            raise ValueError("该父本集已有图片堆，请先删除这些图片堆")
+        source_parent_set_id = str((parent_set.get("branch") or {}).get("source_parent_set_id") or "")
+        source_parent_set = next(
+            (item for item in deep["parent_sets"] if item.get("id") == source_parent_set_id), None
+        )
+        if source_parent_set is None:
+            raise ValueError("分支来源父本集不存在，无法撤回")
+        deep["parent_sets"] = [item for item in deep["parent_sets"] if item.get("id") != parent_set_id]
+        source_parent_set["status"] = "active"
+        source_parent_set["updated_at"] = _now()
+        family["active_parent_set_id"] = source_parent_set_id
+        family["updated_at"] = source_parent_set["updated_at"]
+        deep["active_family_id"] = family["id"]
+        deep["active_parent_set_id"] = source_parent_set_id
+        _save_run(record)
+        return _full_run(record)
+
+
+def delete_deep_family(run_id: str, family_id: str) -> dict:
+    """删除一个独立深度家族及其轮次，其他家族和基础候选保持不变。"""
+
+    with _lock:
+        record = _load_run(run_id)
+        if record.get("status") == "running":
+            raise ValueError("请先暂停探索任务后再删除家族")
+        deep = _deep_state(record)
+        family = next((item for item in deep["families"] if item.get("id") == family_id), None)
+        if family is None:
+            raise FileNotFoundError(f"深度探索家族不存在: {family_id}")
+        parent_set_ids = {
+            str(item.get("id")) for item in deep["parent_sets"] if item.get("family_id") == family_id
+        }
+        round_ids = {
+            str(item.get("id")) for item in record.get("rounds") or []
+            if item.get("phase") == "deep"
+            and (item.get("family_id") == family_id or item.get("parent_set_id") in parent_set_ids)
+        }
+        candidates = [
+            item for item in record.get("candidates") or [] if str(item.get("round_id")) in round_ids
+        ]
+        if any((item.get("generation") or {}).get("status") == "generating" for item in candidates):
+            raise ValueError("该家族仍有图片正在生成，请等待当前请求结束")
+        removed_ids = {str(item.get("id")) for item in candidates}
+        _move_removed_candidate_images_to_trash(record, candidates)
+        record["candidates"] = [
+            item for item in record.get("candidates") or [] if str(item.get("id")) not in removed_ids
+        ]
+        record["rounds"] = [
+            item for item in record.get("rounds") or [] if str(item.get("id")) not in round_ids
+        ]
+        deep["parent_sets"] = [
+            item for item in deep["parent_sets"] if str(item.get("id")) not in parent_set_ids
+        ]
+        deep["families"] = [item for item in deep["families"] if item.get("id") != family_id]
+        next_family = deep["families"][-1] if deep["families"] else None
+        deep["active_family_id"] = next_family.get("id") if next_family else None
+        deep["active_parent_set_id"] = next_family.get("active_parent_set_id") if next_family else None
+        record["target_count"] = len(record["candidates"])
         _save_run(record)
         return _full_run(record)
 
@@ -1213,6 +1381,7 @@ def append_deep_round(
             soft_balance_strength=float(raw.get("soft_balance_strength", 0.0)),
         )
         seed = int(raw.get("random_seed", random.SystemRandom().randrange(1, 2**63)))
+        max_artist_count = int(raw.get("max_artist_count", 10))
         normalized_algorithm = {
             **raw,
             "lower": config.lower,
@@ -1221,6 +1390,7 @@ def append_deep_round(
             "left_dispersion": config.left_dispersion,
             "right_dispersion": config.right_dispersion,
             "soft_balance_strength": config.soft_balance_strength,
+            "max_artist_count": max_artist_count,
         }
         generated = style_explore_algorithm.generate_deep_candidates(
             [
@@ -1233,6 +1403,7 @@ def append_deep_round(
             int(target_count),
             config,
             random.Random(seed),
+            max_artist_count,
         )
         rounds = record.setdefault("rounds", [])
         round_id = uuid.uuid4().hex[:12]
@@ -1268,7 +1439,7 @@ def append_deep_round(
             )
         round_record = {
             "id": round_id,
-            "number": len(rounds) + 1,
+            "number": max((int(item.get("number") or 0) for item in rounds), default=0) + 1,
             "phase": "deep",
             "status": "pending",
             "created_at": _now(),
@@ -1560,6 +1731,7 @@ def _append_basic_round_to_record(
         soft_balance_strength=float(raw.get("soft_balance_strength", 0.0)),
     )
     min_artist_count = int(raw.get("min_artist_count", raw.get("artist_count", 2)))
+    max_artist_count = int(raw.get("max_artist_count", 10))
     raw.pop("artist_count", None)
     seed = int(raw.get("random_seed", random.SystemRandom().randrange(1, 2**63)))
     normalized_algorithm = {
@@ -1571,13 +1743,14 @@ def _append_basic_round_to_record(
         "right_dispersion": config.right_dispersion,
         "soft_balance_strength": config.soft_balance_strength,
         "min_artist_count": min_artist_count,
+        "max_artist_count": max_artist_count,
     }
     round_id = uuid.uuid4().hex[:12]
     rounds = record.setdefault("rounds", [])
     snapshot = {"positive": positive or "", "negative": negative or "", "params": dict(params or {})}
     round_record = {
         "id": round_id,
-        "number": len(rounds) + 1,
+        "number": max((int(item.get("number") or 0) for item in rounds), default=0) + 1,
         "phase": "basic",
         "status": "pending",
         "created_at": _now(),
@@ -1588,7 +1761,7 @@ def _append_basic_round_to_record(
         "candidate_ids": [],
     }
     generated = style_explore_algorithm.generate_basic_candidates(
-        record["pool"]["ids"], min_artist_count, target_count, config, random.Random(seed)
+        record["pool"]["ids"], min_artist_count, target_count, config, random.Random(seed), max_artist_count
     )
     candidates = [
         {

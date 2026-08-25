@@ -51,6 +51,8 @@ export type Settings = {
   hide_backend_panel: boolean;
   /** 仅隐藏顶部画风探索入口，侧边栏入口始终保留 */
   hide_style_explore_top_nav: boolean;
+  /** 画风探索单张候选最多抽取的 Artist ID 数目（10-30） */
+  style_explore_max_artist_count: number;
   effects: {
     background_rotation: boolean;
     review_particles: boolean;
