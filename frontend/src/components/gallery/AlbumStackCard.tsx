@@ -40,7 +40,7 @@ export function AlbumStackCard({
   return (
     <button
       onClick={onOpen}
-      className="album-card group flex animate-fade-in-up flex-col items-center text-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+      className="album-card group flex w-full animate-fade-in-up flex-col items-center text-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
       style={{ animationDelay: `${90 + index * 70}ms` }}
     >
       {/* 堆叠照片区域 */}

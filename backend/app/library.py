@@ -345,9 +345,11 @@ def _safe_filename(name: str) -> str:
 
 
 def _import_target_folder(target: str, root: Path) -> Path:
-    """拖放/上传导入的落点：未评分写根目录，其余分类写入当天的分类目录。"""
+    """拖放/上传导入的落点：所有分类均写入当天的日期目录。"""
     if target == "unrated":
-        return root
+        folder = root / date.today().isoformat()
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
     prefixes = CATEGORY_PREFIXES.get(target)
     if not prefixes:
         raise ValueError(f"未知导入目标: {target}")

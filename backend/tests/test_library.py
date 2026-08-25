@@ -137,10 +137,11 @@ class LibraryServiceTest(unittest.TestCase):
         result = lib.import_uploaded_files(
             [("a.png", b"x"), ("a.png", b"y"), ("note.txt", b"z")]
         )
+        today = lib.date.today().isoformat()
         self.assertEqual(result["imported"], 2)
         self.assertEqual(result["skipped"], 1)
-        self.assertTrue((self.tmp / "a.png").exists())
-        self.assertTrue((self.tmp / "a (1).png").exists())
+        self.assertTrue((self.tmp / today / "a.png").exists())
+        self.assertTrue((self.tmp / today / "a (1).png").exists())
 
     def test_08b_import_uploaded_files_to_category(self):
         result = lib.import_uploaded_files([("dropped.png", b"x")], target="treasure")
@@ -170,6 +171,21 @@ class LibraryServiceTest(unittest.TestCase):
         today = lib.date.today().isoformat()
         self.assertEqual(result["imported"], 1)
         self.assertTrue((self.tmp / "Fine" / f"Fine-{today}" / "streamed.webp").exists())
+
+    def test_08e_streamed_upload_writes_unrated_images_to_today_folder(self):
+        class FakeUpload:
+            filename = "unrated.webp"
+
+            def __init__(self):
+                self.chunks = [b"image", b""]
+
+            async def read(self, _size):
+                return self.chunks.pop(0)
+
+        result = asyncio.run(lib.import_uploaded_streams([FakeUpload()], "unrated"))
+        today = lib.date.today().isoformat()
+        self.assertEqual(result["imported"], 1)
+        self.assertTrue((self.tmp / today / "unrated.webp").exists())
 
     def test_09_import_from_path(self):
         src = Path(tempfile.mkdtemp(prefix="npm_import_src_"))

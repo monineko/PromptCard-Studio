@@ -762,7 +762,7 @@ export function Gallery() {
 
   const currentDropTarget = importTarget(category);
   const dragOverlay = draggingImages ? (
-    <div className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-[color-mix(in_srgb,var(--bg)_72%,transparent)] p-4 backdrop-blur-sm animate-fade-in">
+    <div className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-[color-mix(in_srgb,var(--bg)_20%,transparent)] p-4 animate-fade-in">
       <div className="flex max-w-sm flex-col items-center rounded-3xl border border-[var(--accent)]/55 bg-[var(--panel)]/95 px-8 py-7 text-center shadow-2xl">
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)]/15 text-[var(--accent)] animate-pulse"><ImagePlus size={31} /></div>
         <strong className="mt-4 text-lg">松开即可导入图片</strong>
