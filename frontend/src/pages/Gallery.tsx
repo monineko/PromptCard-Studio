@@ -15,7 +15,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import Lightbox from "yet-another-react-lightbox";
@@ -23,6 +23,7 @@ import "yet-another-react-lightbox/styles.css";
 import { api } from "../api";
 import { AlbumStackCard } from "../components/gallery/AlbumStackCard";
 import { GalleryMasonry } from "../components/gallery/GalleryMasonry";
+import { LibraryDragImportNotice } from "../components/gallery/LibraryDragImportNotice";
 import { PngInfoPopup } from "../components/gallery/PngInfoPopup";
 import { QuickPickPopup } from "../components/gallery/QuickPickPopup";
 import { ReviewMode } from "../components/gallery/ReviewMode";
@@ -67,6 +68,40 @@ const CATEGORY_LABEL: Record<LibraryCategoryKey, string> = {
   favorites: "收藏",
   unrated: "未评分",
 };
+
+type ImportTarget = Exclude<LibraryCategoryKey, "all">;
+
+function importTarget(category: LibraryCategoryKey | null): ImportTarget {
+  return !category || category === "all" ? "unrated" : category;
+}
+
+function isSupportedImageFile(file: File) {
+  return /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
+}
+
+function hasSupportedDrop(data: DataTransfer) {
+  const types = Array.from(data.types);
+  return types.includes("Files") || types.includes("text/uri-list") || types.includes("text/html");
+}
+
+function droppedImageUrls(data: DataTransfer): string[] {
+  const urls = new Set<string>();
+  const addUrl = (value: string) => {
+    try {
+      const parsed = new URL(value.trim());
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") urls.add(parsed.toString());
+    } catch {
+      // 非 URL 的拖放文本不作为图片导入。
+    }
+  };
+  data.getData("text/uri-list").split(/\r?\n/).filter((value) => value && !value.startsWith("#")).forEach(addUrl);
+  const html = data.getData("text/html");
+  if (html) {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    document.querySelectorAll("img[src]").forEach((image) => addUrl(image.getAttribute("src") ?? ""));
+  }
+  return [...urls];
+}
 
 type Group = { key: string; label: string; categoryLabel?: string; items: LibraryImageItem[] };
 type CoverEntry = { url: string; name: string; date: string };
@@ -122,6 +157,7 @@ export function Gallery() {
   const addToast = useStore((s) => s.addToast);
   const overwriteZonesFromPng = useStore((s) => s.overwriteZonesFromPng);
   const recycleReject = useStore((s) => s.settings?.recycle_reject ?? true);
+  const libraryDragImportEnabled = useStore((s) => s.settings?.library_drag_import_enabled !== false);
 
   const [summary, setSummary] = useState<LibrarySummary | null>(null);
   const [covers, setCovers] = useState<Partial<Record<LibraryCategoryKey, CoverEntry[]>>>({});
@@ -138,6 +174,8 @@ export function Gallery() {
   const [reviewStartIndex, setReviewStartIndex] = useState(0);
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [draggingImages, setDraggingImages] = useState(false);
+  const [dragTarget, setDragTarget] = useState<ImportTarget>("unrated");
   const [quickPick, setQuickPick] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [quickPickBusy, setQuickPickBusy] = useState(false);
@@ -636,30 +674,81 @@ export function Gallery() {
     }
   }, [addToast, category, openCategory, refresh, undoToken]);
 
-  const handleImport = useCallback(
-    async (fileList: FileList | null) => {
-      if (!fileList?.length || importing) return;
-      const files = Array.from(fileList).filter((f) =>
-        /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(f.name)
-      );
-      if (!files.length) {
-        addToast("没有可导入的图片文件", "err");
+  const importDroppedImages = useCallback(
+    async (files: File[], urls: string[], target: ImportTarget) => {
+      if (importing) return;
+      const imageFiles = files.filter(isSupportedImageFile);
+      if (!imageFiles.length && !urls.length) {
+        addToast("没有可导入的图片文件或公开图片链接", "err");
         return;
       }
       setImporting(true);
       try {
-        const result = await api.importLibraryFiles(files);
+        const results = [];
+        if (imageFiles.length) results.push(await api.importLibraryFiles(imageFiles, target));
+        if (urls.length) results.push(await api.importLibraryUrls(urls, target));
+        const imported = results.reduce((total, result) => total + result.imported, 0);
+        const skipped = results.reduce((total, result) => total + result.skipped, 0);
+        const errors = results.flatMap((result) => result.errors);
         addToast(
-          `已导入 ${result.imported} 张` + (result.skipped ? `，跳过 ${result.skipped} 张` : "")
+          `已导入 ${imported} 张到「${CATEGORY_LABEL[target]}」` + (skipped ? `，跳过 ${skipped} 张` : ""),
+          imported ? "ok" : "err"
         );
+        if (errors.length) addToast(errors[0], "err");
         await refresh();
+        if (category === target) await openCategory(target);
       } catch (e) {
         addToast(`导入失败: ${(e as Error).message}`, "err");
       } finally {
         setImporting(false);
       }
     },
-    [addToast, importing, refresh]
+    [addToast, category, importing, openCategory, refresh]
+  );
+
+  const handleImport = useCallback(
+    (fileList: FileList | null) => void importDroppedImages(Array.from(fileList ?? []), [], "unrated"),
+    [importDroppedImages]
+  );
+
+  const onDropTargetEnter = useCallback(
+    (event: DragEvent<HTMLElement>, target: ImportTarget) => {
+      if (!libraryDragImportEnabled || !hasSupportedDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      setDraggingImages(true);
+      setDragTarget(target);
+    },
+    [libraryDragImportEnabled]
+  );
+
+  const onDropTargetOver = useCallback(
+    (event: DragEvent<HTMLElement>, target: ImportTarget) => {
+      if (!libraryDragImportEnabled || !hasSupportedDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setDraggingImages(true);
+      setDragTarget((current) => (current === target ? current : target));
+    },
+    [libraryDragImportEnabled]
+  );
+
+  const onDropTargetLeave = useCallback((event: DragEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+    setDraggingImages(false);
+  }, []);
+
+  const onDropTargetDrop = useCallback(
+    (event: DragEvent<HTMLElement>, target: ImportTarget) => {
+      if (!libraryDragImportEnabled || !hasSupportedDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggingImages(false);
+      setDragTarget(target);
+      const files = Array.from(event.dataTransfer.files);
+      const urls = files.length ? [] : droppedImageUrls(event.dataTransfer);
+      void importDroppedImages(files, urls, target);
+    },
+    [importDroppedImages, libraryDragImportEnabled]
   );
 
   const openFolder = useCallback(async () => {
@@ -671,10 +760,30 @@ export function Gallery() {
     }
   }, [addToast]);
 
+  const currentDropTarget = importTarget(category);
+  const dragOverlay = draggingImages ? (
+    <div className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-[color-mix(in_srgb,var(--bg)_72%,transparent)] p-4 backdrop-blur-sm animate-fade-in">
+      <div className="flex max-w-sm flex-col items-center rounded-3xl border border-[var(--accent)]/55 bg-[var(--panel)]/95 px-8 py-7 text-center shadow-2xl">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)]/15 text-[var(--accent)] animate-pulse"><ImagePlus size={31} /></div>
+        <strong className="mt-4 text-lg">松开即可导入图片</strong>
+        <span className="mt-2 text-sm text-[var(--muted)]">将保存到「{CATEGORY_LABEL[dragTarget]}」</span>
+      </div>
+    </div>
+  ) : null;
+
   // ---------- 分类入口页 ----------
   if (!category) {
     return (
       <LoadingGate loading={entryLoading} progress={entryProgress} label="翻箱倒柜ing~">
+        <div
+          className="min-h-full"
+          onDragEnter={(event) => onDropTargetEnter(event, "unrated")}
+          onDragOver={(event) => onDropTargetOver(event, "unrated")}
+          onDragLeave={onDropTargetLeave}
+          onDrop={(event) => onDropTargetDrop(event, "unrated")}
+        >
+        <LibraryDragImportNotice enabled={libraryDragImportEnabled} />
+        {dragOverlay}
         <div className="animate-fade-in-up mx-auto w-full max-w-5xl px-4 py-6">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="min-w-0">
@@ -747,7 +856,17 @@ export function Gallery() {
             const urls = [cover ?? list[0]?.url, ...(backTwo[key] ?? [])]
               .filter((u): u is string => !!u)
               .slice(0, 3);
+            const target = importTarget(key);
+            const isDropTarget = draggingImages && dragTarget === target;
             return (
+              <div
+                key={key}
+                className={`relative rounded-2xl transition-all ${isDropTarget ? "scale-[1.025] ring-2 ring-[var(--accent)] ring-offset-4 ring-offset-transparent" : ""}`}
+                onDragEnter={(event) => { event.stopPropagation(); onDropTargetEnter(event, target); }}
+                onDragOver={(event) => { event.stopPropagation(); onDropTargetOver(event, target); }}
+                onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragTarget("unrated"); }}
+                onDrop={(event) => onDropTargetDrop(event, target)}
+              >
               <AlbumStackCard
                 key={key}
                 title={info?.label ?? key}
@@ -768,8 +887,11 @@ export function Gallery() {
                   void openCategory(key);
                 }}
               />
+              {isDropTarget && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl bg-[var(--accent)]/16 text-sm font-semibold text-[var(--text)] backdrop-blur-[1px]">导入到「{CATEGORY_LABEL[target]}」</div>}
+              </div>
             );
           })}
+        </div>
         </div>
         </div>
       </LoadingGate>
@@ -832,7 +954,15 @@ export function Gallery() {
   const Icon = meta.icon;
   const currentItem = lightboxIndex !== null ? items[lightboxIndex] : null;
   return (
-    <div className="min-h-full animate-fade-in-up pb-10">
+    <div
+      className="min-h-full animate-fade-in-up pb-10"
+      onDragEnter={(event) => onDropTargetEnter(event, currentDropTarget)}
+      onDragOver={(event) => onDropTargetOver(event, currentDropTarget)}
+      onDragLeave={onDropTargetLeave}
+      onDrop={(event) => onDropTargetDrop(event, currentDropTarget)}
+    >
+      <LibraryDragImportNotice enabled={libraryDragImportEnabled} />
+      {dragOverlay}
       {pendingCard && (
         createPortal(
           <div className="fixed left-1/2 top-[16vh] z-[12000] -translate-x-1/2">

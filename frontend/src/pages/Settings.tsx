@@ -721,6 +721,25 @@ export function Settings() {
           <div className="mt-1 flex justify-between text-[11px] text-[var(--muted)]"><span>10</span><span>30</span></div>
         </div>
 
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={settings.library_drag_import_enabled !== false}
+            onChange={(event) => {
+              void saveSettings({ library_drag_import_enabled: event.target.checked }).catch((error) =>
+                addToast(`保存拖放导入设置失败: ${(error as Error).message}`, "err")
+              );
+            }}
+            className="mt-0.5 accent-[var(--accent)]"
+          />
+          <span>
+            允许拖动图片进入图库自动保存
+            <span className="block text-xs text-[var(--muted)]">
+              开启后，可从桌面、资源管理器、聊天软件或网页拖动图片到普通图片库；拖到相册卡片会直接导入对应分类。关闭后不会监听拖放操作。
+            </span>
+          </span>
+        </label>
+
         <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
           <div className="mb-1 flex items-center gap-2">
             <span className="text-sm font-medium">提示词词典</span>

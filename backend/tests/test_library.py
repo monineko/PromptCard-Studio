@@ -4,6 +4,7 @@
 使用临时目录作为图库，不触碰真实用户数据。
 """
 
+import asyncio
 import json
 import shutil
 import sys
@@ -140,6 +141,35 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertEqual(result["skipped"], 1)
         self.assertTrue((self.tmp / "a.png").exists())
         self.assertTrue((self.tmp / "a (1).png").exists())
+
+    def test_08b_import_uploaded_files_to_category(self):
+        result = lib.import_uploaded_files([("dropped.png", b"x")], target="treasure")
+        today = lib.date.today().isoformat()
+        destination = self.tmp / "Treasure" / f"Treasure-{today}" / "dropped.png"
+        self.assertEqual(result["imported"], 1)
+        self.assertTrue(destination.exists())
+        self.assertEqual(result["items"][0]["category"], "treasure")
+
+    def test_08c_remote_import_rejects_local_addresses(self):
+        result = lib.import_remote_urls(["http://127.0.0.1/private.png"], target="unrated")
+        self.assertEqual(result["imported"], 0)
+        self.assertEqual(result["skipped"], 1)
+        self.assertIn("不允许下载本机地址", result["errors"][0])
+
+    def test_08d_streamed_upload_writes_to_target_category(self):
+        class FakeUpload:
+            filename = "streamed.webp"
+
+            def __init__(self):
+                self.chunks = [b"first", b"second", b""]
+
+            async def read(self, _size):
+                return self.chunks.pop(0)
+
+        result = asyncio.run(lib.import_uploaded_streams([FakeUpload()], "fine"))
+        today = lib.date.today().isoformat()
+        self.assertEqual(result["imported"], 1)
+        self.assertTrue((self.tmp / "Fine" / f"Fine-{today}" / "streamed.webp").exists())
 
     def test_09_import_from_path(self):
         src = Path(tempfile.mkdtemp(prefix="npm_import_src_"))

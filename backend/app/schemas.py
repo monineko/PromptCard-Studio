@@ -83,6 +83,11 @@ class ImportPathIn(BaseModel):
     path: str
 
 
+class ImportUrlsIn(BaseModel):
+    urls: list[str] = []
+    target: str = "unrated"
+
+
 class MoveImagesIn(BaseModel):
     paths: list[str] = []
     target: str

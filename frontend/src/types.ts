@@ -53,6 +53,8 @@ export type Settings = {
   hide_style_explore_top_nav: boolean;
   /** 画风探索单张候选最多抽取的 Artist ID 数目（10-30） */
   style_explore_max_artist_count: number;
+  /** 允许将本地文件或网页图片拖入普通图片库自动导入 */
+  library_drag_import_enabled: boolean;
   effects: {
     background_rotation: boolean;
     review_particles: boolean;
@@ -152,6 +154,8 @@ export type ImportResult = {
   imported: number;
   skipped: number;
   errors: string[];
+  /** 已成功保存、可直接插入图片流的条目 */
+  items?: LibraryImageItem[];
   /** 导入过程中自动创建的卡包分类 */
   created_categories?: string[];
   /** 因同名而自动加后缀（1）新建的卡片数 */

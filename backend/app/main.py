@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import subprocess
@@ -46,6 +47,7 @@ from .schemas import (
     PngSendIn,
     VibeImportIn,
     ImportPathIn,
+    ImportUrlsIn,
     MoveImagesIn,
     PublishEngineLocalPathIn,
     PublishEngineParamsIn,
@@ -1080,11 +1082,17 @@ def library_review_undo(body: ReviewUndoIn):
 
 
 @app.post("/api/library/import")
-async def library_import(files: list[UploadFile] = File(...)):
+async def library_import(files: list[UploadFile] = File(...), target: str = Form("unrated")):
     try:
-        return library_service.import_uploaded_files(
-            [(f.filename or "", await f.read()) for f in files]
-        )
+        return await library_service.import_uploaded_streams(files, target)
+    except Exception as e:
+        raise _as_http(e)
+
+
+@app.post("/api/library/import-urls")
+async def library_import_urls(body: ImportUrlsIn):
+    try:
+        return await asyncio.to_thread(library_service.import_remote_urls, body.urls, body.target)
     except Exception as e:
         raise _as_http(e)
 

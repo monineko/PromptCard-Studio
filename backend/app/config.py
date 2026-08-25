@@ -27,6 +27,7 @@ DEFAULT_SETTINGS = {
     "hide_backend_panel": False, # 勾选后下次启动自动隐藏后端命令行窗口（Windows）
     "hide_style_explore_top_nav": False,  # 仅隐藏顶部画风探索入口，侧边栏入口保留
     "style_explore_max_artist_count": 10,  # 画风探索单张候选最多抽取的 Artist ID 数目（10-30）
+    "library_drag_import_enabled": True,  # 允许拖放本地文件或网页图片链接导入普通图片库
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
     "effects": {                 # 特效开关（界面个性化）

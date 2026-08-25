@@ -138,11 +138,17 @@ export const api = {
       "/api/library/review/undo",
       { method: "POST", body: JSON.stringify({ token }) }
     ),
-  importLibraryFiles: (files: File[]) => {
+  importLibraryFiles: (files: File[], target = "unrated") => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
+    fd.append("target", target);
     return request<ImportResult>("/api/library/import", { method: "POST", body: fd });
   },
+  importLibraryUrls: (urls: string[], target = "unrated") =>
+    request<ImportResult>("/api/library/import-urls", {
+      method: "POST",
+      body: JSON.stringify({ urls, target }),
+    }),
   importLibraryPath: (path: string) =>
     request<ImportResult>("/api/library/import-path", { method: "POST", body: JSON.stringify({ path }) }),
   openLibraryFolder: () =>

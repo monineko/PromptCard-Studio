@@ -1,8 +1,14 @@
 import json
+import ipaddress
 import os
 import random
 import re
 import shutil
+import socket
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import date
 from pathlib import Path
@@ -36,6 +42,10 @@ CATEGORY_LABELS = {
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 COVERS_FILE_NAME = ".covers.json"
+MAX_UPLOAD_IMAGE_BYTES = 100 * 1024 * 1024
+MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
+MAX_REMOTE_IMAGE_COUNT = 20
+REMOTE_DOWNLOAD_TIMEOUT_SECONDS = 15
 
 # 撤销记录（内存，仅本次运行期间有效；键为 token）
 _UNDO_STORE: dict[str, list[dict]] = {}
@@ -159,6 +169,27 @@ def _category_of(parts: tuple[str, ...]) -> tuple[str, str]:
     return "unrated", date_group
 
 
+def _item_for_file(file: Path, root: Path) -> dict | None:
+    """将图库内已保存的图片转换为前端可直接显示的条目。"""
+    try:
+        rel = file.relative_to(root)
+        stat = file.stat()
+    except (OSError, ValueError):
+        return None
+    category, date_group = _category_of(rel.parts)
+    width, height = _image_size(file)
+    return {
+        "path": rel.as_posix(),
+        "name": file.name,
+        "category": category,
+        "date": date_group,
+        "size": stat.st_size,
+        "mtime": int(stat.st_mtime * 1000),
+        "width": width,
+        "height": height,
+    }
+
+
 def _scan_items() -> list[dict]:
     root = _library_root()
     items: list[dict] = []
@@ -170,24 +201,9 @@ def _scan_items() -> list[dict]:
         rel = file.relative_to(root)
         if any(part.startswith(".") for part in rel.parts):
             continue  # 跳过隐藏目录（如 .trash）
-        category, date_group = _category_of(rel.parts)
-        try:
-            stat = file.stat()
-        except OSError:
-            continue
-        width, height = _image_size(file)
-        items.append(
-            {
-                "path": rel.as_posix(),
-                "name": file.name,
-                "category": category,
-                "date": date_group,
-                "size": stat.st_size,
-                "mtime": int(stat.st_mtime * 1000),
-                "width": width,
-                "height": height,
-            }
-        )
+        item = _item_for_file(file, root)
+        if item:
+            items.append(item)
     return items
 
 
@@ -328,11 +344,30 @@ def _safe_filename(name: str) -> str:
     return (name or "image.png")[:200]
 
 
-def import_uploaded_files(files: list[tuple[str, bytes]]) -> dict:
-    """浏览器上传（选文件夹/多选图片）→ 复制进图库根目录（未评分），重名自动加后缀。"""
+def _import_target_folder(target: str, root: Path) -> Path:
+    """拖放/上传导入的落点：未评分写根目录，其余分类写入当天的分类目录。"""
+    if target == "unrated":
+        return root
+    prefixes = CATEGORY_PREFIXES.get(target)
+    if not prefixes:
+        raise ValueError(f"未知导入目标: {target}")
+    prefix = prefixes[0]
+    folder = root / prefix / f"{prefix}-{date.today().isoformat()}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _import_result(imported: int, skipped: int, errors: list[str], items: list[dict]) -> dict:
+    return {"imported": imported, "skipped": skipped, "errors": errors, "items": items}
+
+
+def import_uploaded_files(files: list[tuple[str, bytes]], target: str = "unrated") -> dict:
+    """内存中的上传文件导入图库；测试和旧调用可继续使用。"""
     root = _library_root()
+    dest_folder = _import_target_folder(target, root)
     imported, skipped = 0, 0
     errors: list[str] = []
+    items: list[dict] = []
     for name, data in files:
         if not data:
             skipped += 1
@@ -342,14 +377,191 @@ def import_uploaded_files(files: list[tuple[str, bytes]]) -> dict:
             skipped += 1
             errors.append(f"{name}: 非图片文件")
             continue
-        dest = _unique_dest(root, safe)
+        dest = _unique_dest(dest_folder, safe)
         try:
             dest.write_bytes(data)
             imported += 1
+            item = _item_for_file(dest, root)
+            if item:
+                items.append(item)
         except OSError as e:
             skipped += 1
             errors.append(f"{name}: {e}")
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+    return _import_result(imported, skipped, errors, items)
+
+
+async def import_uploaded_streams(files, target: str = "unrated") -> dict:
+    """浏览器文件拖放/多选上传：逐块写入临时文件，避免整张大图占用内存。"""
+    root = _library_root()
+    dest_folder = _import_target_folder(target, root)
+    temp_folder = root / ".importing"
+    temp_folder.mkdir(parents=True, exist_ok=True)
+    imported, skipped = 0, 0
+    errors: list[str] = []
+    items: list[dict] = []
+    for index, upload in enumerate(files):
+        name = str(getattr(upload, "filename", "") or "image.png")
+        if index >= 100:
+            skipped += 1
+            errors.append(f"{name}: 单次最多导入 100 张图片")
+            continue
+        safe = _safe_filename(name)
+        if Path(safe).suffix.lower() not in IMAGE_EXTENSIONS:
+            skipped += 1
+            errors.append(f"{name}: 非图片文件")
+            continue
+        temp_path: Path | None = None
+        try:
+            fd, raw_temp_path = tempfile.mkstemp(prefix="upload_", suffix=Path(safe).suffix, dir=temp_folder)
+            temp_path = Path(raw_temp_path)
+            total = 0
+            with os.fdopen(fd, "wb") as output:
+                while chunk := await upload.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_IMAGE_BYTES:
+                        raise ValueError("图片超过 100 MB 上限")
+                    output.write(chunk)
+            if not total:
+                raise ValueError("空文件")
+            dest = _unique_dest(dest_folder, safe)
+            os.replace(temp_path, dest)
+            temp_path = None
+            imported += 1
+            item = _item_for_file(dest, root)
+            if item:
+                items.append(item)
+        except (OSError, ValueError) as e:
+            skipped += 1
+            errors.append(f"{name}: {e}")
+        finally:
+            if temp_path:
+                temp_path.unlink(missing_ok=True)
+    return _import_result(imported, skipped, errors, items)
+
+
+def _is_public_address(address: str) -> bool:
+    value = ipaddress.ip_address(address)
+    return not (
+        value.is_private
+        or value.is_loopback
+        or value.is_link_local
+        or value.is_multicast
+        or value.is_reserved
+        or value.is_unspecified
+    )
+
+
+def _validate_remote_url(value: str) -> urllib.parse.SplitResult:
+    parsed = urllib.parse.urlsplit((value or "").strip())
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("仅支持 http 或 https 图片链接")
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("图片链接格式不安全")
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError("不允许下载本机地址")
+    try:
+        direct_address = ipaddress.ip_address(host)
+        if direct_address.is_loopback:
+            raise ValueError("不允许下载本机地址")
+        if not _is_public_address(str(direct_address)):
+            raise ValueError("不允许下载内网地址")
+    except ValueError as error:
+        if str(error).startswith("不允许"):
+            raise
+        try:
+            addresses = {entry[4][0] for entry in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
+        except OSError as e:
+            raise ValueError(f"无法解析图片地址: {e}") from e
+        if not addresses or any(not _is_public_address(address) for address in addresses):
+            raise ValueError("不允许下载内网地址")
+    return parsed
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_remote_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _extension_from_remote_file(temp_path: Path, source_url: str, content_type: str) -> str:
+    extension = Path(urllib.parse.urlsplit(source_url).path).suffix.lower()
+    mime_extensions = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/avif": ".avif",
+    }
+    if Image is None:
+        return extension if extension in IMAGE_EXTENSIONS else mime_extensions.get(content_type, "")
+    try:
+        with Image.open(temp_path) as image:
+            image.verify()
+            detected = image.format
+    except Exception as e:
+        raise ValueError("链接内容不是可识别的图片") from e
+    detected_extensions = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif", "BMP": ".bmp", "AVIF": ".avif"}
+    return extension if extension in IMAGE_EXTENSIONS else detected_extensions.get(str(detected).upper(), mime_extensions.get(content_type, ""))
+
+
+def import_remote_urls(urls: list[str], target: str = "unrated") -> dict:
+    """从网页拖入的公开图片链接下载到图库；限制地址、体积和重定向以保护本机。"""
+    root = _library_root()
+    dest_folder = _import_target_folder(target, root)
+    temp_folder = root / ".importing"
+    temp_folder.mkdir(parents=True, exist_ok=True)
+    imported, skipped = 0, 0
+    errors: list[str] = []
+    items: list[dict] = []
+    opener = urllib.request.build_opener(_SafeRedirectHandler())
+    for index, url in enumerate(dict.fromkeys(urls)):
+        if index >= MAX_REMOTE_IMAGE_COUNT:
+            skipped += 1
+            errors.append("单次最多下载 20 张网页图片")
+            continue
+        temp_path: Path | None = None
+        name = "网页图片"
+        try:
+            parsed = _validate_remote_url(url)
+            name = _safe_filename(Path(urllib.parse.unquote(parsed.path)).name or name)
+            request = urllib.request.Request(url, headers={"User-Agent": "PromptCard-Studio/1.2"})
+            with opener.open(request, timeout=REMOTE_DOWNLOAD_TIMEOUT_SECONDS) as response:
+                _validate_remote_url(response.geturl())
+                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                length = response.headers.get("Content-Length")
+                if length and int(length) > MAX_REMOTE_IMAGE_BYTES:
+                    raise ValueError("图片超过 25 MB 上限")
+                fd, raw_temp_path = tempfile.mkstemp(prefix="remote_", dir=temp_folder)
+                temp_path = Path(raw_temp_path)
+                total = 0
+                with os.fdopen(fd, "wb") as output:
+                    while chunk := response.read(1024 * 1024):
+                        total += len(chunk)
+                        if total > MAX_REMOTE_IMAGE_BYTES:
+                            raise ValueError("图片超过 25 MB 上限")
+                        output.write(chunk)
+            if not temp_path or not temp_path.stat().st_size:
+                raise ValueError("下载到的图片为空")
+            extension = _extension_from_remote_file(temp_path, url, content_type)
+            if extension not in IMAGE_EXTENSIONS:
+                raise ValueError("链接内容不是受支持的图片格式")
+            filename = _safe_filename(f"{Path(name).stem or 'image'}{extension}")
+            dest = _unique_dest(dest_folder, filename)
+            os.replace(temp_path, dest)
+            temp_path = None
+            imported += 1
+            item = _item_for_file(dest, root)
+            if item:
+                items.append(item)
+        except (OSError, ValueError, urllib.error.URLError) as e:
+            skipped += 1
+            errors.append(f"{name}: {e}")
+        finally:
+            if temp_path:
+                temp_path.unlink(missing_ok=True)
+    return _import_result(imported, skipped, errors, items)
 
 
 def import_from_path(path_str: str) -> dict:
