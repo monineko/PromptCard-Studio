@@ -1,4 +1,4 @@
-import { FolderOpen, Images, KeyRound, Power, RefreshCw, Save, Undo2, Zap } from "lucide-react";
+import { ExternalLink, FolderOpen, Images, KeyRound, Power, RefreshCw, Save, Undo2, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api } from "../api";
@@ -318,6 +318,15 @@ export function Settings() {
             <Zap size={14} />
           </span>
           <h2 className="text-sm font-semibold">NovelAI 连接</h2>
+          <a
+            href="https://novelai.net/image"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            title="打开 NovelAI 官网"
+          >
+            NovelAI官网 <ExternalLink size={11} />
+          </a>
           <span className="ml-auto flex items-center gap-1.5 text-xs">
             <span
               className={
