@@ -31,8 +31,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.load_settings()["style_explore_max_artist_count"], 30)
 
         saved = config.save_settings({"style_explore_max_artist_count": 3})
-        self.assertEqual(saved["style_explore_max_artist_count"], 10)
-        self.assertEqual(json.loads(self.config_file.read_text(encoding="utf-8"))["style_explore_max_artist_count"], 10)
+        self.assertEqual(saved["style_explore_max_artist_count"], 5)
+        self.assertEqual(json.loads(self.config_file.read_text(encoding="utf-8"))["style_explore_max_artist_count"], 5)
 
     def test_library_drag_import_enabled_by_default(self):
         self.assertTrue(config.load_settings()["library_drag_import_enabled"])

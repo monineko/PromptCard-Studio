@@ -714,12 +714,12 @@ export function Settings() {
             </span>
           </div>
           <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
-            设置每张候选图的 Artist String 最多抽取多少个 ID，也会成为“最少抽取 ID 数目”的可选上限。默认 10，可在 10–30 之间调整。
+            设置每张候选图的 Artist String 最多抽取多少个 ID，也会成为“最少抽取 ID 数目”的可选上限。默认 10，可在 5–30 之间调整。
           </p>
           <input
             id="style-explore-max-artist-count-range"
             type="range"
-            min={10}
+            min={5}
             max={30}
             step={1}
             value={form.style_explore_max_artist_count}
@@ -727,7 +727,7 @@ export function Settings() {
             className="mt-3 w-full accent-[var(--accent)]"
             aria-label="画风探索：最多抽取 ID 数目"
           />
-          <div className="mt-1 flex justify-between text-[11px] text-[var(--muted)]"><span>10</span><span>30</span></div>
+          <div className="mt-1 flex justify-between text-[11px] text-[var(--muted)]"><span>5</span><span>30</span></div>
         </div>
 
         <label className="flex cursor-pointer items-start gap-2 text-sm">

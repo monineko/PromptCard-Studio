@@ -202,7 +202,7 @@ export function StyleExplore() {
   const [targetCount, setTargetCount] = useState(20);
   const [taskName, setTaskName] = useState("");
   const [minArtistCount, setMinArtistCount] = useState(2);
-  const maxArtistCount = Math.max(10, Math.min(30, Math.round(settings?.style_explore_max_artist_count ?? 10)));
+  const maxArtistCount = Math.max(5, Math.min(30, Math.round(settings?.style_explore_max_artist_count ?? 10)));
   const [lower, setLower] = useState(0.1);
   const [upper, setUpper] = useState(2);
   const [mode, setMode] = useState(0.8);

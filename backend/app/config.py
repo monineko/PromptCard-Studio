@@ -26,7 +26,7 @@ DEFAULT_SETTINGS = {
     "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）
     "hide_backend_panel": False, # 勾选后下次启动自动隐藏后端命令行窗口（Windows）
     "hide_style_explore_top_nav": False,  # 仅隐藏顶部画风探索入口，侧边栏入口保留
-    "style_explore_max_artist_count": 10,  # 画风探索单张候选最多抽取的 Artist ID 数目（10-30）
+    "style_explore_max_artist_count": 10,  # 画风探索单张候选最多抽取的 Artist ID 数目（5-30）
     "library_drag_import_enabled": True,  # 允许拖放本地文件或网页图片链接导入普通图片库
     "category_order": [],        # 分类的拖拽排序（名称列表）
     "category_colors": {},       # 分类的自定义颜色（名称 → 色相值）
@@ -74,7 +74,7 @@ def _normalize_style_explore_max_artist_count(value) -> int:
         parsed = int(value)
     except (TypeError, ValueError):
         parsed = 10
-    return max(10, min(30, parsed))
+    return max(5, min(30, parsed))
 
 
 def load_settings() -> dict:
