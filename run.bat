@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 rem ============================================================================
 rem PromptCard Studio for NovelAI - Windows 启动入口
 rem

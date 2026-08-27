@@ -30,7 +30,9 @@ class ReleaseMetadataTest(unittest.TestCase):
         self.assertEqual(frontend_version, app.version)
 
     def test_windows_portable_uses_prebuilt_frontend_without_npm(self):
-        launcher = (PROJECT_ROOT / "run.bat").read_text(encoding="utf-8")
+        launcher_file = PROJECT_ROOT / "run.bat"
+        self.assertFalse(launcher_file.read_bytes().startswith(b"\xef\xbb\xbf"), "run.bat 不能带 UTF-8 BOM")
+        launcher = launcher_file.read_text(encoding="utf-8")
         portable_guard = launcher.index('if "%PORTABLE_MODE%"=="1"')
         source_timestamp_check = launcher.index("Get-ChildItem 'frontend\\src'")
 
