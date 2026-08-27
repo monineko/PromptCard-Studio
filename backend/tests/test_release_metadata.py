@@ -31,13 +31,27 @@ class ReleaseMetadataTest(unittest.TestCase):
 
     def test_windows_portable_uses_prebuilt_frontend_without_npm(self):
         launcher_file = PROJECT_ROOT / "run.bat"
-        self.assertFalse(launcher_file.read_bytes().startswith(b"\xef\xbb\xbf"), "run.bat 不能带 UTF-8 BOM")
-        launcher = launcher_file.read_text(encoding="utf-8")
-        portable_guard = launcher.index('if "%PORTABLE_MODE%"=="1"')
-        source_timestamp_check = launcher.index("Get-ChildItem 'frontend\\src'")
+        launcher_bytes = launcher_file.read_bytes()
+        self.assertFalse(launcher_bytes.startswith(b"\xef\xbb\xbf"), "run.bat 不能带 UTF-8 BOM")
+        self.assertTrue(all(byte < 128 for byte in launcher_bytes), "run.bat 必须是纯 ASCII 入口")
+        self.assertIsNone(re.search(rb"(?<!\r)\n", launcher_bytes), "run.bat 必须使用 CRLF")
+
+        launcher = launcher_bytes.decode("ascii")
+        helper_call = 'call "%~dp0run-utf8.bat"'
+        self.assertIn(helper_call, launcher)
+        self.assertLess(launcher.index("chcp 65001"), launcher.index(helper_call))
+
+        helper_file = PROJECT_ROOT / "run-utf8.bat"
+        helper_bytes = helper_file.read_bytes()
+        self.assertFalse(helper_bytes.startswith(b"\xef\xbb\xbf"), "run-utf8.bat 不能带 UTF-8 BOM")
+        self.assertIsNone(re.search(rb"(?<!\r)\n", helper_bytes), "run-utf8.bat 必须使用 CRLF")
+
+        helper = helper_bytes.decode("utf-8")
+        portable_guard = helper.index('if "%PORTABLE_MODE%"=="1"')
+        source_timestamp_check = helper.index("Get-ChildItem 'frontend\\src'")
 
         self.assertLess(portable_guard, source_timestamp_check)
-        self.assertIn("便携包使用预构建前端，无需 Node.js", launcher)
+        self.assertIn("便携包使用预构建前端，无需 Node.js", helper)
 
 
 if __name__ == "__main__":
