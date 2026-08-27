@@ -29,6 +29,14 @@ class ReleaseMetadataTest(unittest.TestCase):
         self.assertEqual(frontend_version, lock_version)
         self.assertEqual(frontend_version, app.version)
 
+    def test_windows_portable_uses_prebuilt_frontend_without_npm(self):
+        launcher = (PROJECT_ROOT / "run.bat").read_text(encoding="utf-8")
+        portable_guard = launcher.index('if "%PORTABLE_MODE%"=="1"')
+        source_timestamp_check = launcher.index("Get-ChildItem 'frontend\\src'")
+
+        self.assertLess(portable_guard, source_timestamp_check)
+        self.assertIn("便携包使用预构建前端，无需 Node.js", launcher)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -124,6 +124,19 @@ if errorlevel 1 (
 
 rem ---------- 4/4 检查前端构建 ----------
 echo [4/4] 正在检查前端构建产物...
+rem 便携包只交付预构建产物。背景图等用户数据位于 frontend\src 下，
+rem 不能以它们的时间戳触发 npm 重建，否则便携包会错误地要求 Node.js。
+if "%PORTABLE_MODE%"=="1" (
+  if exist "frontend\dist\index.html" (
+    echo [OK] 便携包使用预构建前端，无需 Node.js。
+    goto frontend_ready
+  ) else (
+    echo [ERROR] 便携包缺少 frontend\dist\index.html，无法启动。
+    pause
+    exit /b 1
+  )
+)
+
 set "FRONTEND_BUILD_NEEDED=0"
 if not exist "frontend\dist\index.html" set "FRONTEND_BUILD_NEEDED=1"
 if "%FRONTEND_BUILD_NEEDED%"=="0" (
@@ -162,6 +175,7 @@ if "%FRONTEND_BUILD_NEEDED%"=="0" (
   )
 )
 
+:frontend_ready
 echo.
 echo [启动] 运行环境准备完成，正在启动本地服务。
 echo [启动] 浏览器将自动打开；关闭本窗口即可停止项目。
