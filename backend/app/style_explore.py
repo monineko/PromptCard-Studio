@@ -39,6 +39,7 @@ DEFAULT_POOL_SEEDS = {
 }
 IMPORT_ORIGINAL_BACKUP = "import-original.txt"
 POOL_REPORT_PREVIEW_LIMIT = 20
+REVIEW_SAVE_CHECKPOINT_SIZE = 100
 
 _lock = threading.RLock()
 _VALID_RUN_STATES = {"draft", "running", "paused", "generated", "reviewing", "completed", "cancelled"}
@@ -421,6 +422,54 @@ def _save_run(record: dict) -> None:
     _write_json(_run_file(record["id"]), record)
 
 
+def _reconcile_candidate_image_locations(record: dict) -> int:
+    """根据任务专属目录修复手动移动或中断造成的图片路径、正式筛选标签不一致。"""
+    run_id = str(record.get("id") or "")
+    if not run_id:
+        return 0
+    task_root = _run_file(run_id).parent.resolve()
+    folder_labels = {"active": None, "treasure": "treasure", "special": "special", "reject": "reject"}
+    changed = 0
+    for candidate in record.get("candidates") or []:
+        generation = candidate.get("generation") or {}
+        raw_path = str(generation.get("path") or "")
+        if generation.get("status") != "done" or not raw_path or generation.get("deleted_at"):
+            continue
+        names = list(dict.fromkeys(filter(None, [Path(raw_path).name, str(generation.get("name") or "")])))
+        located: list[Path] = []
+        try:
+            current = Path(raw_path).resolve()
+            if current.is_relative_to(task_root) and current.is_file():
+                located.append(current)
+        except OSError:
+            pass
+        if not located:
+            candidate_id = str(candidate.get("id") or "")
+            for folder in folder_labels:
+                directory = task_root / folder
+                for name in names:
+                    for candidate_name in (name, f"{candidate_id}_{name}"):
+                        path = directory / candidate_name
+                        if path.is_file() and path not in located:
+                            located.append(path)
+        if len(located) != 1 or located[0].parent.name not in folder_labels:
+            continue
+        actual = located[0].resolve()
+        actual_label = folder_labels[actual.parent.name]
+        review = candidate.setdefault("review", {})
+        if Path(raw_path) != actual:
+            generation["path"] = str(actual)
+            changed += 1
+        if review.get("label") != actual_label:
+            review["label"] = actual_label
+            if actual_label:
+                review.setdefault("formal_reviewed_at", _now())
+            else:
+                review.pop("formal_reviewed_at", None)
+            changed += 1
+    return changed
+
+
 def _recover_interrupted_record(record: dict) -> bool:
     """把没有存活 worker 的中断任务恢复为可继续的持久化状态。"""
     run_id = str(record.get("id") or "")
@@ -521,7 +570,9 @@ def list_runs(include_archived: bool = False) -> list[dict]:
 def get_run(run_id: str) -> dict:
     with _lock:
         record = _load_run(run_id)
-        if _recover_interrupted_record(record):
+        changed = _recover_interrupted_record(record)
+        changed = bool(_reconcile_candidate_image_locations(record)) or changed
+        if changed:
             _save_run(record)
         return _full_run(record)
 
@@ -1560,6 +1611,7 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
     """一次提交正式筛选结果，并同步移动专属图库文件。"""
     with _lock:
         record = _load_run(run_id)
+        _reconcile_candidate_image_locations(record)
         candidates = {item.get("id"): item for item in record.get("candidates") or []}
         normalized: list[tuple[dict, str]] = []
         seen: set[str] = set()
@@ -1575,15 +1627,27 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
                 raise ValueError(f"正式筛选标签非法: {tag}")
             if (candidate.get("generation") or {}).get("status") != "done":
                 raise ValueError(f"候选尚未生成完成: {candidate_id}")
-            candidate_image_file(run_id, candidate_id)
             seen.add(candidate_id)
             normalized.append((candidate, tag))
 
         applied: list[dict] = []
+        skipped: list[dict] = []
         for candidate, tag in normalized:
+            try:
+                if not _move_candidate_for_label(run_id, candidate, tag):
+                    raise FileNotFoundError(f"候选图片不存在: {candidate.get('id')}")
+            except (FileNotFoundError, OSError, ValueError) as error:
+                skipped.append(
+                    {
+                        "candidate_id": candidate["id"],
+                        "path": candidate["id"],
+                        "tag": tag,
+                        "reason": str(error),
+                    }
+                )
+                continue
             candidate.setdefault("review", {})["label"] = tag
             candidate["review"]["formal_reviewed_at"] = _now()
-            _move_candidate_for_label(run_id, candidate, tag)
             applied.append(
                 {
                     "candidate_id": candidate["id"],
@@ -1593,15 +1657,15 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
                     "undoable": False,
                 }
             )
-            # 批处理中途失败时，已移动文件的索引仍与磁盘保持一致；前端可重新读取继续。
-            _save_run(record)
+            if len(applied) % REVIEW_SAVE_CHECKPOINT_SIZE == 0:
+                _save_run(record)
         reviewable = [
             item
             for item in record.get("candidates") or []
             if (item.get("generation") or {}).get("status") == "done"
             and (item.get("generation") or {}).get("path")
         ]
-        if normalized:
+        if applied:
             record["status"] = (
                 "completed"
                 if reviewable and all((item.get("review") or {}).get("label") for item in reviewable)
@@ -1609,35 +1673,44 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
             )
             record["status_reason"] = None
         _save_run(record)
+        message = f"已完成 {len(applied)} 张探索图片的正式筛选"
+        if skipped:
+            message += f"；{len(skipped)} 张未处理，可再次筛选重试"
         return {
-            "ok": True,
+            "ok": not skipped,
             "applied": applied,
-            "skipped": [],
+            "skipped": skipped,
             "undo_token": None,
-            "message": f"已完成 {len(applied)} 张探索图片的正式筛选",
+            "message": message,
             "run": _full_run(record),
         }
 
 
-def _move_candidate_for_label(run_id: str, candidate: dict, label: str | None) -> None:
+def _move_candidate_for_label(run_id: str, candidate: dict, label: str | None) -> bool:
     """筛选状态与任务内物理目录同步；未生成候选仅记录标签。"""
     generation = candidate.get("generation") or {}
     raw_path = generation.get("path")
     if generation.get("status") != "done" or not raw_path:
-        return
-    source = Path(str(raw_path)).resolve()
-    task_root = _run_file(run_id).parent.resolve()
-    if not source.is_relative_to(task_root) or not source.is_file():
-        return
+        return False
+    source = _candidate_image_path(run_id, candidate)
     destination_dir = _label_dir(run_id, label)
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination = destination_dir / source.name
     if source == destination:
-        return
+        return True
     if destination.exists():
         destination = destination_dir / f"{candidate['id']}_{source.name}"
     shutil.move(str(source), str(destination))
     generation["path"] = str(destination)
+    return True
+
+
+def _candidate_image_path(run_id: str, candidate: dict) -> Path:
+    path = Path(str((candidate.get("generation") or {}).get("path") or "")).resolve()
+    task_root = _run_file(run_id).parent.resolve()
+    if not path.is_relative_to(task_root) or not path.is_file():
+        raise FileNotFoundError(f"候选图片不存在: {candidate.get('id')}")
+    return path
 
 
 def candidate_image_file(run_id: str, candidate_id: str) -> Path:
@@ -1646,11 +1719,7 @@ def candidate_image_file(run_id: str, candidate_id: str) -> Path:
         candidate = next((item for item in record.get("candidates") or [] if item.get("id") == candidate_id), None)
         if candidate is None:
             raise FileNotFoundError("候选不存在")
-        path = Path(str((candidate.get("generation") or {}).get("path") or "")).resolve()
-        task_root = _run_file(run_id).parent.resolve()
-        if not path.is_relative_to(task_root) or not path.is_file():
-            raise FileNotFoundError("候选图片不存在")
-        return path
+        return _candidate_image_path(run_id, candidate)
 
 
 def copy_candidate_to_library(run_id: str, candidate_id: str) -> dict:

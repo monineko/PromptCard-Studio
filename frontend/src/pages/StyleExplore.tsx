@@ -1,5 +1,5 @@
 import { Archive, ArrowLeft, ChevronDown, ChevronUp, CircleAlert, CircleHelp, Compass, Crown, FileUp, FolderPlus, Heart, Images, Pause, Play, RotateCcw, Save, Send, Sparkles, Square, Trash2, WandSparkles, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -73,6 +73,56 @@ const EXPLORE_LIBRARY_META: Record<ExploreLibraryCategory, { label: string; desc
   special: { label: "Special", description: "独立保留、不自动参与深度算法的特别结果", color: "#8b5cf6", icon: Sparkles },
   reject: { label: "Reject", description: "暂不采用，可继续转移或删除的结果", color: "#f87171", icon: XCircle },
 };
+
+const ExploreCandidateCard = memo(function ExploreCandidateCard({
+  runId,
+  candidate,
+  index,
+  roundNumber,
+  onPreview,
+  onPatched,
+  onError,
+}: {
+  runId: string;
+  candidate: StyleExploreCandidate;
+  index: number;
+  roundNumber?: number;
+  onPreview: (candidateId: string) => void;
+  onPatched: (candidate: StyleExploreCandidate) => void;
+  onError: (message: string, kind?: "ok" | "err") => void;
+}) {
+  const [review, setReview] = useState(candidate.review);
+  const [patching, setPatching] = useState(false);
+  const generated = candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at);
+
+  useEffect(() => setReview(candidate.review), [candidate.id, candidate.review]);
+
+  const patchReview = useCallback(async (patch: Record<string, unknown>) => {
+    if (patching) return;
+    setPatching(true);
+    try {
+      const updated = await api.styleExploreUpdateCandidate(runId, candidate.id, { review: patch });
+      setReview(updated.review);
+      onPatched(updated);
+    } catch (error) {
+      onError((error as Error).message, "err");
+    } finally {
+      setPatching(false);
+    }
+  }, [candidate.id, onError, onPatched, patching, runId]);
+
+  const setPreliminaryReview = useCallback((label: "treasure" | "special" | "reject") => {
+    void patchReview({ preliminary_label: review.preliminary_label === label ? null : label });
+  }, [patchReview, review.preliminary_label]);
+
+  return <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 560px" }}>
+    {generated && <button type="button" className="mb-2 block w-full" onClick={() => onPreview(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(runId, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
+    <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${roundNumber ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
+    <code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}
+    {generated && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void patchReview({ heart: !review.heart })} disabled={patching} title={review.heart ? "取消心动标记" : "标记为心动"} aria-label={review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={review.heart ? "currentColor" : "none"} className={review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(label)} disabled={patching} aria-pressed={review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
+    {review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{review.preliminary_label}</div>}{review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{review.label}</div>}{Boolean(candidate.generation.deleted_at) && <div className="mt-1 text-xs text-[var(--muted)]">探索图片已删除，候选记录保留</div>}
+  </div>;
+});
 
 function ParameterHelp({ entry, onOpen }: { entry: HelpEntry; onOpen: (entry: HelpEntry) => void }) {
   return <span className="group relative inline-flex align-middle">
@@ -212,6 +262,7 @@ export function StyleExplore() {
   const [helpEntry, setHelpEntry] = useState<HelpEntry | null>(null);
   const [selectedRunId, setSelectedRunId] = useState(() => lastSelectedRunId);
   const [run, setRun] = useState<StyleExploreRun | null>(null);
+  const locallyPatchedCandidates = useRef(new Map<string, StyleExploreCandidate>());
   const [editRunName, setEditRunName] = useState("");
   const [previewCandidateId, setPreviewCandidateId] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
@@ -286,6 +337,7 @@ export function StyleExplore() {
     return run.candidates.filter((candidate) => !candidate.round_id || roundById.get(candidate.round_id)?.phase !== "deep");
   }, [run]);
   const visibleExploreCandidates = useMemo(() => run?.candidates.filter((candidate) => candidate.generation.status === "done" && candidate.generation.path && !candidate.generation.deleted_at) ?? [], [run]);
+  const basicRoundNumbers = useMemo(() => new Map((run?.rounds ?? []).map((round) => [round.id, round.number])), [run?.rounds]);
   const formalReviewCandidates = useMemo(() => {
     const basicRoundIds = new Set((run?.rounds ?? []).filter((round) => round.phase === "basic").map((round) => round.id));
     return visibleExploreCandidates.filter((candidate) => {
@@ -304,6 +356,7 @@ export function StyleExplore() {
     setExploreLibraryCategory(null);
     setExploreSelecting(false);
     setExploreSelectedIds(new Set());
+    locallyPatchedCandidates.current.clear();
   }, [run?.id]);
   const withBusy = async (action: () => Promise<void>) => {
     setBusy(true); try { await action(); } catch (e) { addToast((e as Error).message, "err"); } finally { setBusy(false); }
@@ -353,11 +406,9 @@ export function StyleExplore() {
     const next = action === "start" ? await api.styleExploreStartRun(run.id) : action === "pause" ? await api.styleExplorePauseRun(run.id) : action === "resume" ? await api.styleExploreResumeRun(run.id, { ...params, vibes }) : await api.styleExploreCancelRun(run.id);
     setRun(next); await refresh();
   });
-  const setPreliminaryReview = (candidateId: string, label: "treasure" | "special" | "reject", current: string | null | undefined) => void withBusy(async () => {
-    if (!run) return;
-    await api.styleExploreUpdateCandidate(run.id, candidateId, { review: { preliminary_label: current === label ? null : label } });
-    await loadRun(run.id);
-  });
+  const rememberPatchedCandidate = useCallback((candidate: StyleExploreCandidate) => {
+    locallyPatchedCandidates.current.set(candidate.id, candidate);
+  }, []);
   const currentRoundPayload = () => ({ target_count: targetCount, positive, negative, params: { ...params, vibes }, algorithm: { min_artist_count: minArtistCount, max_artist_count: maxArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength } });
   const appendRound = () => void withBusy(async () => {
     if (!run) return;
@@ -407,6 +458,7 @@ export function StyleExplore() {
       await loadRun(run.id).catch(() => {});
       throw error;
     }
+    locallyPatchedCandidates.current.clear();
     setRun(result.run);
     void refresh().catch((error) => addToast(`任务摘要刷新失败：${(error as Error).message}`, "err"));
     return result;
@@ -483,13 +535,7 @@ export function StyleExplore() {
       <WeightParameters targetCount={targetCount} setTargetCount={setTargetCount} minArtistCount={minArtistCount} setMinArtistCount={setMinArtistCount} maxArtistCount={maxArtistCount} lower={lower} setLower={setLower} upper={upper} setUpper={setUpper} mode={mode} setMode={setMode} leftDispersion={leftDispersion} setLeftDispersion={setLeftDispersion} rightDispersion={rightDispersion} setRightDispersion={setRightDispersion} softBalanceStrength={softBalanceStrength} setSoftBalanceStrength={setSoftBalanceStrength} setHelpEntry={setHelpEntry} onOpenAdvancedSettings={() => navigate("/settings", { state: { scrollTarget: "style-explore-max-artist-count" } })} />
     {run && <section className="glass rounded-2xl p-5">
       <div className={`flex gap-3 ${candidateCollapsed ? "items-center" : "items-start"}`}><div><h2 className="font-semibold">本任务候选</h2>{!candidateCollapsed && <p className="mt-1 text-xs text-[var(--muted)]">这里仅用于预览和初步标记；心形与 Treasure / Special / Reject 会作为文字注释带入后续正式筛选，不会在此移动图片。</p>}</div>{candidateCollapsed ? <button className={`${ghostButtonClass} ml-auto w-32 shrink-0`} onClick={() => setCandidateCollapsed(false)}><ChevronDown size={15} />展开</button> : <div className="ml-auto flex shrink-0 gap-2"><button className={`${ghostButtonClass} w-32`} onClick={() => setCandidateCollapsed(true)} aria-label="顶部收起本任务候选"><ChevronUp size={15} />收起</button><button className={`${ghostButtonClass} w-32`} onClick={() => controlRun(run.status === "running" ? "pause" : "resume")} disabled={busy || !["running", "paused"].includes(run.status)}>{run.status === "paused" ? <Play size={15} /> : <Pause size={15} />}{run.status === "paused" ? "继续生成" : "暂停生成"}</button></div>}</div>
-      {!candidateCollapsed && <><div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{basicCandidates.map((candidate, index) => <div key={candidate.id} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
-        {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <button type="button" className="mb-2 block w-full" onClick={() => setPreviewCandidateId(candidate.id)} aria-label={`放大查看候选 ${index + 1}`}><img className="aspect-[3/4] w-full rounded-lg object-cover" src={api.styleExploreCandidateImageUrl(run.id, candidate.id)} alt={`候选 ${index + 1}`} loading="lazy" /></button>}
-        <div className="flex justify-between gap-3 text-xs"><span>#{index + 1}{candidate.round_id ? ` · 轮次 ${run.rounds?.find((round) => round.id === candidate.round_id)?.number ?? ""}` : ""}</span><span className="text-[var(--muted)]">{candidate.generation.status}</span></div>
-        <code className="mt-1 block break-all text-xs text-[var(--accent)]">{candidate.artist_string}</code>{candidate.prompt_snapshot && <div className="mt-2 text-xs text-[var(--muted)]">快照：{candidate.prompt_snapshot.positive || "（无正面提示词）"}</div>}
-        {candidate.generation.status === "done" && Boolean(candidate.generation.path) && !Boolean(candidate.generation.deleted_at) && <div className="mt-3 flex flex-wrap gap-1"><button className={`${ghostButtonClass} px-2.5`} onClick={() => void withBusy(async () => { await api.styleExploreUpdateCandidate(run.id, candidate.id, { review: { heart: !candidate.review.heart } }); await loadRun(run.id); })} disabled={busy} title={candidate.review.heart ? "取消心动标记" : "标记为心动"} aria-label={candidate.review.heart ? "取消心动标记" : "标记为心动"}><Heart size={16} fill={candidate.review.heart ? "currentColor" : "none"} className={candidate.review.heart ? "text-rose-500" : ""} /></button>{(["treasure", "special", "reject"] as const).map((label) => <button key={label} className={ghostButtonClass} onClick={() => setPreliminaryReview(candidate.id, label, candidate.review.preliminary_label)} disabled={busy} aria-pressed={candidate.review.preliminary_label === label}>{label[0].toUpperCase() + label.slice(1)}</button>)}</div>}
-        {candidate.review.heart && <div className="mt-2 text-xs text-rose-500">♥ 心动标记</div>}{candidate.review.preliminary_label && <div className="mt-1 text-xs text-[var(--muted)]">初步判断：{candidate.review.preliminary_label}</div>}{candidate.review.label && <div className="mt-1 text-xs text-[var(--muted)]">正式筛选：{candidate.review.label}</div>}{Boolean(candidate.generation.deleted_at) && <div className="mt-1 text-xs text-[var(--muted)]">探索图片已删除，候选记录保留</div>}
-      </div>)}{basicCandidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
+      {!candidateCollapsed && <><div className="mt-4 grid max-h-[680px] gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{basicCandidates.map((candidate, index) => <ExploreCandidateCard key={candidate.id} runId={run.id} candidate={candidate} index={index} roundNumber={candidate.round_id ? basicRoundNumbers.get(candidate.round_id) : undefined} onPreview={setPreviewCandidateId} onPatched={rememberPatchedCandidate} onError={addToast} />)}{basicCandidates.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-[var(--muted)]">创建任务后，候选会在开始生成时按当前算法参数固化。</div>}</div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4"><p className="text-xs text-[var(--muted)]">全部候选生成完成后，从这里进入正式筛选。正式结果会移动到探索图库的三个牌堆中。</p><div className="flex gap-2"><button className={`${ghostButtonClass} w-32`} onClick={() => setCandidateCollapsed(true)}><ChevronUp size={15} />收起</button><button className={`${buttonClass} w-32`} onClick={() => setFormalReviewing(true)} disabled={busy || !canStartFormalReview}><Images size={15} />筛选</button></div></div></>}
     </section>}
     {run && <section className="glass rounded-2xl p-5">
@@ -501,7 +547,7 @@ export function StyleExplore() {
       </div>}
     </section>}
       {run && <StyleExploreDeepExplorer run={run} positive={positive} negative={negative} params={{ ...params, vibes }} algorithm={{ min_artist_count: minArtistCount, max_artist_count: maxArtistCount, lower, upper, mode, left_dispersion: leftDispersion, right_dispersion: rightDispersion, soft_balance_strength: softBalanceStrength }} onRunChange={(next) => { setRun(next); void refresh(); }} onPreviewCandidate={setPreviewCandidateId} notify={addToast} />}
-  </div>{formalReviewing && run && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${formalReviewCandidates.map((candidate) => candidate.id).join("-")}`} items={formalReviewCandidates.map((candidate) => ({ path: candidate.id, name: String(candidate.generation.name ?? candidate.id), hearted: !!candidate.review.heart, annotation: candidate.review.preliminary_label ? String(candidate.review.preliminary_label) : undefined }))} categoryLabel={`${run.name} · 基础探索`} choices={EXPLORE_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyFormalReviews} requireAllTagged recycleReject={false} onFinished={(result) => { setFormalReviewing(false); addToast(result.message); }} onCancel={() => setFormalReviewing(false)} /></div>, document.body)}<Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
+  </div>{formalReviewing && run && createPortal(<div className="fixed inset-x-0 bottom-0 top-[52px] z-[9000] bg-[var(--bg)]"><ReviewMode key={`${run.id}-${formalReviewCandidates.map((candidate) => candidate.id).join("-")}`} items={formalReviewCandidates.map((candidate) => { const current = locallyPatchedCandidates.current.get(candidate.id) ?? candidate; return { path: current.id, name: String(current.generation.name ?? current.id), hearted: !!current.review.heart, annotation: current.review.preliminary_label ? String(current.review.preliminary_label) : undefined }; })} categoryLabel={`${run.name} · 基础探索`} choices={EXPLORE_REVIEW_CHOICES} imageUrl={(item) => api.styleExploreCandidateImageUrl(run.id, item.path)} applyReview={applyFormalReviews} recycleReject={false} onFinished={(result) => { setFormalReviewing(false); addToast(`${result.message}；未筛选图片可下次继续`, result.ok ? "ok" : "err"); }} onCancel={() => setFormalReviewing(false)} /></div>, document.body)}<Modal open={helpEntry !== null} onClose={() => setHelpEntry(null)} title={helpEntry?.title ?? "参数说明"}>
     <div className="space-y-4 text-sm leading-7 text-[var(--muted)]">{helpEntry?.description}<p>输入框可精确填写，滑块会始终显示该参数允许的范围；右侧的回转箭头可单独恢复默认值。</p></div>
   </Modal><Modal open={poolImportResult !== null} onClose={() => setPoolImportResult(null)} title="ArtistPool 导入结果" wide>
     {poolImportResult && <div className="space-y-4 text-sm"><p className="text-[var(--muted)]">支持英文逗号或换行分隔；导入内容已规范化为一行一个 Artist ID。数值权重（如 1.2::artist::）及权重括号会自动移除，只保留 ID；原始 TXT 已作为首次备份保留。</p><div className="grid gap-3 sm:grid-cols-4">{[["输入项", poolImportResult.input_count ?? poolImportResult.original_count ?? 0], ["有效 ID", poolImportResult.valid_count ?? poolImportResult.ids.length], ["重复", poolImportResult.duplicate_count ?? 0], ["跳过", poolImportResult.skipped_count ?? poolImportResult.skipped ?? 0]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">{label}</div><div className="mt-1 text-lg font-semibold">{value}</div></div>)}</div>{(poolImportResult.warnings ?? []).length > 0 && <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{poolImportResult.warnings?.map((warning) => <p key={warning}>{poolImportWarningLabel(warning)}</p>)}</div>}<div><div className="mb-1 text-xs text-[var(--muted)]">规范化后的内容</div><pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--input)] p-3 font-mono text-xs">{poolImportResult.normalized_content ?? poolImportResult.content}</pre></div><div className="flex justify-end"><button className={buttonClass} onClick={() => setPoolImportResult(null)}>确认</button></div></div>}

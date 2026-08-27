@@ -600,6 +600,7 @@ class StyleExploreServiceTest(unittest.TestCase):
             [
                 {"id": "partial-a", "artist_string": "1.0::a::"},
                 {"id": "partial-b", "artist_string": "1.1::a::"},
+                {"id": "partial-c", "artist_string": "1.2::a::"},
             ],
         )
         for candidate in added["added"]:
@@ -620,23 +621,122 @@ class StyleExploreServiceTest(unittest.TestCase):
             return original_move(run_id, candidate, label)
 
         with mock.patch.object(explore, "_move_candidate_for_label", side_effect=fail_second_move):
-            with self.assertRaisesRegex(OSError, "simulated"):
-                explore.apply_candidate_reviews(
-                    run["id"],
-                    [
-                        {"candidate_id": "partial-a", "tag": "treasure"},
-                        {"candidate_id": "partial-b", "tag": "special"},
-                    ],
-                )
+            result = explore.apply_candidate_reviews(
+                run["id"],
+                [
+                    {"candidate_id": "partial-a", "tag": "treasure"},
+                    {"candidate_id": "partial-b", "tag": "special"},
+                    {"candidate_id": "partial-c", "tag": "reject"},
+                ],
+            )
 
         current = explore.get_run(run["id"])
         by_id = {candidate["id"]: candidate for candidate in current["candidates"]}
+        self.assertFalse(result["ok"])
+        self.assertEqual([item["candidate_id"] for item in result["applied"]], ["partial-a", "partial-c"])
+        self.assertEqual(result["skipped"][0]["candidate_id"], "partial-b")
         self.assertEqual(by_id["partial-a"]["review"]["label"], "treasure")
         self.assertIn("treasure", Path(by_id["partial-a"]["generation"]["path"]).parts)
         self.assertTrue(Path(by_id["partial-a"]["generation"]["path"]).is_file())
         self.assertIsNone(by_id["partial-b"]["review"]["label"])
         self.assertIn("active", Path(by_id["partial-b"]["generation"]["path"]).parts)
         self.assertTrue(Path(by_id["partial-b"]["generation"]["path"]).is_file())
+        self.assertEqual(by_id["partial-c"]["review"]["label"], "reject")
+        self.assertIn("reject", Path(by_id["partial-c"]["generation"]["path"]).parts)
+
+    def test_formal_review_batches_run_file_checkpoints(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        added = explore.add_candidates(
+            run["id"],
+            [
+                {"id": f"bulk-{index:03d}", "artist_string": f"1.{index % 10}::a::"}
+                for index in range(120)
+            ],
+        )
+        for candidate in added["added"]:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+
+        with (
+            mock.patch.object(explore, "_save_run", wraps=explore._save_run) as save_run,
+            mock.patch.object(explore, "_load_run", wraps=explore._load_run) as load_run,
+        ):
+            result = explore.apply_candidate_reviews(
+                run["id"],
+                [
+                    {"candidate_id": candidate["id"], "tag": "treasure"}
+                    for candidate in added["added"]
+                ],
+            )
+
+        self.assertEqual(len(result["applied"]), 120)
+        self.assertLessEqual(save_run.call_count, 3)
+        self.assertLessEqual(load_run.call_count, 2)
+
+    def test_get_run_reconciles_images_manually_moved_to_review_folder(self):
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        candidate = explore.add_candidates(
+            run["id"], [{"id": "manual-a", "artist_string": "1.0::a::"}]
+        )["added"][0]
+        source = explore._active_dir(run["id"]) / "manual-a.png"
+        source.write_bytes(b"fake")
+        explore.update_candidate(
+            run["id"], candidate["id"], {"generation": {"status": "done", "path": str(source)}}
+        )
+        destination = explore._label_dir(run["id"], "treasure") / source.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+
+        reconciled = explore.get_run(run["id"])
+        current = next(item for item in reconciled["candidates"] if item["id"] == candidate["id"])
+        self.assertEqual(current["review"]["label"], "treasure")
+        self.assertEqual(Path(current["generation"]["path"]), destination)
+
+    def test_partial_formal_review_can_resume_from_unreviewed_candidates(self):
+        """中途结束筛选提交已选项后，下一次只需继续剩余未筛选候选。"""
+        pool = explore.create_pool("池", "a\n")
+        run = explore.create_run(pool["id"], 1, "base", "neg", algorithm={"artist_count": 1})
+        added = explore.add_candidates(
+            run["id"],
+            [
+                {"id": "resume-a", "artist_string": "1.0::a::"},
+                {"id": "resume-b", "artist_string": "1.1::a::"},
+                {"id": "resume-c", "artist_string": "1.2::a::"},
+            ],
+        )
+        for candidate in added["added"]:
+            path = explore._active_dir(run["id"]) / f"{candidate['id']}.png"
+            path.write_bytes(b"fake")
+            explore.update_candidate(
+                run["id"], candidate["id"], {"generation": {"status": "done", "path": str(path)}}
+            )
+
+        paused = explore.apply_candidate_reviews(
+            run["id"], [{"candidate_id": "resume-a", "tag": "treasure"}]
+        )
+
+        self.assertEqual(paused["run"]["status"], "reviewing")
+        pending = [
+            candidate["id"]
+            for candidate in paused["run"]["candidates"]
+            if not candidate["review"].get("label")
+        ]
+        self.assertEqual(pending, ["resume-b", "resume-c"])
+        self.assertIn("treasure", Path(paused["run"]["candidates"][0]["generation"]["path"]).parts)
+
+        resumed = explore.apply_candidate_reviews(
+            run["id"],
+            [
+                {"candidate_id": "resume-b", "tag": "special"},
+                {"candidate_id": "resume-c", "tag": "reject"},
+            ],
+        )
+        self.assertEqual(resumed["run"]["status"], "completed")
 
     def test_deep_parent_preference_and_round_are_persisted_with_lineage(self):
         pool = explore.create_pool("深度池", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")

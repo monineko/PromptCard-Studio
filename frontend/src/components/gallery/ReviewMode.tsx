@@ -468,7 +468,7 @@ export function ReviewMode({
           </button>
         </div>
         <p className="mt-2 text-center text-[11px] text-[var(--muted)]">
-          {requireAllTagged && taggedCount < items.length ? `还需分类 ${items.length - taggedCount} 张 · ` : ""}结束筛选：开始移动文件到对应文件夹 · 退出：放弃本次筛选（不移动图片）
+          {requireAllTagged && taggedCount < items.length ? `还需分类 ${items.length - taggedCount} 张 · ` : ""}结束筛选：处理已标记图片，未标记图片下次继续 · 退出：放弃本次筛选（不移动图片）
         </p>
       </div>
     </div>
