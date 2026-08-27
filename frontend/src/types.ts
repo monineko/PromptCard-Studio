@@ -32,7 +32,10 @@ export type Category = { name: string; count: number; cards: CardMeta[]; color?:
 export type ThemeState = {
   mode: "light" | "dark";
   accent: string;
+  /** 卡片玻璃强度：0-1，越低越通透。 */
   glass: number;
+  /** 背景图模糊强度：0-100，100 对应 30px。 */
+  background_blur: number;
 };
 
 export type Settings = {

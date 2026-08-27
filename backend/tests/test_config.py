@@ -36,3 +36,23 @@ class ConfigTest(unittest.TestCase):
 
     def test_library_drag_import_enabled_by_default(self):
         self.assertTrue(config.load_settings()["library_drag_import_enabled"])
+
+    def test_theme_defaults_and_ranges_include_background_blur(self):
+        self.assertEqual(config.load_settings()["theme"]["background_blur"], 30)
+        self.assertEqual(config.load_settings()["theme"]["glass"], 0.3)
+        self.assertEqual(config.load_settings()["theme"]["accent"], "#5a78fa")
+
+        self.config_file.write_text(
+            json.dumps({"theme": {"glass": 0}}),
+            encoding="utf-8",
+        )
+        migrated = config.load_settings()
+        self.assertEqual(migrated["theme"]["background_blur"], 30)
+        self.assertEqual(migrated["theme"]["glass"], 0)
+
+        saved = config.save_settings({"theme": {"background_blur": 135}})
+        self.assertEqual(saved["theme"]["background_blur"], 100)
+        saved = config.save_settings({"theme": {"background_blur": -10}})
+        self.assertEqual(saved["theme"]["background_blur"], 0)
+        saved = config.save_settings({"theme": {"glass": 2}})
+        self.assertEqual(saved["theme"]["glass"], 1)

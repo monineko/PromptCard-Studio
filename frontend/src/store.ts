@@ -201,7 +201,12 @@ function applyTheme(settings: Settings | null) {
   if (!settings) return;
   root.dataset.mode = settings.theme.mode;
   root.style.setProperty("--accent", settings.theme.accent);
-  root.style.setProperty("--glass", String(settings.theme.glass));
+  const glass = Math.max(0, Math.min(1, Number(settings.theme.glass) || 0));
+  const panelBaseOpacity = settings.theme.mode === "dark" ? 0.72 : 0.78;
+  const panelOpacity = Math.min(1, panelBaseOpacity * (0.4 + glass));
+  root.style.setProperty("--glass-opacity", `${Math.round(panelOpacity * 100)}%`);
+  const blur = Math.max(0, Math.min(100, Number(settings.theme.background_blur) || 0));
+  root.style.setProperty("--background-blur", `${(blur * 0.3).toFixed(1)}px`);
 }
 
 export const useStore = create<AppState>((set, get) => {

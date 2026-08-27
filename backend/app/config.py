@@ -13,8 +13,9 @@ WORKSPACE_FILE = PROJECT_ROOT / "workspace.json"
 DEFAULT_SETTINGS = {
     "theme": {
         "mode": "dark",          # light | dark
-        "accent": "#8b5cf6",     # 主色
-        "glass": 0.6,            # 玻璃强度 0-1
+        "accent": "#5a78fa",     # 主色（R90 G120 B250）
+        "glass": 0.3,             # 卡片玻璃强度 0-1（越高越实）
+        "background_blur": 30,    # 背景图模糊强度 0-100（100 = 30px）
     },
     # "" = 项目默认图库（<项目根>/library），跟随项目文件夹移动/改名；用户可改为其他绝对路径
     "library_path": "",
@@ -77,6 +78,22 @@ def _normalize_style_explore_max_artist_count(value) -> int:
     return max(5, min(30, parsed))
 
 
+def _normalize_background_blur(value) -> int:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        parsed = 30
+    return max(0, min(100, parsed))
+
+
+def _normalize_glass(value) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = 0.3
+    return max(0.0, min(1.0, parsed))
+
+
 def load_settings() -> dict:
     data = {}
     if CONFIG_FILE.exists():
@@ -85,6 +102,10 @@ def load_settings() -> dict:
         except Exception:
             data = {}
     merged = _deep_merge(DEFAULT_SETTINGS, data)
+    theme = merged.setdefault("theme", {})
+    # v1.2.2 及更早版本没有背景图模糊设置；新增后使用当前项目预设。
+    theme["glass"] = _normalize_glass(theme.get("glass", 0.3))
+    theme["background_blur"] = _normalize_background_blur(theme.get("background_blur", 30))
     merged["style_explore_max_artist_count"] = _normalize_style_explore_max_artist_count(
         merged.get("style_explore_max_artist_count")
     )
@@ -105,6 +126,9 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> dict:
     merged = _deep_merge(load_settings(), settings)
+    theme = merged.setdefault("theme", {})
+    theme["glass"] = _normalize_glass(theme.get("glass", 0.3))
+    theme["background_blur"] = _normalize_background_blur(theme.get("background_blur", 30))
     merged["style_explore_max_artist_count"] = _normalize_style_explore_max_artist_count(
         merged.get("style_explore_max_artist_count")
     )

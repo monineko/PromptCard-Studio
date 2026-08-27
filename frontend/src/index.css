@@ -55,9 +55,10 @@ select option {
 }
 
 .glass {
-  background: var(--panel);
-  backdrop-filter: blur(calc(10px * var(--glass, 0.6)));
-  -webkit-backdrop-filter: blur(calc(10px * var(--glass, 0.6)));
+  background: color-mix(in srgb, var(--panel-solid) var(--glass-opacity, 72%), transparent);
+  /* 卡片玻璃保持固定毛玻璃；透明度由 --glass-opacity 单独控制。 */
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--border);
 }
 

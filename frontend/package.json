@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:background-blur": "node scripts/verify-background-blur.mjs"
   },
   "dependencies": {
     "framer-motion": "^11.11.0",

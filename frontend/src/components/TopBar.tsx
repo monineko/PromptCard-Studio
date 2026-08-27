@@ -5,13 +5,14 @@ import projectIcon from "../assets/icons/project-icon.png";
 import { cn } from "../lib";
 import { useStore } from "../store";
 import { useNavStore } from "../store/navStore";
+import { APP_VERSION } from "../update";
 import { IconBtn } from "./UI";
 
 export function TopBar() {
   const settings = useStore((s) => s.settings);
   const setTheme = useStore((s) => s.setTheme);
   const mode = settings?.theme.mode ?? "dark";
-  const accent = settings?.theme.accent ?? "#8b5cf6";
+  const accent = settings?.theme.accent ?? "#5a78fa";
   const navigate = useNavigate();
 
   const links = [
@@ -39,6 +40,7 @@ export function TopBar() {
           className="h-8 w-8 rounded-xl object-contain shadow-lg"
         />
         <span className="text-sm font-semibold tracking-wide">PromptCard Studio</span>
+        <span className="rounded-md bg-[var(--hover)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--muted)]">v{APP_VERSION}</span>
       </button>
 
       {/* 居中的导航标签：当前选中项带浅色滑块，切换时滑动 */}

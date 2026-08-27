@@ -50,7 +50,7 @@ export function AmbientBackground() {
             exit={{ opacity: 0 }}
             transition={{ duration: 1.2, ease: "easeInOut" }}
             className="absolute inset-0 h-full w-full object-cover"
-            style={{ filter: "blur(30px) brightness(0.8)", transform: "scale(1.1)" }}
+            style={{ filter: "blur(var(--background-blur, 30px)) brightness(0.8)", transform: "scale(1.1)" }}
           />
         )}
       </AnimatePresence>

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api } from "../api";
 import { DEFAULT_BACKDROPS } from "../assets/backgrounds";
+import { DismissibleNotice } from "../components/DismissibleNotice";
 import { Button, ConfirmDialog } from "../components/UI";
 import { useStore } from "../store";
 import { useGalleryVisual } from "../store/galleryVisual";
@@ -30,8 +31,9 @@ export function Settings() {
   const addToast = useStore((s) => s.addToast);
   const [form, setForm] = useState({
     mode: "dark",
-    accent: "#8b5cf6",
-    glass: 0.6,
+    accent: "#5a78fa",
+    glass: 0.3,
+    background_blur: 30,
     format_input: true,
     library_path: "",
     recycle_reject: true,
@@ -153,6 +155,7 @@ export function Settings() {
       mode: settings.theme.mode,
       accent: settings.theme.accent,
       glass: settings.theme.glass,
+      background_blur: settings.theme.background_blur,
       format_input: settings.format_input,
       library_path: settings.library_path,
       recycle_reject: settings.recycle_reject,
@@ -222,6 +225,13 @@ export function Settings() {
 
   return (
     <div className="animate-fade-in-up mx-auto w-full max-w-2xl space-y-5 px-4 py-6">
+      <DismissibleNotice
+        storageKey="promptcard:settings-save-notice-dismissed"
+        title="设置小提醒"
+        icon={<Save size={18} className="mt-0.5 shrink-0 text-[var(--accent)]" />}
+      >
+        更改设置后记得在最下方点击“保存设置”哦～
+      </DismissibleNotice>
       <h1 className="text-lg font-semibold">设置</h1>
 
       {/* ---------- 更新与迁移 ---------- */}
@@ -528,6 +538,23 @@ export function Settings() {
             onChange={(e) => setForm({ ...form, glass: Number(e.target.value) })}
             className="w-full accent-[var(--accent)]"
           />
+          <p className="mt-1 text-xs text-[var(--muted)]">控制卡片玻璃的透明度：数值越低越通透，数值越高越实。</p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm">
+            背景图模糊程度 <span className="text-xs text-[var(--muted)]">{form.background_blur}%</span>
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={form.background_blur}
+            onChange={(e) => setForm({ ...form, background_blur: Number(e.target.value) })}
+            className="w-full accent-[var(--accent)]"
+          />
+          <p className="mt-1 text-xs text-[var(--muted)]">只控制背景图：0% 为完全清晰，100% 保持原有模糊程度。</p>
         </div>
 
         <div className="rounded-2xl border border-dashed border-[var(--border)] p-4">
@@ -796,7 +823,7 @@ export function Settings() {
           <Button
             onClick={() =>
               saveSettings({
-                theme: { mode: form.mode as "light" | "dark", accent: form.accent, glass: form.glass },
+                theme: { mode: form.mode as "light" | "dark", accent: form.accent, glass: form.glass, background_blur: form.background_blur },
                 format_input: form.format_input,
                 library_path: form.library_path,
                 recycle_reject: form.recycle_reject,
