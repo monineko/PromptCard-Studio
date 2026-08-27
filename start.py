@@ -27,6 +27,17 @@ DEFAULT_PORT = 14419
 MAX_PORT_SHIFT = 1000
 
 
+def configure_stdio() -> None:
+    """统一使用 UTF-8，保证直接运行 start.py 时也能显示中文与终端符号。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def port_bindable(port: int) -> bool:
     """Return True if the port can really be bound on 127.0.0.1.
 
@@ -90,6 +101,7 @@ def maybe_hide_console() -> None:
 
 
 def main() -> int:
+    configure_stdio()
     parser = argparse.ArgumentParser(description="Start PromptCard Studio backend")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the browser")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Preferred port")
@@ -97,24 +109,32 @@ def main() -> int:
 
     port = pick_port(args.port)
     if not port:
-        print(
-            f"[ERROR] Ports {args.port}-{args.port + MAX_PORT_SHIFT - 1} are all occupied "
-            "or reserved by the system. Please close other processes and retry."
-        )
+        print(f"[错误] 端口 {args.port}-{args.port + MAX_PORT_SHIFT - 1} 均被占用或由系统保留，请关闭占用程序后重试。")
         return 1
 
     try:
         import uvicorn
         from app.main import app
+        from app import terminal as terminal_log
     except Exception as exc:  # noqa: BLE001
-        print(f"[ERROR] Failed to load the application: {exc}")
-        print("Please run run.bat / run.sh to set up the environment first.")
+        print(f"[错误] 后端应用加载失败：{exc}")
+        print("请先通过 run.bat / run.sh 启动，以完成运行环境检查。")
         return 1
 
     url = f"http://127.0.0.1:{port}"
-    print(f"Starting backend on {url} ...")
+    terminal_log.startup_panel(
+        app.version,
+        url,
+        frontend_ready=(ROOT / "frontend" / "dist" / "index.html").is_file(),
+    )
+    terminal_log.log("启动", f"项目目录 · {ROOT}")
+    terminal_log.log("服务", f"后端监听 · 127.0.0.1:{port} · 仅允许本机访问")
+    terminal_log.log("状态", "本地运行状态每 15 秒检查一次；任务变化会立即记录")
+    if port != args.port:
+        terminal_log.log("警告", f"首选端口 {args.port} 不可用，已自动改用 {port}")
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+    # 浏览器会高频读取缩略图和任务状态；关闭成功访问记录，仅保留错误与业务日志。
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
     server = uvicorn.Server(config)
 
     no_browser = args.no_browser or os.environ.get("PCS_NO_BROWSER") == "1"
@@ -122,10 +142,10 @@ def main() -> int:
 
         def open_browser():
             if wait_healthy(port):
-                print(f"Service is ready: {url}")
+                terminal_log.log("服务", f"服务已就绪 · {url}")
                 webbrowser.open(url)
             else:
-                print("[ERROR] Service did not become ready in time.")
+                terminal_log.log("错误", "服务未能在预期时间内完成启动")
 
         threading.Thread(target=open_browser, daemon=True).start()
 
@@ -135,6 +155,7 @@ def main() -> int:
         server.run()
     except KeyboardInterrupt:
         pass
+    terminal_log.log("服务", "后端服务已停止")
     return 0
 
 

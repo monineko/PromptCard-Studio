@@ -18,9 +18,14 @@ def cool_down(
     min_sec: float,
     max_sec: float,
     is_cancelled: Callable[[], bool] | None = None,
+    on_wait: Callable[[float], None] | None = None,
 ) -> bool:
     """随机等待并按半秒响应暂停/结束。返回 False 代表已取消。"""
+    if is_cancelled is not None and is_cancelled():
+        return False
     remain = random.uniform(min_sec, max_sec)
+    if on_wait is not None:
+        on_wait(remain)
     while remain > 0:
         if is_cancelled is not None and is_cancelled():
             return False

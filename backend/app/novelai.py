@@ -15,6 +15,7 @@ import zipfile
 from datetime import date
 from pathlib import Path
 
+from . import terminal as terminal_log
 from .config import load_settings, save_settings
 from .library import _library_root
 from .vibes import resolve_vibe
@@ -501,8 +502,14 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
 
 def generate_image(token: str, payload: dict) -> bytes:
     """调用 NovelAI 生图接口，返回 PNG 字节。"""
-    status, body = _request_json(GENERATE_URL, payload, REQUEST_TIMEOUT, token)
+    try:
+        status, body = _request_json(GENERATE_URL, payload, REQUEST_TIMEOUT, token)
+    except RuntimeError as error:
+        terminal_log.log("连接", terminal_log.compact_error(error))
+        raise
     if status != 200:
+        raw = terminal_log.compact_error(body.decode("utf-8", errors="replace"), 800)
+        terminal_log.log("NAI", f"HTTP {status} · {raw or '响应正文为空'}")
         raise RuntimeError(f"NovelAI 返回 HTTP {status}: {_response_error_message(status, body)}")
     try:
         with zipfile.ZipFile(io.BytesIO(body), mode="r") as zf:

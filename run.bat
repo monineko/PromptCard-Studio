@@ -19,14 +19,12 @@ cd /d "%~dp0"
 rem 使用 UTF-8 代码页显示中文提示。Windows Terminal / Windows 11 通常可正常显示；
 rem 若旧版控制台仍乱码，错误行中的 [ERROR] / [INFO] 英文关键词仍可用于排查。
 chcp 65001 >nul
+set "PCS_FORCE_COLOR=1"
 title PromptCard Studio for NovelAI
 
 echo.
-echo ============================================================
-echo   PromptCard Studio for NovelAI
-echo   本地启动程序
-echo ============================================================
-echo [INFO] 项目目录：%CD%
+echo [启动] 正在准备 PromptCard Studio 运行环境...
+echo [启动] 项目目录：%CD%
 echo.
 
 rem ---------- 1/4 查找 Python ----------
@@ -165,12 +163,12 @@ if "%FRONTEND_BUILD_NEEDED%"=="0" (
 )
 
 echo.
-echo [START] 正在启动本地服务，浏览器将自动打开。
-echo [START] 关闭本窗口即可停止项目。
+echo [启动] 运行环境准备完成，正在启动本地服务。
+echo [启动] 浏览器将自动打开；关闭本窗口即可停止项目。
 echo.
 "%VPY%" start.py
 echo.
-echo [STOP] 项目服务已停止。
+echo [停止] 项目服务已停止。
 pause
 exit /b 0
 

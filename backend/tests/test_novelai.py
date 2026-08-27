@@ -3,6 +3,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,19 @@ class NovelAiPayloadTest(unittest.TestCase):
                     "1girl, blue hair",
                 )
                 self.assertEqual(request_params["v4_negative_prompt"]["caption"]["base_caption"], "bad quality")
+
+    def test_generation_http_error_is_logged_with_raw_response(self):
+        body = b'{"message":"request rejected","statusCode":432}'
+        with mock.patch.object(novelai, "_request_json", return_value=(432, body)), mock.patch.object(
+            novelai.terminal_log, "log"
+        ) as write_log:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 432"):
+                novelai.generate_image("token", {})
+
+        write_log.assert_called_once_with(
+            "NAI",
+            'HTTP 432 · {"message":"request rejected","statusCode":432}',
+        )
 
 
 if __name__ == "__main__":

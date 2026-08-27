@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import cards as cards_service
 from . import novelai as novelai_service
+from . import terminal as terminal_log
 from .config import PROJECT_ROOT
 from .generation_timing import COOL_MAX, COOL_MIN, RETRY_WAIT_MAX, RETRY_WAIT_MIN, cool_down
 
@@ -206,9 +207,30 @@ def _next_pending(record: dict) -> dict | None:
     return None
 
 
-def _cool_down(min_sec: float, max_sec: float) -> None:
+def _cool_down(min_sec: float, max_sec: float) -> bool:
     """随机等待，期间响应暂停/结束请求（分片检查事件）。"""
-    cool_down(min_sec, max_sec, lambda: _stop_event.is_set() or _ended.is_set())
+    retrying = min_sec == RETRY_WAIT_MIN and max_sec == RETRY_WAIT_MAX
+
+    def announce(seconds: float) -> None:
+        with _lock:
+            record = _load_record()
+        if record is None:
+            return
+        current = _next_pending(record)
+        progress = f"{int(current['i']) + 1}/{record.get('total')}" if current else "即将完成"
+        kind = "重试" if retrying else "等待"
+        if retrying:
+            message = f"批量任务 {record.get('id')} · 第 {progress.split('/', 1)[0]} 张失败后先等 {seconds:.1f} 秒再重试，哼，不许再失败了～"
+        else:
+            message = f"批量任务 {record.get('id')} · 等待 {seconds:.1f} 秒再继续，不急不急～下一张 [{progress}]"
+        terminal_log.log(kind, message)
+
+    return cool_down(
+        min_sec,
+        max_sec,
+        lambda: _stop_event.is_set() or _ended.is_set(),
+        announce,
+    )
 
 
 def _worker_loop() -> None:
@@ -220,11 +242,13 @@ def _worker_loop() -> None:
             return
         if _stop_event.is_set():
             _set_status("paused", stop_reason="用户已暂停")
+            terminal_log.log("批量", f"任务已暂停 · {record.get('id')} · 当前进度 [{record.get('done')}/{record.get('total')}]，回来的时候告诉我一声哦～")
             return
 
         item = _next_pending(record)
         if item is None:
             _set_status("completed", stop_reason=None)
+            terminal_log.log("批量", f"批量任务 {record.get('id')} 全部完成 [{record.get('done')}/{record.get('total')}]，收工了喵！")
             return
 
         if record.get("anlas") is not None:
@@ -233,11 +257,17 @@ def _worker_loop() -> None:
                     "stopped",
                     stop_reason=f"剩余点数 {record['anlas']} 低于停止阈值 {record['stop_anlas']}",
                 )
+                terminal_log.log(
+                    "批量",
+                    f"任务 {record.get('id')} 已停止 · 剩余点数 {record['anlas']} 低于阈值 {record['stop_anlas']}",
+                )
                 return
 
         start = time.monotonic()
         saved = None
         fatal_error: Exception | None = None
+        progress = f"{int(item['i']) + 1}/{record.get('total')}"
+        terminal_log.log("生成", f"批量任务 {record.get('id')} · 第 {int(item['i']) + 1} 张正在生成 · 进度 [{progress}]")
         for attempt in range(MAX_RETRIES + 1):
             if attempt > 0:
                 _cool_down(RETRY_WAIT_MIN, RETRY_WAIT_MAX)
@@ -247,11 +277,17 @@ def _worker_loop() -> None:
                 break
             except RuntimeError as e:
                 fatal_error = e
+                terminal_log.log(
+                    "错误",
+                    f"批量任务 {record.get('id')} · 第 {int(item['i']) + 1} 张失败了 · 尝试 {attempt + 1}/{MAX_RETRIES + 1} · {terminal_log.compact_error(e)}",
+                )
             except ValueError as e:
                 fatal_error = e
+                terminal_log.log("错误", f"批量任务 {record.get('id')} · {progress} · {terminal_log.compact_error(e)}")
                 break
             except Exception as e:
                 fatal_error = Exception(f"未知错误: {e}")
+                terminal_log.log("错误", f"批量任务 {record.get('id')} · {progress} · 未知错误 · {terminal_log.compact_error(e)}")
                 break
 
         if saved is not None:
@@ -262,6 +298,10 @@ def _worker_loop() -> None:
                     return
                 _mark_done(rec, item["i"], saved)
                 more = _next_pending(rec) is not None
+            terminal_log.log(
+                "成功",
+                f"批量任务 {record.get('id')} · 第 {int(item['i']) + 1} 张完成啦 · {saved.get('name') or saved.get('path')} · {saved.get('elapsed_ms', 0) / 1000:.1f} 秒 · 进度 [{progress}]",
+            )
             # 每张之间随机冷却 3~5 秒，避免请求过快触发限流
             if more:
                 _cool_down(COOL_MIN, COOL_MAX)
@@ -274,6 +314,7 @@ def _worker_loop() -> None:
             _mark_failed(rec, item["i"], str(fatal_error))
         if isinstance(fatal_error, RuntimeError):
             _set_status("paused", stop_reason=f"网络中断：{fatal_error}")
+            terminal_log.log("批量", f"任务 {record.get('id')} 已自动暂停 · {terminal_log.compact_error(fatal_error)}")
             return
 
 
@@ -363,6 +404,7 @@ def start_batch(
             "estimate_sec": DEFAULT_ESTIMATE_SEC,
         }
         _save_record(record)
+        terminal_log.log("批量", f"批量生图开始，一共有 {record['total']} 张，开工！任务 {record['id']} · 当前点数 {anlas}")
         _start_worker()
         return _public_view(record)
 
@@ -375,6 +417,7 @@ def pause_batch() -> dict:
         if record.get("status") != "running":
             raise ValueError("批量任务当前不在运行中")
         _stop_event.set()
+        terminal_log.log("批量", f"收到暂停请求 · 任务 {record.get('id')} 会在当前图片结束后停下来，稍等一下哦")
         return {"ok": True, "message": "正在暂停，将在当前图片完成后停下"}
 
 
@@ -400,6 +443,7 @@ def resume_batch() -> dict:
         _stop_event.clear()
         _ended.clear()
         _save_record(record)
+        terminal_log.log("批量", f"批量任务 {record.get('id')} 回来继续干活啦 · 当前进度 [{record.get('done')}/{record.get('total')}]")
         _start_worker()
         return _public_view(record)
 
@@ -415,6 +459,7 @@ def end_batch() -> dict:
             done = sum(1 for it in record.get("items") or [] if it["status"] == "done")
             if RECORD_FILE.exists():
                 RECORD_FILE.unlink()
+            terminal_log.log("批量", f"批量任务 {record.get('id')} 已结束 · 最终进度 [{done}/{total}]，收工了喵！")
         return {
             "ok": True,
             "message": "批量任务已结束，断点记录已清理",

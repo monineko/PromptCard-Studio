@@ -22,6 +22,7 @@ from . import cards as cards_service
 from . import library as library_service
 from . import novelai as novelai_service
 from . import style_explore_algorithm
+from . import terminal as terminal_log
 from .config import PROJECT_ROOT
 from .generation_timing import COOL_MAX, COOL_MIN, RETRY_WAIT_MAX, RETRY_WAIT_MIN, cool_down
 
@@ -467,6 +468,8 @@ def _reconcile_candidate_image_locations(record: dict) -> int:
             else:
                 review.pop("formal_reviewed_at", None)
             changed += 1
+    if changed:
+        terminal_log.log("移动", f"修复完成 · 探索任务 {record.get('name') or run_id} 有 {changed} 处记录已同步，对上了，喵")
     return changed
 
 
@@ -577,6 +580,12 @@ def get_run(run_id: str) -> dict:
         return _full_run(record)
 
 
+def runtime_summary(run_id: str) -> dict:
+    """供本地状态心跳读取轻量进度，不执行目录校准等附加工作。"""
+    with _lock:
+        return _public_run(_load_run(run_id))
+
+
 def create_run(
     pool_id: str,
     target_count: int,
@@ -666,7 +675,8 @@ def start_run(run_id: str) -> dict:
         record = _load_run(run_id)
         if _recover_interrupted_record(record):
             _save_run(record)
-        if record.get("status") not in {"draft", "paused"}:
+        previous_status = record.get("status")
+        if previous_status not in {"draft", "paused"}:
             raise ValueError("只有草稿或已暂停的探索任务可以开始")
         _assert_batch_idle()
         if not novelai_service.is_configured():
@@ -677,6 +687,15 @@ def start_run(run_id: str) -> dict:
         record["status"] = "running"
         record["status_reason"] = None
         _save_run(record)
+        pending = sum(
+            1 for item in record.get("candidates") or []
+            if (item.get("generation") or {}).get("status") == "pending"
+        )
+        action = "继续" if previous_status == "paused" else "开始"
+        terminal_log.log(
+            "探索",
+            f"画风探索任务 {record.get('name') or run_id} {action} · 去抓一抓新风格的感觉～待生成 {pending} 张 · 总计 {len(record.get('candidates') or [])} 张",
+        )
         worker = _workers.get(run_id)
         if worker is None or not worker.is_alive():
             worker = threading.Thread(target=_worker_loop, args=(run_id,), daemon=True)
@@ -694,6 +713,8 @@ def pause_run(run_id: str) -> dict:
         record["status"] = "paused"
         record["status_reason"] = "用户已暂停"
         _save_run(record)
+        done = sum(1 for item in record.get("candidates") or [] if (item.get("generation") or {}).get("status") == "done")
+        terminal_log.log("探索", f"画风探索任务 {record.get('name') or run_id} 已暂停 · 当前进度 [{done}/{len(record.get('candidates') or [])}]，回来的时候告诉我一声哦～")
         return _full_run(record)
 
 
@@ -729,6 +750,7 @@ def cancel_run(run_id: str) -> dict:
         record["status"] = "cancelled"
         record["status_reason"] = "用户已结束"
         _save_run(record)
+        terminal_log.log("探索", f"画风探索任务 {record.get('name') or run_id} 已结束，今天先探索到这里啦")
         return _full_run(record)
 
 
@@ -1630,6 +1652,8 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
             seen.add(candidate_id)
             normalized.append((candidate, tag))
 
+        terminal_log.log("筛选", f"探索任务 {record.get('name') or run_id} · 开始处理 {len(normalized)} 张正式筛选结果")
+
         applied: list[dict] = []
         skipped: list[dict] = []
         for candidate, tag in normalized:
@@ -1637,6 +1661,10 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
                 if not _move_candidate_for_label(run_id, candidate, tag):
                     raise FileNotFoundError(f"候选图片不存在: {candidate.get('id')}")
             except (FileNotFoundError, OSError, ValueError) as error:
+                terminal_log.log(
+                    "警告",
+                f"移动失败：候选 {candidate.get('id')} 没能移到目标位置 · {terminal_log.compact_error(error)}，已记录，稍后人工看一眼哦",
+                )
                 skipped.append(
                     {
                         "candidate_id": candidate["id"],
@@ -1659,6 +1687,7 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
             )
             if len(applied) % REVIEW_SAVE_CHECKPOINT_SIZE == 0:
                 _save_run(record)
+                terminal_log.log("筛选", f"探索任务 {record.get('name') or run_id} · 已处理并保存 {len(applied)}/{len(normalized)} 张")
         reviewable = [
             item
             for item in record.get("candidates") or []
@@ -1676,6 +1705,14 @@ def apply_candidate_reviews(run_id: str, moves: list[dict]) -> dict:
         message = f"已完成 {len(applied)} 张探索图片的正式筛选"
         if skipped:
             message += f"；{len(skipped)} 张未处理，可再次筛选重试"
+        counts = {
+            label: sum(1 for item in applied if item.get("tag") == label)
+            for label in ("treasure", "special", "reject")
+        }
+        terminal_log.log(
+            "筛选",
+            f"筛选完成！任务 {record.get('name') or run_id} · Treasure {counts['treasure']} 张 · Special {counts['special']} 张 · Reject {counts['reject']} 张 · 跳过 {len(skipped)} 张，剩下都处理完啦",
+        )
         return {
             "ok": not skipped,
             "applied": applied,
@@ -1878,7 +1915,27 @@ def _cool_down(run_id: str, min_sec: float = COOL_MIN, max_sec: float = COOL_MAX
             except (FileNotFoundError, ValueError):
                 return True
 
-    return cool_down(min_sec, max_sec, is_cancelled)
+    failed_wait = min_sec == RETRY_WAIT_MIN and max_sec == RETRY_WAIT_MAX
+
+    def announce(seconds: float) -> None:
+        with _lock:
+            try:
+                record = _load_run(run_id)
+            except (FileNotFoundError, ValueError):
+                return
+        next_candidate = next(
+            (item for item in record.get("candidates") or [] if (item.get("generation") or {}).get("status") == "pending"),
+            None,
+        )
+        if next_candidate is None:
+            progress = "即将完成"
+        else:
+            index = next(i for i, item in enumerate(record.get("candidates") or []) if item.get("id") == next_candidate.get("id"))
+            progress = f"下一张 {index + 1}/{len(record.get('candidates') or [])}"
+        reason = "请求失败后" if failed_wait else ""
+        terminal_log.log("等待", f"探索任务 {record.get('name') or run_id} · {reason}等待 {seconds:.1f} 秒再继续，不急不急～{progress}")
+
+    return cool_down(min_sec, max_sec, is_cancelled, announce)
 
 
 def _worker_loop(run_id: str) -> None:
@@ -1901,9 +1958,16 @@ def _worker_loop(run_id: str) -> None:
                             round_record["status"] = "generated"
                     _save_run(record)
                     generation_coordinator.release("style_explore", run_id)
+                    terminal_log.log("探索", f"画风探索任务 {record.get('name') or run_id} 生成完成 · 共 {len(record.get('candidates') or [])} 张，新风格都抓回来啦！")
                     return
                 candidate["generation"] = {**candidate.get("generation", {}), "status": "generating"}
                 _save_run(record)
+
+            candidate_index = next(
+                i for i, item in enumerate(record.get("candidates") or []) if item.get("id") == candidate.get("id")
+            )
+            progress = f"{candidate_index + 1}/{len(record.get('candidates') or [])}"
+            terminal_log.log("生成", f"探索任务 {record.get('name') or run_id} · {progress} · 正在生成")
 
             try:
                 snapshot = candidate.get("prompt_snapshot") or record.get("prompt_snapshot") or {}
@@ -1934,6 +1998,10 @@ def _worker_loop(run_id: str) -> None:
                     output_dir=_active_dir(run_id),
                 )
             except Exception as exc:
+                terminal_log.log(
+                    "错误",
+                    f"探索任务 {record.get('name') or run_id} · {progress} · 生成失败 · {terminal_log.compact_error(exc)}",
+                )
                 with _lock:
                     latest = _load_run(run_id)
                     item = next(x for x in latest["candidates"] if x["id"] == candidate["id"])
@@ -1964,6 +2032,10 @@ def _worker_loop(run_id: str) -> None:
                     current.get("generation", {}).get("status") == "pending"
                     for current in latest.get("candidates") or []
                 )
+            terminal_log.log(
+                "成功",
+                f"探索任务 {record.get('name') or run_id} · {progress} · {saved.get('name') or saved.get('path')} · {saved.get('elapsed_ms', 0) / 1000:.1f} 秒",
+            )
             if more_pending and not _cool_down(run_id):
                 return
     finally:

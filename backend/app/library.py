@@ -13,6 +13,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
+from . import terminal as terminal_log
 from .config import load_settings
 
 try:
@@ -518,17 +519,21 @@ def import_remote_urls(urls: list[str], target: str = "unrated") -> dict:
     errors: list[str] = []
     items: list[dict] = []
     opener = urllib.request.build_opener(_SafeRedirectHandler())
-    for index, url in enumerate(dict.fromkeys(urls)):
+    unique_urls = list(dict.fromkeys(urls))
+    for index, url in enumerate(unique_urls):
         if index >= MAX_REMOTE_IMAGE_COUNT:
             skipped += 1
             errors.append("单次最多下载 20 张网页图片")
+            terminal_log.log("警告", f"网页图片下载超过单次上限 · 第 {index + 1}/{len(unique_urls)} 项已跳过")
             continue
         temp_path: Path | None = None
         name = "网页图片"
         try:
             parsed = _validate_remote_url(url)
             name = _safe_filename(Path(urllib.parse.unquote(parsed.path)).name or name)
-            request = urllib.request.Request(url, headers={"User-Agent": "PromptCard-Studio/1.2"})
+            source = f"{parsed.hostname}/{name}"
+            terminal_log.log("下载", f"网页图片 [{index + 1}/{len(unique_urls)}] · 正在下载 {source}")
+            request = urllib.request.Request(url, headers={"User-Agent": "PromptCard-Studio/1.2.3"})
             with opener.open(request, timeout=REMOTE_DOWNLOAD_TIMEOUT_SECONDS) as response:
                 _validate_remote_url(response.geturl())
                 content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -557,9 +562,14 @@ def import_remote_urls(urls: list[str], target: str = "unrated") -> dict:
             item = _item_for_file(dest, root)
             if item:
                 items.append(item)
+            terminal_log.log("成功", f"网页图片 [{index + 1}/{len(unique_urls)}] 下载完成 · {dest.name} · {total / 1024 / 1024:.2f} MB")
         except (OSError, ValueError, urllib.error.URLError) as e:
             skipped += 1
             errors.append(f"{name}: {e}")
+            terminal_log.log(
+                "错误",
+                f"网页图片 [{index + 1}/{len(unique_urls)}] 下载失败 · {name} · {terminal_log.compact_error(e)}",
+            )
         finally:
             if temp_path:
                 temp_path.unlink(missing_ok=True)

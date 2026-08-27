@@ -30,6 +30,14 @@ class GenerationTimingTest(unittest.TestCase):
             self.assertFalse(generation_timing.cool_down(4.0, 6.0, lambda: True))
         sleep.assert_not_called()
 
+    def test_cool_down_reports_the_selected_wait_once(self):
+        waits: list[float] = []
+        with mock.patch("app.generation_timing.random.uniform", return_value=4.25), mock.patch(
+            "app.generation_timing.time.sleep"
+        ):
+            self.assertTrue(generation_timing.cool_down(4.0, 6.0, on_wait=waits.append))
+        self.assertEqual(waits, [4.25])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

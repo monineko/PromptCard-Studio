@@ -5,7 +5,7 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import date
 from pathlib import Path
 
@@ -28,6 +28,7 @@ from . import migration as migration_service
 from . import vibes as vibes_service
 from . import workspace as workspace_service
 from . import style_explore as style_explore_service
+from . import terminal as terminal_log
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
     BatchStartIn,
@@ -81,12 +82,61 @@ from .schemas import (
 
 ensure_dirs()
 cards_service.ensure_default_categories()
+STATUS_HEARTBEAT_SECONDS = 15.0
+
+
+async def _runtime_heartbeat() -> None:
+    """定时确认本地服务与生成通道状态，不触发任何外部网络请求。"""
+    while True:
+        await asyncio.sleep(STATUS_HEARTBEAT_SECONDS)
+        try:
+            batch = batch_service.status()
+            if batch.get("active") and batch.get("run"):
+                run = batch["run"]
+                status_label = {
+                    "running": "运行中",
+                    "paused": "已暂停",
+                    "completed": "已完成",
+                    "stopped": "已停止",
+                }.get(str(run.get("status")), str(run.get("status")))
+                terminal_log.log(
+                    "状态",
+                    f"服务在线 · 批量任务 {run.get('id')} {status_label} · 进度 [{run.get('done')}/{run.get('total')}]",
+                )
+                continue
+            reservation = generation_coordinator_service.status().get("reservation")
+            if reservation:
+                task_id = str(reservation.get("task_id") or "")
+                try:
+                    summary = style_explore_service.runtime_summary(task_id)
+                    detail = f"任务 {summary.get('name') or task_id} · 进度 [{summary.get('done_count')}/{summary.get('candidate_count')}]"
+                except (FileNotFoundError, ValueError):
+                    detail = f"任务 {task_id}"
+                terminal_log.log(
+                    "状态",
+                    f"服务在线 · 画风探索正在占用生成通道 · {detail}",
+                )
+                continue
+            terminal_log.log("状态", "服务在线 · 生成通道空闲，安静待命中～")
+        except Exception as error:  # noqa: BLE001
+            terminal_log.log("警告", f"运行状态检查没有完成 · {terminal_log.compact_error(error)}")
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    style_explore_service.recover_interrupted_runs()
-    yield
+    recovered = style_explore_service.recover_interrupted_runs()
+    if recovered.get("recovered_count"):
+        terminal_log.log(
+            "探索",
+            f"服务重启，检测到 {recovered['recovered_count']} 个未完成任务，又要打工了喵…已经全部恢复为暂停状态",
+        )
+    heartbeat = asyncio.create_task(_runtime_heartbeat())
+    try:
+        yield
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
 
 
 app = FastAPI(title="PromptCard Studio for NovelAI", version="1.2.3", lifespan=_lifespan)
@@ -99,6 +149,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_failed_http_requests(request: Request, call_next):
+    """成功读取请求保持安静；所有失败请求至少留下状态码与真实路径。"""
+    try:
+        response = await call_next(request)
+    except Exception as error:  # noqa: BLE001
+        terminal_log.log(
+            "错误",
+            f"接口异常 · {request.method} {request.url.path} · {terminal_log.compact_error(error)}",
+        )
+        raise
+    if response.status_code >= 400:
+        terminal_log.log("警告", f"接口返回 HTTP {response.status_code} · {request.method} {request.url.path}")
+    return response
 
 _LOCAL_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$", re.IGNORECASE)
 
@@ -141,6 +207,7 @@ def _restart_now(port: int) -> None:
 def system_shutdown(request: Request):
     if not _is_local_origin(request.headers):
         raise HTTPException(403, "拒绝来自外部来源的关闭请求")
+    terminal_log.log("服务", "收到关闭请求，正在把手头工作收好，马上休息啦")
     threading.Timer(0.5, _shutdown_now).start()
     return {"ok": True, "message": "本地服务正在关闭，可关闭本页面；再次使用时重新运行启动脚本"}
 
@@ -152,6 +219,7 @@ def system_restart(request: Request):
     port = request.url.port
     if not port:
         raise HTTPException(400, "无法确定当前服务端口")
+    terminal_log.log("服务", f"收到重启请求 · 将继续使用端口 {port}，稍等我回来～")
     threading.Thread(target=_restart_now, args=(port,), daemon=True).start()
     return {"ok": True, "message": "本地服务正在快速重启"}
 
@@ -182,7 +250,9 @@ def get_categories():
 @app.post("/api/categories")
 def add_category(body: CategoryIn):
     try:
-        return cards_service.create_category(body.name)
+        result = cards_service.create_category(body.name)
+        terminal_log.log("分类", f"新分类「{result.get('name') or body.name}」建好了，卡片可以住进来了～")
+        return result
     except Exception as e:
         raise _as_http(e)
 
@@ -190,7 +260,9 @@ def add_category(body: CategoryIn):
 @app.put("/api/categories")
 def rename_category(body: CategoryRename):
     try:
-        return cards_service.rename_category(body.old_name, body.new_name)
+        result = cards_service.rename_category(body.old_name, body.new_name)
+        terminal_log.log("分类", f"分类已改名 · 「{body.old_name}」→「{result.get('name') or body.new_name}」")
+        return result
     except Exception as e:
         raise _as_http(e)
 
@@ -199,6 +271,7 @@ def rename_category(body: CategoryRename):
 def remove_category(name: str):
     try:
         cards_service.delete_category(name)
+        terminal_log.log("分类", f"分类「{name}」已删除，相关记录处理完成")
         return {"ok": True}
     except ValueError as e:
         raise _as_http(e, 400)
@@ -208,7 +281,9 @@ def remove_category(name: str):
 
 @app.put("/api/categories/order")
 def set_category_order(body: CategoryOrder):
-    return save_settings({"category_order": body.names})
+    result = save_settings({"category_order": body.names})
+    terminal_log.log("分类", f"分类顺序已保存 · 共 {len(body.names)} 项")
+    return result
 
 
 @app.put("/api/categories/color")
@@ -216,7 +291,9 @@ def set_category_color(body: CategoryColor):
     settings = load_settings()
     colors = settings.get("category_colors") or {}
     colors[body.name] = body.hue
-    return save_settings({"category_colors": colors})
+    result = save_settings({"category_colors": colors})
+    terminal_log.log("分类", f"分类「{body.name}」的颜色已保存")
+    return result
 
 
 # ---------- 卡片 ----------
@@ -233,7 +310,9 @@ def card_content(category: str, name: str):
 @app.post("/api/cards")
 def add_card(body: CardIn):
     try:
-        return cards_service.create_card(body.category, body.name, body.content)
+        result = cards_service.create_card(body.category, body.name, body.content)
+        terminal_log.log("卡片", f"新卡片 <{result['category']}:{result['name']}> 已收好，放到分类最前面了喵")
+        return result
     except FileExistsError as e:
         raise _as_http(e, 409)
     except Exception as e:
@@ -243,13 +322,18 @@ def add_card(body: CardIn):
 @app.put("/api/cards")
 def edit_card(body: CardUpdate):
     try:
-        return cards_service.update_card(
+        result = cards_service.update_card(
             body.category,
             body.name,
             body.content,
             body.new_category,
             body.new_name,
         )
+        terminal_log.log(
+            "卡片",
+            f"卡片已更新 · <{body.category}:{body.name}> → <{result['category']}:{result['name']}>",
+        )
+        return result
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except Exception as e:
@@ -260,6 +344,7 @@ def edit_card(body: CardUpdate):
 def remove_card(category: str, name: str):
     try:
         cards_service.delete_card(category, name)
+        terminal_log.log("卡片", f"卡片 <{category}:{name}> 已移入回收处理，收拾好了")
         return {"ok": True}
     except Exception as e:
         raise _as_http(e, 404)
@@ -278,7 +363,14 @@ def expand_text(body: ExpandRequest):
 async def import_cards(file: UploadFile = File(...)):
     data = await file.read()
     try:
-        return cards_service.import_template_xlsx(data)
+        result = cards_service.import_template_xlsx(data)
+        terminal_log.log(
+            "卡片",
+            f"卡片表格导入完成 · 新增 {result.get('imported', 0)} · 跳过 {result.get('skipped', 0)} · 重命名 {result.get('renamed', 0)}",
+        )
+        for error in result.get("errors") or []:
+            terminal_log.log("警告", f"卡片导入有一项没处理好 · {terminal_log.compact_error(error)}")
+        return result
     except Exception as e:
         raise _as_http(e)
 
@@ -315,7 +407,9 @@ def cards_images():
 @app.put("/api/cards/image")
 def set_card_image(body: CardImageIn):
     try:
-        return cards_service.set_card_image(body.category, body.name, body.path)
+        result = cards_service.set_card_image(body.category, body.name, body.path)
+        terminal_log.log("卡片", f"卡片 <{body.category}:{body.name}> 的演示图已设置 · {Path(body.path).name}")
+        return result
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except Exception as e:
@@ -325,7 +419,9 @@ def set_card_image(body: CardImageIn):
 @app.delete("/api/cards/image")
 def remove_card_image(category: str, name: str):
     try:
-        return cards_service.remove_card_image(category, name)
+        result = cards_service.remove_card_image(category, name)
+        terminal_log.log("卡片", f"卡片 <{category}:{name}> 的演示图已移除")
+        return result
     except Exception as e:
         raise _as_http(e)
 
@@ -393,7 +489,10 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(body: dict):
     body.pop("novelai_token", None)  # 仅允许通过专用接口修改 token
-    return save_settings(body)
+    result = save_settings(body)
+    changed = "、".join(sorted(body)) or "无字段变更"
+    terminal_log.log("设置", f"设置已保存 · {changed}，记住啦～")
+    return result
 
 
 # ---------- NovelAI 生成 ----------
@@ -511,15 +610,20 @@ def generate_anlas():
 @app.post("/api/generate/token")
 def generate_token(body: GenerateTokenIn):
     novelai_service.set_token(body.token)
-    return {"ok": True, "configured": novelai_service.is_configured()}
+    configured = novelai_service.is_configured()
+    terminal_log.log("设置", "NovelAI Token 已安全保存，内容不会出现在日志里；连接状态会由点数查询确认")
+    return {"ok": True, "configured": configured}
 
 
 @app.post("/api/generate/text2image")
 def generate_text2image(body: Text2ImageIn):
+    params = body.params or {}
+    model = str(params.get("model") or "默认模型")
+    size = f"{params.get('width') or '?'}×{params.get('height') or '?'}"
+    terminal_log.log("生成", f"单张生图开工啦 · {model} · {size}")
     try:
         prompt = cards_service.expand(body.prompt)
         negative_prompt = cards_service.expand(body.negative_prompt)
-        params = body.params or {}
         characters = params.get("characters") or []
         if characters:
             expanded = []
@@ -534,12 +638,19 @@ def generate_text2image(body: Text2ImageIn):
                     }
                 )
             params = {**params, "characters": expanded}
-        return novelai_service.generate_text2image(
+        result = novelai_service.generate_text2image(
             prompt, negative_prompt, params
         )
+        terminal_log.log(
+            "成功",
+            f"单张生图完成，收好啦 · {result.get('name') or result.get('path')} · {result.get('elapsed_ms', 0) / 1000:.1f} 秒",
+        )
+        return result
     except ValueError as e:
+        terminal_log.log("错误", f"单张生图未执行 · {terminal_log.compact_error(e)}")
         raise _as_http(e, 400)
     except RuntimeError as e:
+        terminal_log.log("错误", f"单张生图失败 · {terminal_log.compact_error(e)}")
         raise _as_http(e, 502)
 
 
@@ -955,7 +1066,10 @@ def style_explore_candidate_delete_image(run_id: str, candidate_id: str):
 @app.post("/api/style-explore/runs/{run_id}/candidates/{candidate_id}/card")
 def style_explore_candidate_create_card(run_id: str, candidate_id: str, body: StyleExploreCandidateCardIn):
     try:
-        return style_explore_service.create_candidate_card(run_id, candidate_id, body.name)
+        result = style_explore_service.create_candidate_card(run_id, candidate_id, body.name)
+        card = result.get("card") or {}
+        terminal_log.log("卡片", f"探索候选 {candidate_id} 已做成卡片 <{card.get('category')}:{card.get('name')}>，灵感收好啦")
+        return result
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except FileExistsError as e:
@@ -1065,10 +1179,20 @@ def library_png_info(path: str):
 @app.post("/api/library/review/apply")
 def library_review_apply(body: ReviewApplyIn):
     try:
-        return library_service.apply_review(
+        result = library_service.apply_review(
             [move.model_dump() for move in body.moves],
             recycle_reject=body.recycle_reject,
         )
+        terminal_log.log(
+            "图库",
+            f"图库筛选完成 · 已处理 {len(result.get('applied') or [])} 张 · 跳过 {len(result.get('skipped') or [])} 张",
+        )
+        for skipped in result.get("skipped") or []:
+            terminal_log.log(
+                "警告",
+                f"图片 {Path(str(skipped.get('path') or '未知文件')).name} 没能完成筛选移动 · {terminal_log.compact_error(skipped.get('reason'))}",
+            )
+        return result
     except Exception as e:
         raise _as_http(e)
 
@@ -1076,31 +1200,46 @@ def library_review_apply(body: ReviewApplyIn):
 @app.post("/api/library/review/undo")
 def library_review_undo(body: ReviewUndoIn):
     try:
-        return library_service.undo_review(body.token)
+        result = library_service.undo_review(body.token)
+        terminal_log.log("图库", f"筛选撤销完成 · 恢复 {len(result.get('restored') or [])} 张 · 失败 {len(result.get('failed') or [])} 张")
+        return result
     except ValueError as e:
         raise _as_http(e, 404)
 
 
 @app.post("/api/library/import")
 async def library_import(files: list[UploadFile] = File(...), target: str = Form("unrated")):
+    terminal_log.log("图库", f"收到 {len(files)} 张本地图片，开始导入到「{target}」")
     try:
-        return await library_service.import_uploaded_streams(files, target)
+        result = await library_service.import_uploaded_streams(files, target)
+        terminal_log.log("图库", f"本地图片导入完成 · 成功 {result.get('imported', 0)} 张 · 跳过 {result.get('skipped', 0)} 张")
+        for error in result.get("errors") or []:
+            terminal_log.log("警告", f"本地图片有一项没导入 · {terminal_log.compact_error(error)}")
+        return result
     except Exception as e:
         raise _as_http(e)
 
 
 @app.post("/api/library/import-urls")
 async def library_import_urls(body: ImportUrlsIn):
+    terminal_log.log("下载", f"收到 {len(body.urls)} 个网页图片地址，准备下载到「{body.target}」")
     try:
-        return await asyncio.to_thread(library_service.import_remote_urls, body.urls, body.target)
+        result = await asyncio.to_thread(library_service.import_remote_urls, body.urls, body.target)
+        terminal_log.log("下载", f"网页图片下载完成 · 成功 {result.get('imported', 0)} 张 · 跳过 {result.get('skipped', 0)} 张")
+        return result
     except Exception as e:
         raise _as_http(e)
 
 
 @app.post("/api/library/import-path")
 def library_import_path(body: ImportPathIn):
+    terminal_log.log("图库", f"开始从本地路径导入 · {body.path}")
     try:
-        return library_service.import_from_path(body.path)
+        result = library_service.import_from_path(body.path)
+        terminal_log.log("图库", f"路径导入完成 · 成功 {result.get('imported', 0)} 张 · 跳过 {result.get('skipped', 0)} 张")
+        for error in result.get("errors") or []:
+            terminal_log.log("警告", f"路径导入有一项没处理好 · {terminal_log.compact_error(error)}")
+        return result
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except Exception as e:
@@ -1118,7 +1257,17 @@ def library_open_folder():
 @app.post("/api/library/move")
 def library_move(body: MoveImagesIn):
     try:
-        return library_service.move_images(body.paths, body.target)
+        result = library_service.move_images(body.paths, body.target)
+        terminal_log.log(
+            "移动",
+            f"图库移动完成 · 目标「{body.target}」· 成功 {len(result.get('applied') or [])} 张 · 跳过 {len(result.get('skipped') or [])} 张",
+        )
+        for skipped in result.get("skipped") or []:
+            terminal_log.log(
+                "警告",
+                f"移动失败：{Path(str(skipped.get('path') or '未知文件')).name} 没能移到目标位置 · {terminal_log.compact_error(skipped.get('reason'))}，已记录，稍后看一眼哦",
+            )
+        return result
     except ValueError as e:
         raise _as_http(e, 400)
     except Exception as e:
@@ -1128,7 +1277,9 @@ def library_move(body: MoveImagesIn):
 @app.post("/api/library/delete")
 def library_delete(body: DeleteImagesIn):
     try:
-        return library_service.delete_images(body.paths)
+        result = library_service.delete_images(body.paths)
+        terminal_log.log("图库", f"图片清理完成 · 删除 {len(result.get('deleted') or [])} 张 · 跳过 {len(result.get('skipped') or [])} 张")
+        return result
     except Exception as e:
         raise _as_http(e)
 
@@ -1141,7 +1292,9 @@ def library_covers():
 @app.put("/api/library/covers")
 def library_set_cover(body: SetCoverIn):
     try:
-        return library_service.set_cover(body.category, body.path)
+        result = library_service.set_cover(body.category, body.path)
+        terminal_log.log("图库", f"图库「{body.category}」的封面已换好 · {Path(body.path).name}")
+        return result
     except FileNotFoundError as e:
         raise _as_http(e, 404)
     except Exception as e:
@@ -1151,7 +1304,9 @@ def library_set_cover(body: SetCoverIn):
 @app.delete("/api/library/covers")
 def library_remove_cover(category: str):
     try:
-        return library_service.remove_cover(category)
+        result = library_service.remove_cover(category)
+        terminal_log.log("图库", f"图库「{category}」的自定义封面已移除")
+        return result
     except ValueError as e:
         raise _as_http(e, 400)
 
