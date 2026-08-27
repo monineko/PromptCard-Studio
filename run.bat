@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem ============================================================================
 rem PromptCard Studio for NovelAI - Windows 启动入口
 rem
@@ -18,7 +19,6 @@ cd /d "%~dp0"
 
 rem 使用 UTF-8 代码页显示中文提示。Windows Terminal / Windows 11 通常可正常显示；
 rem 若旧版控制台仍乱码，错误行中的 [ERROR] / [INFO] 英文关键词仍可用于排查。
-chcp 65001 >nul
 set "PCS_FORCE_COLOR=1"
 title PromptCard Studio for NovelAI
 
