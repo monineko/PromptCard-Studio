@@ -77,29 +77,6 @@ def wait_healthy(port: int, timeout: float = 40.0) -> bool:
     return False
 
 
-def maybe_hide_console() -> None:
-    """Hide the backend console window when enabled in config.json (Windows only)."""
-    if os.name != "nt":
-        return
-    try:
-        config_path = ROOT / "config.json"
-        if not config_path.exists():
-            return
-        import json
-
-        with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
-        if not config.get("hide_backend_panel"):
-            return
-        import ctypes
-
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
-    except Exception:
-        pass
-
-
 def main() -> int:
     configure_stdio()
     parser = argparse.ArgumentParser(description="Start PromptCard Studio backend")
@@ -148,8 +125,6 @@ def main() -> int:
                 terminal_log.log("错误", "服务未能在预期时间内完成启动")
 
         threading.Thread(target=open_browser, daemon=True).start()
-
-    maybe_hide_console()
 
     try:
         server.run()

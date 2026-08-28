@@ -40,7 +40,6 @@ export function Settings() {
     multi_character: true,
     show_chinese: true,
     auto_note: true,
-    hide_backend_panel: false,
     hide_style_explore_top_nav: false,
     style_explore_max_artist_count: 10,
   });
@@ -162,7 +161,6 @@ export function Settings() {
       multi_character: settings.multi_character,
       show_chinese: settings.show_chinese,
       auto_note: settings.auto_note,
-      hide_backend_panel: settings.hide_backend_panel,
       hide_style_explore_top_nav: settings.hide_style_explore_top_nav,
       style_explore_max_artist_count: settings.style_explore_max_artist_count,
     });
@@ -700,21 +698,6 @@ export function Settings() {
         <label className="flex cursor-pointer items-start gap-2 text-sm">
           <input
             type="checkbox"
-            checked={form.hide_backend_panel}
-            onChange={(e) => setForm({ ...form, hide_backend_panel: e.target.checked })}
-            className="mt-0.5 accent-[var(--accent)]"
-          />
-          <span>
-            隐藏后端面板
-            <span className="block text-xs text-[var(--muted)]">
-              勾选后，下次启动项目时后端命令行窗口将自动隐藏；可在本页「关闭本地服务」停止服务
-            </span>
-          </span>
-        </label>
-
-        <label className="flex cursor-pointer items-start gap-2 text-sm">
-          <input
-            type="checkbox"
             checked={form.hide_style_explore_top_nav}
             onChange={(e) => setForm({ ...form, hide_style_explore_top_nav: e.target.checked })}
             className="mt-0.5 accent-[var(--accent)]"
@@ -830,7 +813,6 @@ export function Settings() {
                 multi_character: form.multi_character,
                 show_chinese: form.show_chinese,
                 auto_note: form.auto_note,
-                hide_backend_panel: form.hide_backend_panel,
                 hide_style_explore_top_nav: form.hide_style_explore_top_nav,
                 style_explore_max_artist_count: form.style_explore_max_artist_count,
               })

@@ -50,8 +50,6 @@ export type Settings = {
   show_chinese: boolean;
   /** 自动备注：查词后按分类预填块备注；关闭后不预填 */
   auto_note: boolean;
-  /** 隐藏后端面板：勾选后下次启动自动隐藏后端命令行窗口 */
-  hide_backend_panel: boolean;
   /** 仅隐藏顶部画风探索入口，侧边栏入口始终保留 */
   hide_style_explore_top_nav: boolean;
   /** 画风探索单张候选最多抽取的 Artist ID 数目（5-30） */

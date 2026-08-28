@@ -37,6 +37,22 @@ class ConfigTest(unittest.TestCase):
     def test_library_drag_import_enabled_by_default(self):
         self.assertTrue(config.load_settings()["library_drag_import_enabled"])
 
+    def test_legacy_hide_backend_panel_setting_is_ignored_and_removed_on_save(self):
+        self.assertNotIn("hide_backend_panel", config.DEFAULT_SETTINGS)
+
+        self.config_file.write_text(
+            json.dumps({"hide_backend_panel": True, "library_drag_import_enabled": False}),
+            encoding="utf-8",
+        )
+        loaded = config.load_settings()
+        self.assertNotIn("hide_backend_panel", loaded)
+        self.assertFalse(loaded["library_drag_import_enabled"])
+
+        saved = config.save_settings({})
+        persisted = json.loads(self.config_file.read_text(encoding="utf-8"))
+        self.assertNotIn("hide_backend_panel", saved)
+        self.assertNotIn("hide_backend_panel", persisted)
+
     def test_theme_defaults_and_ranges_include_background_blur(self):
         self.assertEqual(config.load_settings()["theme"]["background_blur"], 30)
         self.assertEqual(config.load_settings()["theme"]["glass"], 0.3)

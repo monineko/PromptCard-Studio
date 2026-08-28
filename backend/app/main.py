@@ -489,6 +489,7 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(body: dict):
     body.pop("novelai_token", None)  # 仅允许通过专用接口修改 token
+    body.pop("hide_backend_panel", None)  # 兼容旧前端：该功能已移除
     result = save_settings(body)
     changed = "、".join(sorted(body)) or "无字段变更"
     terminal_log.log("设置", f"设置已保存 · {changed}，记住啦～")

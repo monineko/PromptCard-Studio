@@ -25,7 +25,6 @@ DEFAULT_SETTINGS = {
     "multi_character": True,     # 多角色：角色分区逐块作为独立角色；关闭后并入正面提示词
     "show_chinese": True,        # 显示中文翻译（词典标注）；关闭后块上不显示，备注不受影响
     "auto_note": True,           # 自动备注：查词后按分类预填块备注（负面/其他保持灰色）
-    "hide_backend_panel": False, # 勾选后下次启动自动隐藏后端命令行窗口（Windows）
     "hide_style_explore_top_nav": False,  # 仅隐藏顶部画风探索入口，侧边栏入口保留
     "style_explore_max_artist_count": 10,  # 画风探索单张候选最多抽取的 Artist ID 数目（5-30）
     "library_drag_import_enabled": True,  # 允许拖放本地文件或网页图片链接导入普通图片库
@@ -101,6 +100,9 @@ def load_settings() -> dict:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             data = {}
+    # v1.2.3 已移除隐藏后端面板；旧配置字段不再参与运行，并在下次保存时清理。
+    if isinstance(data, dict):
+        data.pop("hide_backend_panel", None)
     merged = _deep_merge(DEFAULT_SETTINGS, data)
     theme = merged.setdefault("theme", {})
     # v1.2.2 及更早版本没有背景图模糊设置；新增后使用当前项目预设。
@@ -125,7 +127,9 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict) -> dict:
-    merged = _deep_merge(load_settings(), settings)
+    sanitized = dict(settings)
+    sanitized.pop("hide_backend_panel", None)
+    merged = _deep_merge(load_settings(), sanitized)
     theme = merged.setdefault("theme", {})
     theme["glass"] = _normalize_glass(theme.get("glass", 0.3))
     theme["background_blur"] = _normalize_background_blur(theme.get("background_blur", 30))

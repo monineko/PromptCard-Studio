@@ -54,6 +54,17 @@ class ReleaseMetadataTest(unittest.TestCase):
         self.assertLess(portable_guard, source_timestamp_check)
         self.assertIn("Portable mode is using the prebuilt frontend. Node.js is not required.", helper)
 
+    def test_windows_launcher_never_hides_the_backend_console(self):
+        launcher = (PROJECT_ROOT / "start.py").read_text(encoding="utf-8")
+
+        for removed_symbol in (
+            "hide_backend_panel",
+            "maybe_hide_console",
+            "GetConsoleWindow",
+            "ShowWindow",
+        ):
+            self.assertNotIn(removed_symbol, launcher)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
