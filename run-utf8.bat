@@ -1,49 +1,49 @@
 @echo off
 rem ============================================================================
-rem PromptCard Studio for NovelAI - Windows 启动入口
+rem PromptCard Studio for NovelAI - Windows bootstrap
 rem
-rem 启动流程：
-rem   1. 查找可用的标准 CPython 3.10+；
-rem   2. 创建或检查项目专用虚拟环境 .venv；
-rem   3. 检查并安装后端依赖 backend\requirements.txt；
-rem   4. 检查前端源码与 frontend\dist 是否同步，必要时重新构建；
-rem   5. 启动本地后端，并由 start.py 自动打开浏览器。
+rem Startup flow:
+rem   1. Find a supported CPython 3.10+ runtime.
+rem   2. Create or validate the project virtual environment.
+rem   3. Validate or install backend dependencies.
+rem   4. Validate or rebuild the frontend when required.
+rem   5. Start the local backend through start.py.
 rem
-rem 用户数据（promptcards、library、vibes、config.json 等）不会因启动流程被覆盖。
-rem 关闭此窗口即可停止项目；遇到问题请保留本窗口中的错误信息。
+rem Startup never overwrites user data such as promptcards, library, vibes, or config.json.
+rem Close this window to stop the project. Keep the output above when reporting an error.
 rem ============================================================================
 
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-rem 使用 UTF-8 代码页显示中文提示。Windows Terminal / Windows 11 通常可正常显示；
-rem 若旧版控制台仍乱码，错误行中的 [ERROR] / [INFO] 英文关键词仍可用于排查。
+rem run.bat switches the console to UTF-8 before loading this file.
+rem [ERROR] and [INFO] labels remain readable in terminals without color support.
 set "PCS_FORCE_COLOR=1"
 title PromptCard Studio for NovelAI
 
 echo.
-echo [启动] 正在准备 PromptCard Studio 运行环境...
-echo [启动] 项目目录：%CD%
+echo [START] Preparing the PromptCard Studio runtime...
+echo [START] Project directory: %CD%
 echo.
 
-rem ---------- 1/4 查找 Python ----------
-echo [1/4] 正在检查 Python 环境...
+rem ---------- 1/4 Find Python ----------
+echo [1/4] Checking the Python runtime...
 set "PY="
 set "VPY="
 set "PORTABLE_MODE=0"
 
-rem 便携整合包优先使用内置 Python，不要求用户安装系统 Python 或创建 .venv。
+rem Portable packages use the bundled Python and never create a development .venv.
 set "BUNDLED_PY=runtime\python\python.exe"
 if exist "%BUNDLED_PY%" (
   set "PY=%BUNDLED_PY%"
   set "VPY=%BUNDLED_PY%"
   set "PORTABLE_MODE=1"
-  echo [OK] 检测到内置 Python：%BUNDLED_PY%
+  echo [OK] Bundled Python detected: %BUNDLED_PY%
   goto python_ready
 )
 
-rem 只接受标准 CPython 3.10+，跳过 free-threading / no-GIL 构建，
-rem 因为部分运行时依赖（例如 onnxruntime）尚未兼容这类 Python。
+rem Accept standard CPython 3.10+ only. Skip free-threading or no-GIL builds because
+rem some runtime dependencies, including onnxruntime, do not support them yet.
 where python >nul 2>nul
 if not errorlevel 1 (
   python -c "import sys, sysconfig; raise SystemExit(0 if sys.version_info >= (3, 10) and sysconfig.get_config_var('Py_GIL_DISABLED') != 1 else 1)" >nul 2>nul
@@ -65,72 +65,72 @@ if not defined PY (
 )
 
 if not defined PY (
-  echo [ERROR] 未找到标准 Python 3.10 或更高版本。
-  echo [ERROR] 请从 https://www.python.org/downloads/ 安装 Python，并勾选 Add Python to PATH。
-  echo [ERROR] 未支持 free-threading / no-GIL 实验版本。
+  echo [ERROR] Standard Python 3.10 or newer was not found.
+  echo [ERROR] Install Python from https://www.python.org/downloads/ and enable Add Python to PATH.
+  echo [ERROR] Experimental free-threading or no-GIL builds are not supported.
   pause
   exit /b 1
 )
 :python_ready
 for /f "delims=" %%V in ('%PY% --version 2^>^&1') do echo [OK] %%V
 
-rem ---------- 2/4 检查或创建虚拟环境 ----------
+rem ---------- 2/4 Validate the environment ----------
 if "%PORTABLE_MODE%"=="1" (
-  echo [2/4] 正在检查整合包内置运行环境...
+  echo [2/4] Checking the bundled runtime...
 ) else (
-  echo [2/4] 正在检查项目虚拟环境 .venv...
+  echo [2/4] Checking the project virtual environment...
   set "VPY=.venv\Scripts\python.exe"
 )
 if not exist "%VPY%" goto create_venv
 "%VPY%" -c "import sys, sysconfig; raise SystemExit(0 if sys.version_info >= (3, 10) and sysconfig.get_config_var('Py_GIL_DISABLED') != 1 else 1)" >nul 2>nul
 if errorlevel 1 goto create_venv
-echo [OK] 虚拟环境可用：%VPY%
+echo [OK] Python environment is ready: %VPY%
 goto venv_ready
 
 :create_venv
-echo [INFO] 正在创建或修复虚拟环境，这可能需要一点时间...
+echo [INFO] Creating or repairing the virtual environment. This may take a moment...
 if exist ".venv" rmdir /s /q ".venv"
 if exist ".venv" (
-  echo [ERROR] 无法移除损坏的 .venv，请关闭占用该目录的程序后重试。
+  echo [ERROR] Could not remove the broken .venv. Close programs using it and retry.
   pause
   exit /b 1
 )
 %PY% -m venv .venv
 if errorlevel 1 (
-  echo [ERROR] 创建虚拟环境失败。
+  echo [ERROR] Failed to create the virtual environment.
   pause
   exit /b 1
 )
-echo [OK] 虚拟环境创建完成。
+echo [OK] Virtual environment created.
 
 :venv_ready
-rem ---------- 3/4 检查后端依赖 ----------
-echo [3/4] 正在检查后端依赖...
+rem ---------- 3/4 Validate backend dependencies ----------
+echo [3/4] Checking backend dependencies...
 "%VPY%" -c "import fastapi, uvicorn, PIL, send2trash, multipart" >nul 2>nul
 if errorlevel 1 (
-  echo [INFO] 依赖不完整，正在根据 backend\requirements.txt 安装...
-  echo [INFO] 此步骤可能需要网络，并可能持续数分钟。
+  echo [INFO] Dependencies are incomplete. Installing backend\requirements.txt...
+  echo [INFO] This step requires network access and may take several minutes.
   "%VPY%" -m pip install --only-binary :all: -r backend\requirements.txt
   if errorlevel 1 (
-    echo [ERROR] 后端依赖安装失败，请检查网络、代理或 requirements.txt。
+    echo [ERROR] Backend dependency installation failed. Check the network, proxy, and requirements.txt.
     pause
     exit /b 1
   )
-  echo [OK] 后端依赖安装完成。
+  echo [OK] Backend dependencies installed.
 ) else (
-  echo [OK] 后端依赖已安装，无需重复下载。
+  echo [OK] Backend dependencies are already installed.
 )
 
-rem ---------- 4/4 检查前端构建 ----------
-echo [4/4] 正在检查前端构建产物...
-rem 便携包只交付预构建产物。背景图等用户数据位于 frontend\src 下，
-rem 不能以它们的时间戳触发 npm 重建，否则便携包会错误地要求 Node.js。
+rem ---------- 4/4 Validate the frontend build ----------
+echo [4/4] Checking the frontend build...
+rem Portable packages ship only the prebuilt frontend. User backgrounds must never
+rem trigger npm or require Node.js in portable mode.
 if "%PORTABLE_MODE%"=="1" (
   if exist "frontend\dist\index.html" (
-    echo [OK] 便携包使用预构建前端，无需 Node.js。
+    echo [OK] Portable mode is using the prebuilt frontend. Node.js is not required.
     goto frontend_ready
   ) else (
-    echo [ERROR] 便携包缺少 frontend\dist\index.html，无法启动。
+    echo [ERROR] Portable package is missing frontend\dist\index.html.
     pause
     exit /b 1
   )
@@ -139,24 +139,23 @@ if "%PORTABLE_MODE%"=="1" (
 set "FRONTEND_BUILD_NEEDED=0"
 if not exist "frontend\dist\index.html" set "FRONTEND_BUILD_NEEDED=1"
 if "%FRONTEND_BUILD_NEEDED%"=="0" (
-  rem 仅当 frontend\src 中最新文件晚于 dist\index.html 时重建，
-  rem 因此普通启动不会反复构建，也不会要求用户每次安装 Node 依赖。
+  rem Rebuild only when frontend source is newer than dist\index.html.
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$dist = Get-Item 'frontend\dist\index.html'; $src = Get-ChildItem 'frontend\src' -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($src -and $src.LastWriteTime -gt $dist.LastWriteTime) { exit 1 }"
   if errorlevel 1 set "FRONTEND_BUILD_NEEDED=1"
 )
 if "%FRONTEND_BUILD_NEEDED%"=="0" (
-  echo [OK] 前端构建产物是最新的。
+  echo [OK] Frontend build is current.
 ) else (
-  echo [INFO] 前端源码有更新或构建产物缺失，准备重新构建...
+  echo [INFO] Frontend source changed or the build is missing. Preparing a rebuild...
   where node >nul 2>nul
   if errorlevel 1 (
     if exist "frontend\dist\index.html" (
-      echo [WARN] 检测到前端源码更新，但未找到 Node.js。
-      echo [WARN] 将继续使用现有前端构建；如需应用源码更新，请安装 Node.js 后再次启动。
+      echo [WARN] Frontend source changed, but Node.js was not found.
+      echo [WARN] Continuing with the existing build. Install Node.js to rebuild it.
       set "FRONTEND_BUILD_NEEDED=0"
     ) else (
-      echo [ERROR] 前端构建需要 Node.js，且当前没有可用的 frontend\dist 构建产物。
-      echo [ERROR] 请从 https://nodejs.org/ 安装 Node.js 后重试。
+      echo [ERROR] Node.js is required because frontend\dist is missing.
+      echo [ERROR] Install Node.js from https://nodejs.org/ and retry.
       pause
       exit /b 1
     )
@@ -164,29 +163,29 @@ if "%FRONTEND_BUILD_NEEDED%"=="0" (
     for /f "delims=" %%V in ('node --version 2^>^&1') do echo [OK] Node.js %%V
     cd frontend
     if not exist "node_modules" (
-      echo [INFO] 未找到前端依赖，正在执行 npm install...
+      echo [INFO] Frontend dependencies are missing. Running npm install...
       call npm.cmd install -s || goto :frontend_failed
     )
-    echo [INFO] 正在执行前端构建，请不要关闭此窗口...
+    echo [INFO] Building the frontend. Keep this window open...
     call npm.cmd run build || goto :frontend_failed
     cd ..
-    echo [OK] 前端构建完成。
+    echo [OK] Frontend build completed.
   )
 )
 
 :frontend_ready
 echo.
-echo [启动] 运行环境准备完成，正在启动本地服务。
-echo [启动] 浏览器将自动打开；关闭本窗口即可停止项目。
+echo [START] Runtime preparation completed. Starting the local service...
+echo [START] The browser opens automatically. Close this window to stop the project.
 echo.
 "%VPY%" start.py
 echo.
-echo [停止] 项目服务已停止。
+echo [STOP] Project service stopped.
 pause
 exit /b 0
 
 :frontend_failed
 cd ..
-echo [ERROR] 前端构建失败，请保留以上日志并检查 Node.js、npm 和 frontend 目录。
+echo [ERROR] Frontend build failed. Keep the output above and check Node.js, npm, and frontend.
 pause
 exit /b 1

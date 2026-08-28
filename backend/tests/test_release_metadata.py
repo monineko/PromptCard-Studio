@@ -44,14 +44,15 @@ class ReleaseMetadataTest(unittest.TestCase):
         helper_file = PROJECT_ROOT / "run-utf8.bat"
         helper_bytes = helper_file.read_bytes()
         self.assertFalse(helper_bytes.startswith(b"\xef\xbb\xbf"), "run-utf8.bat 不能带 UTF-8 BOM")
+        self.assertTrue(all(byte < 128 for byte in helper_bytes), "run-utf8.bat 必须保持纯 ASCII")
         self.assertIsNone(re.search(rb"(?<!\r)\n", helper_bytes), "run-utf8.bat 必须使用 CRLF")
 
-        helper = helper_bytes.decode("utf-8")
+        helper = helper_bytes.decode("ascii")
         portable_guard = helper.index('if "%PORTABLE_MODE%"=="1"')
         source_timestamp_check = helper.index("Get-ChildItem 'frontend\\src'")
 
         self.assertLess(portable_guard, source_timestamp_check)
-        self.assertIn("便携包使用预构建前端，无需 Node.js", helper)
+        self.assertIn("Portable mode is using the prebuilt frontend. Node.js is not required.", helper)
 
 
 if __name__ == "__main__":
