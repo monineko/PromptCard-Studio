@@ -33,7 +33,7 @@ v1.2.0 加入的「画风探索」模块支持从 ArtistPool 生成画师串候�
 <tr>
 <td width="25%" align="center"><a href="#提示词工作台"><img src="images/0-1.png" alt="图0-1 首页工作区首屏" width="100%" /></a><br /><a href="#提示词工作台"><strong>提示词工作台</strong></a></td>
 <td width="25%" align="center"><a href="#图片库"><img src="images/0-2.png" alt="图0-2 图片库首屏" width="100%" /></a><br /><a href="#图片库"><strong>图片库</strong></a></td>
-<td width="25%" align="center"><a href="#画风探索"><img src="images/10-1.png" alt="图10-1 画风探索首屏" width="100%" /></a><br /><a href="#画风探索"><strong>画风探索</strong></a></td>
+<td width="25%" align="center"><a href="#画风探索"><img src="images/0-4.png" alt="图0-4 画风探索预览" width="100%" /></a><br /><a href="#画风探索"><strong>画风探索</strong></a></td>
 <td width="25%" align="center"><a href="#发布处理"><img src="images/0-3.png" alt="图0-3 发布处理首屏" width="100%" /></a><br /><a href="#发布处理"><strong>发布处理</strong></a></td>
 </tr>
 </table>
