@@ -1,5 +1,7 @@
 <div align="center">
 
+**简体中文** | [English](README_EN.md) | [日本語](README_JA.md)
+
 # PromptCard Studio for NovelAI
 
 **一款本地优先的 NovelAI 提示词管理工具 —— 卡片化工作区 · NovelAI 生图 · 批量生成 · 发布前处理 · 画风探索
@@ -356,7 +358,9 @@ vibes/            参考图 Vibe 库（内置演示 vibe）
 style_explore/    画风探索数据目录（含内置 ArtistPool；任务与新增内容不入库）
 images/           README 教程截图（仅文档用）
 LICENSE           开源协议（GPL-3.0）
-README.md         项目说明
+README.md         简体中文项目说明
+README_EN.md      英文项目说明
+README_JA.md      日文项目说明
 run.bat / run.sh  启动入口（Windows；macOS/Linux 为实验性支持）：自动初始化并打开浏览器
 start.py          服务启动器（由 run.bat / run.sh 调用）
 .gitignore        忽略用户数据，防止误提交
