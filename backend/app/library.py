@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import terminal as terminal_log
 from .config import load_settings
+from .image_references import ImageReferenceStore, rewrite_image_references
 
 try:
     from PIL import Image
@@ -81,6 +82,21 @@ def list_covers() -> dict:
 def _save_covers(covers: dict) -> None:
     f = _library_root() / COVERS_FILE_NAME
     f.write_text(json.dumps(covers, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _rewrite_saved_image_references(
+    *, moved: dict[str, str] | None = None, removed: list[str] | None = None
+) -> dict[str, int]:
+    """同步所有由应用维护的图库图片引用。"""
+    from . import cards
+
+    stores = (
+        ImageReferenceStore(
+            "card_images", cards._load_card_images, cards._save_card_images
+        ),
+        ImageReferenceStore("library_covers", list_covers, _save_covers),
+    )
+    return rewrite_image_references(stores, moved=moved, removed=removed or ())
 
 
 def set_cover(category: str, path: str) -> dict:
@@ -703,6 +719,11 @@ def apply_review(moves: list[dict], recycle_reject: bool = True) -> dict:
             }
         )
 
+    if applied:
+        _rewrite_saved_image_references(
+            moved={item["path"]: item["dest"] for item in applied}
+        )
+
     token = uuid.uuid4().hex
     if undo_ops:
         _UNDO_STORE[token] = undo_ops
@@ -749,6 +770,11 @@ def move_images(paths: list[str], target: str) -> dict:
         undo_ops.append({"undoable": True, "src": str(src), "dest": str(dest)})
         applied.append({"path": rel, "dest": dest.relative_to(root).as_posix()})
 
+    if applied:
+        _rewrite_saved_image_references(
+            moved={item["path"]: item["dest"] for item in applied}
+        )
+
     token = uuid.uuid4().hex
     if undo_ops:
         _UNDO_STORE[token] = undo_ops
@@ -789,6 +815,9 @@ def delete_images(paths: list[str]) -> dict:
             except OSError as e:
                 skipped.append({"path": rel, "reason": str(e)})
 
+    if deleted:
+        _rewrite_saved_image_references(removed=[item["path"] for item in deleted])
+
     return {
         "ok": True,
         "deleted": deleted,
@@ -803,6 +832,8 @@ def undo_review(token: str) -> dict:
         raise ValueError("撤销记录不存在或已过期（服务重启后无法撤销）")
     restored: list[dict] = []
     failed: list[dict] = []
+    reference_moves: dict[str, str] = {}
+    root = _library_root()
     for op in ops:
         if not op.get("undoable"):
             failed.append({"path": op.get("src"), "reason": "回收站/已删除的文件无法自动还原"})
@@ -815,6 +846,11 @@ def undo_review(token: str) -> dict:
             src.parent.mkdir(parents=True, exist_ok=True)
             dest.rename(src)
             restored.append({"path": op["src"]})
+            reference_moves[dest.relative_to(root).as_posix()] = src.relative_to(
+                root
+            ).as_posix()
         except OSError as e:
             failed.append({"path": op["src"], "reason": str(e)})
+    if reference_moves:
+        _rewrite_saved_image_references(moved=reference_moves)
     return {"ok": True, "restored": restored, "failed": failed}
