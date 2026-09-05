@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Image as ImageIcon,
   Loader2,
+  Maximize2,
   PencilLine,
   Plus,
   RefreshCw,
@@ -14,7 +15,9 @@ import {
   Trash2,
   Wand2,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import {
@@ -119,6 +122,109 @@ function TabSwitch({
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+function ExpandablePromptTextarea({
+  value,
+  onChange,
+  placeholder,
+  expandedLabel,
+  className,
+  action,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  expandedLabel: string;
+  className?: string;
+  action?: ReactNode;
+}) {
+  const [panelPosition, setPanelPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const openExpandedPanel = (source: HTMLElement) => {
+    const sourceRect = source.parentElement?.getBoundingClientRect() ?? source.getBoundingClientRect();
+    const edge = 12;
+    const navBottom = 64;
+    const width = Math.min(720, window.innerWidth - edge * 2);
+    const height = Math.min(520, window.innerHeight - navBottom - edge);
+    const left = Math.min(Math.max(edge, sourceRect.left - edge), window.innerWidth - width - edge);
+    const top = Math.min(
+      Math.max(navBottom, sourceRect.top - 180),
+      window.innerHeight - height - edge
+    );
+    setPanelPosition({ left, top, width, height });
+  };
+
+  const textareaClass = cn(
+    "scroll-thin w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 pr-[4.75rem] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--accent)]",
+    !!action && "pb-10",
+    className
+  );
+
+  return (
+    <div className="relative">
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={textareaClass}
+      />
+      <button
+        type="button"
+        className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--hover)] px-2 py-1 text-[10px] font-medium text-[var(--text)] transition-colors hover:bg-[var(--input)]"
+        title="悬浮放大提示词输入框"
+        aria-label={`放大${expandedLabel}`}
+        onMouseEnter={(event) => openExpandedPanel(event.currentTarget)}
+        onClick={(event) => openExpandedPanel(event.currentTarget)}
+      >
+        <Maximize2 size={11} />
+        放大
+      </button>
+      {action && <div className="absolute bottom-2 left-2">{action}</div>}
+
+      {createPortal(
+        <AnimatePresence>
+          {panelPosition && (
+            <motion.section
+              className="fixed z-[120] flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel-solid)] p-4 shadow-2xl"
+              style={panelPosition}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.1, ease: "easeOut" } }}
+              exit={{ opacity: 0, transition: { duration: 0.3, ease: "easeInOut" } }}
+              onMouseLeave={() => setPanelPosition(null)}
+              aria-label={`${expandedLabel}放大编辑面板`}
+            >
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Maximize2 size={15} className="text-[var(--muted)]" />
+                  {expandedLabel}
+                </div>
+                <span className="text-[10px] text-[var(--muted)]">移出面板即关闭</span>
+              </div>
+              <div className="relative min-h-0 flex-1">
+                <textarea
+                  value={value}
+                  onChange={(event) => onChange(event.target.value)}
+                  placeholder={placeholder}
+                  className={cn(
+                    "scroll-thin h-full w-full resize-none rounded-xl border border-[var(--border)] bg-[var(--input)] p-4 font-sans text-sm leading-relaxed text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]",
+                    !!action && "pb-12"
+                  )}
+                />
+                {action && <div className="absolute bottom-3 left-3">{action}</div>}
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
   );
 }
@@ -265,10 +371,11 @@ function CharacterEditor({
               { key: "negative", label: "负面" },
             ]}
           />
-          <textarea
+          <ExpandablePromptTextarea
             value={text}
-            onChange={(event) => onChange({ [tab]: event.target.value })}
+            onChange={(value) => onChange({ [tab]: value })}
             placeholder={tab === "positive" ? "输入角色正向提示词" : "输入角色负面提示词"}
+            expandedLabel={`角色 ${index + 1} · ${tab === "positive" ? "正向提示词" : "负面提示词"}`}
             className="scroll-thin h-28 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 text-xs leading-relaxed text-[var(--text)] outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
           />
         </div>
@@ -581,17 +688,44 @@ export function GenerationPanel() {
               onChange={(enabled) => setPromptSync(enabled, workspacePromptDraft)}
             />
           </div>
-          <textarea
-            value={baseTab === "positive" ? promptDraft.positive : promptDraft.negative}
-            onChange={(event) =>
-              updatePromptDraft({
-                ...promptDraft,
-                [baseTab]: event.target.value,
-              })
-            }
-            placeholder={baseTab === "positive" ? "输入基础正向提示词" : "输入负面提示词（留空则使用 UC 预设）"}
-            className="scroll-thin mx-2.5 mb-2.5 h-36 w-[calc(100%-1.25rem)] resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 font-sans text-[11px] leading-relaxed text-[var(--text)] outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-          />
+          <div className="mx-2.5 mb-2.5">
+            <ExpandablePromptTextarea
+              value={baseTab === "positive" ? promptDraft.positive : promptDraft.negative}
+              onChange={(value) =>
+                updatePromptDraft({
+                  ...promptDraft,
+                  [baseTab]: value,
+                })
+              }
+              placeholder={
+                baseTab === "positive" ? "输入基础正向提示词" : "输入负面提示词（留空则使用 UC 预设）"
+              }
+              expandedLabel={baseTab === "positive" ? "基础正向提示词" : "负面提示词"}
+              className="h-36 font-sans text-[11px] leading-relaxed"
+              action={
+                baseTab === "positive" ? (
+                  <button
+                    type="button"
+                    disabled={!rules?.features.transparency}
+                    onClick={() => setParamSafe({ transparent_bg: !params.transparent_bg })}
+                    title={
+                      rules?.features.transparency
+                        ? "向基础正向提示词添加 transparent background"
+                        : "仅 NAI Diffusion V5 支持透明背景"
+                    }
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[10px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                      params.transparent_bg
+                        ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--text)]"
+                        : "border-transparent bg-[var(--hover)] text-[var(--muted)] hover:border-[var(--border)] hover:text-[var(--text)]"
+                    )}
+                  >
+                    Transparent BG
+                  </button>
+                ) : undefined
+              }
+            />
+          </div>
           <p className="px-2.5 pb-2 text-[10px] leading-relaxed text-[var(--muted)]">
             {syncWorkspacePrompts
               ? "正在跟随工作区；开始输入会自动关闭同步。"
@@ -828,22 +962,6 @@ export function GenerationPanel() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
-          <div className="min-w-0">
-            <div className="text-xs font-medium">Transparent BG</div>
-            <p className="mt-0.5 text-[10px] leading-relaxed text-[var(--muted)]">
-              {rules?.features.transparency
-                ? "开启后向基础正向提示词添加 transparent background。"
-                : "仅 NAI Diffusion V5 支持透明背景。"}
-            </p>
-          </div>
-          <Toggle
-            label={params.transparent_bg ? "已开启" : "已关闭"}
-            checked={params.transparent_bg}
-            disabled={!rules?.features.transparency}
-            onChange={(value) => setParamSafe({ transparent_bg: value })}
-          />
-        </div>
         </div>
         {batchRun && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-[var(--panel)]/70 backdrop-blur-sm">
