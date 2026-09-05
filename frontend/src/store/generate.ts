@@ -38,6 +38,7 @@ export const DEFAULT_PARAMS: GenerateParamsPayload = {
   noise_schedule: "karras",
   seed: -1,
   uc_preset: "Heavy",
+  quality_preset: "standard",
   quality_toggle: true,
   variety: true,
   sm: false,
@@ -50,7 +51,25 @@ export const DEFAULT_PARAMS: GenerateParamsPayload = {
 function loadParams(): GenerateParamsPayload {
   try {
     const raw = localStorage.getItem(PARAMS_KEY);
-    if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) };
+    if (raw) {
+      const stored = JSON.parse(raw) as Partial<GenerateParamsPayload>;
+      const qualityPreset =
+        typeof stored.quality_preset === "string"
+          ? stored.quality_preset
+          : stored.quality_toggle === false
+            ? "none"
+            : "standard";
+      const next = {
+        ...DEFAULT_PARAMS,
+        ...stored,
+        quality_preset: qualityPreset,
+        quality_toggle: qualityPreset !== "none",
+      };
+      if (next.model === "nai-diffusion-5-full" || next.model === "nai-diffusion-5-curated") {
+        next.noise_schedule = "karras";
+      }
+      return next;
+    }
   } catch {
     /* ignore */
   }
@@ -146,6 +165,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
 
   setParam(patch) {
     const next = { ...get().params, ...patch };
+    if (patch.quality_preset !== undefined) next.quality_toggle = patch.quality_preset !== "none";
+    else if (patch.quality_toggle !== undefined) next.quality_preset = patch.quality_toggle ? "standard" : "none";
     persistParams(next);
     set({ params: next });
   },

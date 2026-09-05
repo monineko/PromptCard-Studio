@@ -182,12 +182,14 @@ export type GenerateModelRules = {
   samplers: string[];
   noise_schedules: string[];
   uc_presets: string[];
+  quality_presets: string[];
   features: {
     sm: boolean;
     decrisp: boolean;
     legacy_uc: boolean;
     furry: boolean;
     characters: boolean;
+    variety: boolean;
   };
 };
 
@@ -199,6 +201,7 @@ export type GenerateMeta = {
   resolutions: GenerateResolution[];
   model_rules: Record<string, GenerateModelRules>;
   quality_tags: Record<string, string>;
+  quality_presets: Record<string, Record<string, string>>;
 };
 
 export type GenerateStatus = {
@@ -218,6 +221,7 @@ export type GenerateParamsPayload = {
   noise_schedule: string;
   seed: number;
   uc_preset: string;
+  quality_preset: string;
   quality_toggle: boolean;
   variety: boolean;
   sm: boolean;
@@ -324,6 +328,7 @@ export type BatchRun = {
     uc_preset?: string;
     seed?: number;
     quality_toggle?: boolean;
+    quality_preset?: string;
     variety?: boolean;
     furry_mode?: boolean;
     decrisp?: boolean;

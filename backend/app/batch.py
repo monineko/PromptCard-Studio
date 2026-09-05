@@ -506,6 +506,7 @@ def _public_view(record: dict) -> dict:
             "uc_preset": params.get("uc_preset"),
             "seed": params.get("seed"),
             "quality_toggle": params.get("quality_toggle"),
+            "quality_preset": params.get("quality_preset"),
             "variety": params.get("variety"),
             "furry_mode": params.get("furry_mode"),
             "decrisp": params.get("decrisp"),

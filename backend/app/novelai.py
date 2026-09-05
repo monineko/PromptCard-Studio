@@ -70,62 +70,82 @@ RESOLUTIONS = [
 
 # 各模型的可用采样器 / 调度器 / UC 预设（与 ANR update_components_for_models_change 一致）
 _BASE_SAMPLERS = [s for s in SAMPLERS if s != "ddim_v3"]
+_V5_SAMPLERS = [
+    "k_euler_ancestral",
+    "k_euler",
+    "k_dpmpp_2s_ancestral",
+    "k_dpmpp_2m_sde",
+    "k_dpmpp_2m",
+    "k_dpmpp_sde",
+]
 _BASE_NOISE = [n for n in NOISE_SCHEDULES if n != "native"]
+_V5_NOISE = ["karras"]
+_V5_UC = ["Heavy", "Light", "Furry Focus", "Human Focus", "None"]
+_STANDARD_QUALITY = ["standard", "none"]
+_V5_QUALITY = ["standard", "light", "none"]
 
 MODEL_RULES: dict[str, dict] = {
     "nai-diffusion-5-full": {
-        "samplers": _BASE_SAMPLERS,
-        "noise_schedules": _BASE_NOISE,
-        "uc_presets": ["Heavy", "Light", "None"],
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True},
+        "samplers": _V5_SAMPLERS,
+        "noise_schedules": _V5_NOISE,
+        "uc_presets": _V5_UC,
+        "quality_presets": _V5_QUALITY,
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True, "variety": False},
     },
     "nai-diffusion-5-curated": {
-        "samplers": _BASE_SAMPLERS,
-        "noise_schedules": _BASE_NOISE,
-        "uc_presets": ["Heavy", "Light", "None"],
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True},
+        "samplers": _V5_SAMPLERS,
+        "noise_schedules": _V5_NOISE,
+        "uc_presets": _V5_UC,
+        "quality_presets": _V5_QUALITY,
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True, "variety": False},
     },
     "nai-diffusion-4-5-full": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "Furry Focus", "Human Focus", "None"],
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True},
+        "quality_presets": _STANDARD_QUALITY,
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True, "variety": True},
     },
     "nai-diffusion-4-5-curated": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "Human Focus", "None"],
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True},
+        "quality_presets": _STANDARD_QUALITY,
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True, "variety": True},
     },
     "nai-diffusion-4-full": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "None"],
-        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True},
+        "quality_presets": _STANDARD_QUALITY,
+        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True, "variety": True},
     },
     "nai-diffusion-4-curated-preview": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "None"],
-        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True},
+        "quality_presets": _STANDARD_QUALITY,
+        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True, "variety": True},
     },
     "nai-diffusion-3": {
         "samplers": SAMPLERS,
         "noise_schedules": NOISE_SCHEDULES,
         "uc_presets": ["Heavy", "Light", "Human Focus", "None"],
-        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False},
+        "quality_presets": _STANDARD_QUALITY,
+        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False, "variety": True},
     },
     "nai-diffusion-furry-3": {
         "samplers": SAMPLERS,
         "noise_schedules": NOISE_SCHEDULES,
         "uc_presets": ["Heavy", "Light", "None"],
-        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False},
+        "quality_presets": _STANDARD_QUALITY,
+        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False, "variety": True},
     },
 }
 
 QUALITY_TAGS = {
-    "nai-diffusion-5-full": "",
-    "nai-diffusion-5-curated": "",
+    "nai-diffusion-5-full": ", very aesthetic, masterpiece, no text",
+    "nai-diffusion-5-curated": ", very aesthetic, masterpiece, no text",
     "nai-diffusion-4-5-full": ", very aesthetic, masterpiece, no text",
     "nai-diffusion-4-5-curated": ", very aesthetic, masterpiece, no text, -0.8::feet::, rating:general",
     "nai-diffusion-4-full": ", no text, best quality, very aesthetic, absurdres",
@@ -134,7 +154,34 @@ QUALITY_TAGS = {
     "nai-diffusion-furry-3": ", {best quality}, {amazing quality}",
 }
 
+QUALITY_PRESETS = {
+    model: {
+        "standard": standard,
+        **(
+            {"light": ", very aesthetic, amazing quality, no text"}
+            if model in ("nai-diffusion-5-full", "nai-diffusion-5-curated")
+            else {}
+        ),
+        "none": "",
+    }
+    for model, standard in QUALITY_TAGS.items()
+}
+
 UNDESIRED_PRESETS = {
+    "nai-diffusion-5-full": {
+        "Heavy": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page",
+        "Light": "lowres, bad hands, bad anatomy, artistic error, sepia, white haze, worst quality, very displeasing, jpeg artifacts, 0::ai-generated::",
+        "Furry Focus": "{worst quality}, distracting watermark, unfinished, bad quality, {widescreen}, upscale, {sequence}, {{grandfathered content}}, blurred foreground, chromatic aberration, sketch, everyone, [sketch background], simple, [flat colors], ych (character), outline, multiple scenes, [[horror (theme)]], comic",
+        "Human Focus": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, @_@, mismatched pupils, glowing eyes, bad anatomy",
+        "None": "",
+    },
+    "nai-diffusion-5-curated": {
+        "Heavy": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page",
+        "Light": "lowres, bad hands, bad anatomy, artistic error, sepia, white haze, worst quality, very displeasing, jpeg artifacts, 0::ai-generated::",
+        "Furry Focus": "{worst quality}, distracting watermark, unfinished, bad quality, {widescreen}, upscale, {sequence}, {{grandfathered content}}, blurred foreground, chromatic aberration, sketch, everyone, [sketch background], simple, [flat colors], ych (character), outline, multiple scenes, [[horror (theme)]], comic",
+        "Human Focus": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, @_@, mismatched pupils, glowing eyes, bad anatomy",
+        "None": "",
+    },
     "nai-diffusion-4-5-full": {
         "Heavy": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page",
         "Light": "lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page",
@@ -171,15 +218,12 @@ UNDESIRED_PRESETS = {
     },
 }
 
-_UC_PRESET_INDEX = {
-    "nai-diffusion-5-full": {"Heavy": 0, "Light": 1, "None": 2},
-    "nai-diffusion-5-curated": {"Heavy": 0, "Light": 1, "None": 2},
-    "nai-diffusion-4-5-full": {"Heavy": 0, "Light": 1, "Furry Focus": 2, "Human Focus": 3, "None": 4},
-    "nai-diffusion-4-5-curated": {"Heavy": 0, "Light": 1, "Human Focus": 2, "None": 3},
-    "nai-diffusion-3": {"Heavy": 0, "Light": 1, "Human Focus": 2, "None": 3},
-    "nai-diffusion-furry-3": {"Heavy": 0, "Light": 1, "None": 2},
-    "nai-diffusion-4-curated-preview": {"Heavy": 0, "Light": 1, "None": 2},
-    "nai-diffusion-4-full": {"Heavy": 0, "Light": 1, "None": 2},
+_UC_PRESET_ID = {
+    "Heavy": "heavy",
+    "Light": "light",
+    "Furry Focus": "furryFocus",
+    "Human Focus": "humanFocus",
+    "None": "none",
 }
 
 _SKIP_CFG_ABOVE_SIGMA = {
@@ -297,9 +341,15 @@ class GenerationParams:
         self.cfg_rescale = float(data.get("cfg_rescale") or 0)
         self.sampler = str(data.get("sampler") or "k_euler_ancestral")
         self.noise_schedule = str(data.get("noise_schedule") or "karras")
+        if self.model in ("nai-diffusion-5-full", "nai-diffusion-5-curated"):
+            self.noise_schedule = "karras"
         self.seed = int(data.get("seed") or -1)
         self.uc_preset = str(data.get("uc_preset") or "Heavy")
-        self.quality_toggle = bool(data.get("quality_toggle", True))
+        raw_quality = data.get("quality_preset")
+        if raw_quality is None:
+            raw_quality = "standard" if bool(data.get("quality_toggle", True)) else "none"
+        self.quality_preset = str(raw_quality)
+        self.quality_toggle = self.quality_preset != "none"
         self.variety = bool(data.get("variety", True))
         self.sm = bool(data.get("sm", False))
         self.sm_dyn = bool(data.get("sm_dyn", False))
@@ -320,6 +370,8 @@ class GenerationParams:
             raise ValueError(f"模型 {self.model} 不支持调度器 {self.noise_schedule}")
         if self.uc_preset not in rules["uc_presets"]:
             raise ValueError(f"模型 {self.model} 不支持 UC 预设 {self.uc_preset}")
+        if self.quality_preset not in rules["quality_presets"]:
+            raise ValueError(f"模型 {self.model} 不支持质量词预设 {self.quality_preset}")
         if not (1 <= self.steps <= 50):
             raise ValueError("采样步数需在 1~50 之间")
         if not (0 <= self.scale <= 10):
@@ -354,8 +406,7 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
     _input = prompt.strip()
     if params.furry_mode and not is_v3:
         _input = "fur dataset, " + _input
-    if params.quality_toggle:
-        _input += QUALITY_TAGS.get(model, "")
+    _input += QUALITY_PRESETS.get(model, {}).get(params.quality_preset, "")
 
     uc_preset_words = UNDESIRED_PRESETS.get(model, {}).get(params.uc_preset, "")
     user_negative = negative_prompt.strip()
@@ -420,15 +471,15 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
         "model": model,
         "action": "generate",
         "parameters": {
-            "params_version": 3,
+            "params_version": 4,
             "width": return_x64(params.width),
             "height": return_x64(params.height),
             "scale": params.scale,
             "sampler": params.sampler,
             "steps": params.steps,
             "n_samples": 1,
-            "ucPreset": _UC_PRESET_INDEX[model][params.uc_preset],
-            "qualityToggle": params.quality_toggle,
+            "ucPresetId": _UC_PRESET_ID[params.uc_preset],
+            "qualityPresetId": params.quality_preset,
             "autoSmea": False,
             "dynamic_thresholding": params.decrisp,
             "controlnet_strength": 1,
@@ -623,4 +674,5 @@ def meta() -> dict:
         "resolutions": RESOLUTIONS,
         "model_rules": MODEL_RULES,
         "quality_tags": QUALITY_TAGS,
+        "quality_presets": QUALITY_PRESETS,
     }

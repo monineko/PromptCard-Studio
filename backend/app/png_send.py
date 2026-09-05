@@ -3,7 +3,7 @@
 import re
 import hashlib
 
-from .novelai import QUALITY_TAGS, UNDESIRED_PRESETS
+from .novelai import QUALITY_PRESETS, UNDESIRED_PRESETS
 
 
 def _unescape(text) -> str:
@@ -45,16 +45,15 @@ def build_send_payload(parsed: dict, model: str) -> dict:
     if furry:
         base = base[len("fur dataset, ") :].strip()
 
-    # 质量词：命中当前模型后缀则剥离并视为开启；未命中保留原文并关闭自动追加，避免重复
-    tags = QUALITY_TAGS.get(model, "").strip()
-    quality_on = True
-    if tags:
-        if base.endswith(tags):
+    # 质量词：识别 Standard/Light 后缀；未命中则保留原文并关闭自动追加，避免重复
+    quality_preset = "none"
+    for preset, raw_tags in QUALITY_PRESETS.get(model, {}).items():
+        tags = raw_tags.strip()
+        if tags and base.endswith(tags):
             base = base[: -len(tags)].rstrip().rstrip(",").strip()
-        else:
-            quality_on = False
-    else:
-        quality_on = False
+            quality_preset = preset
+            break
+    quality_on = quality_preset != "none"
 
     # ---------- 角色 ----------
     characters: list[dict] = []
@@ -112,6 +111,7 @@ def build_send_payload(parsed: dict, model: str) -> dict:
     params["legacy_uc"] = bool(legacy)
     params["variety"] = "skip_cfg_above_sigma" in parsed
     params["quality_toggle"] = quality_on
+    params["quality_preset"] = quality_preset
     params["furry_mode"] = furry
     params["uc_preset"] = uc_preset
 

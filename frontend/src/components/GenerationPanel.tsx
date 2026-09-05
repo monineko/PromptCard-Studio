@@ -17,6 +17,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import {
+  NOISE_SCHEDULE_LABELS,
+  optionLabel,
+  QUALITY_PRESET_LABELS,
+  SAMPLER_LABELS,
+} from "../generationOptions";
 import { cn, extractRoleUnits, splitWorkspaceRole } from "../lib";
 import { useStore } from "../store";
 import { useBatchStore } from "../store/batch";
@@ -593,6 +599,8 @@ export function GenerationPanel() {
           next.noise_schedule = r.noise_schedules.includes("karras") ? "karras" : r.noise_schedules[0];
         if (!r.uc_presets.includes(next.uc_preset))
           next.uc_preset = r.uc_presets.includes("Heavy") ? "Heavy" : r.uc_presets[0];
+        if (!r.quality_presets.includes(next.quality_preset))
+          next.quality_preset = r.quality_presets.includes("standard") ? "standard" : r.quality_presets[0];
       }
     }
     setParam(next);
@@ -872,20 +880,24 @@ export function GenerationPanel() {
               >
                 {rules?.samplers.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {optionLabel(SAMPLER_LABELS, s)}
                   </option>
                 ))}
               </select>
             </Field>
-            <Field label="调度器">
+            <Field
+              label="噪声调度"
+              hint={rules?.noise_schedules.length === 1 ? "当前模型由官网固定为 Karras" : undefined}
+            >
               <select
                 className={inputCls}
                 value={params.noise_schedule}
                 onChange={(e) => setParamSafe({ noise_schedule: e.target.value })}
+                disabled={rules?.noise_schedules.length === 1}
               >
                 {rules?.noise_schedules.map((n) => (
                   <option key={n} value={n}>
-                    {n}
+                    {optionLabel(NOISE_SCHEDULE_LABELS, n)}
                   </option>
                 ))}
               </select>
@@ -899,6 +911,19 @@ export function GenerationPanel() {
                 {rules?.uc_presets.map((u) => (
                   <option key={u} value={u}>
                     {u}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="质量词">
+              <select
+                className={inputCls}
+                value={params.quality_preset}
+                onChange={(e) => setParamSafe({ quality_preset: e.target.value })}
+              >
+                {rules?.quality_presets.map((preset) => (
+                  <option key={preset} value={preset}>
+                    {optionLabel(QUALITY_PRESET_LABELS, preset)}
                   </option>
                 ))}
               </select>
@@ -918,8 +943,9 @@ export function GenerationPanel() {
             </Field>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <Toggle label="质量词" checked={params.quality_toggle} onChange={(v) => setParamSafe({ quality_toggle: v })} />
-            <Toggle label="Variety+" checked={params.variety} onChange={(v) => setParamSafe({ variety: v })} />
+            {rules?.features.variety && (
+              <Toggle label="Variety+" checked={params.variety} onChange={(v) => setParamSafe({ variety: v })} />
+            )}
             {rules?.features.furry && (
               <Toggle label="Furry" checked={params.furry_mode} onChange={(v) => setParamSafe({ furry_mode: v })} />
             )}

@@ -2,6 +2,7 @@ import { AlertTriangle, Loader2, Pause, Play, Square, Wand2 } from "lucide-react
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { NOISE_SCHEDULE_LABELS, optionLabel, SAMPLER_LABELS } from "../generationOptions";
 import { cn, serializeSections } from "../lib";
 import { useStore } from "../store";
 import { useBatchStore } from "../store/batch";
@@ -725,11 +726,11 @@ function ConfirmBody({
     ["采样步数", `${params.steps} 步`],
     ["提示词引导", `${params.scale}`],
     ["重采样系数", `${params.cfg_rescale}`],
-    ["采样器", params.sampler],
-    ["调度器", params.noise_schedule],
+    ["采样器", optionLabel(SAMPLER_LABELS, params.sampler)],
+    ["噪声调度", optionLabel(NOISE_SCHEDULE_LABELS, params.noise_schedule)],
     ["负面预设", params.uc_preset],
     ["种子", params.seed === -1 ? "每张随机" : `固定 ${params.seed} 后逐张 +1`],
-    ["质量词", params.quality_toggle ? "开启" : "关闭"],
+    ["质量词", params.quality_preset === "none" ? "关闭" : params.quality_preset === "light" ? "Light" : "Standard"],
     ["Variety+", params.variety ? "开启" : "关闭"],
     ...(params.furry_mode ? ([["Furry", "开启"]] as [string, string][]) : []),
     ...(params.decrisp ? ([["Decrisp", "开启"]] as [string, string][]) : []),
