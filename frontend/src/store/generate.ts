@@ -4,6 +4,7 @@ import type { GenerateParamsPayload, GenerateVibe, Text2ImageResult } from "../t
 const PARAMS_KEY = "npm_generate_params";
 const VIBES_KEY = "npm_generate_vibes";
 const PROMPTS_KEY = "npm_generate_prompts";
+const LAST_RESOLUTION_KEY = "npm_generate_last_resolution";
 
 export interface GeneratePromptCharacter {
   positive: string;
@@ -65,6 +66,8 @@ function loadParams(): GenerateParamsPayload {
         quality_preset: qualityPreset,
         quality_toggle: qualityPreset !== "none",
       };
+      next.width = snapResolution(next.width, DEFAULT_PARAMS.width);
+      next.height = snapResolution(next.height, DEFAULT_PARAMS.height);
       if (next.model === "nai-diffusion-5-full" || next.model === "nai-diffusion-5-curated") {
         next.noise_schedule = "karras";
       }
@@ -74,6 +77,28 @@ function loadParams(): GenerateParamsPayload {
     /* ignore */
   }
   return { ...DEFAULT_PARAMS };
+}
+
+function snapResolution(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(4096, Math.max(64, Math.round(value / 64) * 64));
+}
+
+function loadLastResolution(): { width: number; height: number } | null {
+  try {
+    const raw = localStorage.getItem(LAST_RESOLUTION_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as { width?: number; height?: number };
+    if (typeof value.width === "number" && typeof value.height === "number") {
+      return {
+        width: snapResolution(value.width, DEFAULT_PARAMS.width),
+        height: snapResolution(value.height, DEFAULT_PARAMS.height),
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 function loadVibes(): GenerateVibe[] {
@@ -120,6 +145,7 @@ interface GenerateState {
   vibes: GenerateVibe[];
   syncWorkspacePrompts: boolean;
   promptDraft: GeneratePromptDraft;
+  lastResolution: { width: number; height: number } | null;
   result: Text2ImageResult | null;
   setParam: (patch: Partial<GenerateParamsPayload>) => void;
   resetParams: () => void;
@@ -161,10 +187,13 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   vibes: loadVibes(),
   syncWorkspacePrompts: initialPromptState.syncWorkspace,
   promptDraft: initialPromptState.draft,
+  lastResolution: loadLastResolution(),
   result: null,
 
   setParam(patch) {
     const next = { ...get().params, ...patch };
+    if (patch.width !== undefined) next.width = snapResolution(patch.width, get().params.width);
+    if (patch.height !== undefined) next.height = snapResolution(patch.height, get().params.height);
     if (patch.quality_preset !== undefined) next.quality_toggle = patch.quality_preset !== "none";
     else if (patch.quality_toggle !== undefined) next.quality_preset = patch.quality_toggle ? "standard" : "none";
     persistParams(next);
@@ -212,6 +241,19 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
 
   // 结果仅保存在内存（页面切换保留；刷新/重启后清空）
   setResult(result) {
+    if (result && result.width > 0 && result.height > 0) {
+      const lastResolution = {
+        width: snapResolution(result.width, get().params.width),
+        height: snapResolution(result.height, get().params.height),
+      };
+      try {
+        localStorage.setItem(LAST_RESOLUTION_KEY, JSON.stringify(lastResolution));
+      } catch {
+        /* ignore */
+      }
+      set({ result, lastResolution });
+      return;
+    }
     set({ result });
   },
 }));

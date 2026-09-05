@@ -13,6 +13,12 @@ from app import novelai, png_send  # noqa: E402
 
 
 class NovelAiPayloadTest(unittest.TestCase):
+    def test_resolution_rounds_to_nearest_multiple_of_64(self):
+        self.assertEqual(novelai.return_x64(831), 832)
+        self.assertEqual(novelai.return_x64(850), 832)
+        self.assertEqual(novelai.return_x64(865), 896)
+        self.assertEqual(novelai.return_x64(1), 64)
+
     def test_v5_options_match_current_official_controls(self):
         rules = novelai.MODEL_RULES["nai-diffusion-5-full"]
 

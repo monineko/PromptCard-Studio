@@ -13,8 +13,7 @@ import {
   Trash2,
   Wand2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import {
@@ -31,7 +30,6 @@ import { useNavStore } from "../store/navStore";
 import type {
   GenerateMeta,
   GenerateParamsPayload,
-  GenerateResolution,
   GenerateStatus,
   GenerateVibe,
   VibeFolder,
@@ -39,6 +37,7 @@ import type {
 } from "../types";
 import { Button, IconBtn } from "./UI";
 import { VibeLibraryModal } from "./VibeLibraryModal";
+import { ResolutionSetting } from "./ResolutionSetting";
 
 const inputCls =
   "w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-[var(--accent)]";
@@ -338,124 +337,6 @@ function VibeCard({
   );
 }
 
-function ResolutionSelector({
-  params,
-  resolutions,
-  onChange,
-}: {
-  params: GenerateParamsPayload;
-  resolutions: GenerateResolution[];
-  onChange: (patch: Partial<GenerateParamsPayload>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const btnRef = useRef<HTMLDivElement>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const current = resolutions.find((r) => r.width === params.width && r.height === params.height);
-  const label = current?.label ?? "Custom";
-
-  const groups = useMemo(() => {
-    const order = ["NORMAL", "LARGE", "WALLPAPER", "SMALL"];
-    const map = new Map<string, GenerateResolution[]>();
-    for (const r of resolutions) {
-      const arr = map.get(r.category) ?? [];
-      arr.push(r);
-      map.set(r.category, arr);
-    }
-    return order.map((c) => ({ category: c, items: map.get(c) ?? [] }));
-  }, [resolutions]);
-
-  const show = () => {
-    if (closeTimer.current) clearTimeout(closeTimer.current);
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setPos({ top: rect.bottom + 6, left: rect.left });
-    setOpen(true);
-  };
-  const hide = () => {
-    if (closeTimer.current) clearTimeout(closeTimer.current);
-    closeTimer.current = setTimeout(() => setOpen(false), 180);
-  };
-  const keep = () => {
-    if (closeTimer.current) clearTimeout(closeTimer.current);
-  };
-  const pick = (r: GenerateResolution) => {
-    onChange({ width: r.width, height: r.height });
-    setOpen(false);
-  };
-
-  return (
-    <div ref={btnRef} className="relative" onMouseEnter={show} onMouseLeave={hide}>
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-[var(--accent)]"
-        title="悬停展开分辨率预设"
-      >
-        <span>{label}</span>
-        <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
-      </button>
-      {open &&
-        pos &&
-        createPortal(
-          <div
-            className="fixed z-[120] grid grid-cols-5 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--panel-solid)] p-2 shadow-2xl"
-            style={{ top: pos.top, left: pos.left }}
-            onMouseEnter={keep}
-            onMouseLeave={hide}
-          >
-            {groups.map((g) => (
-              <div key={g.category} className="flex min-w-[96px] flex-col gap-0.5">
-                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold tracking-wider text-[var(--muted)]">
-                  {g.category}
-                </div>
-                {g.items.map((r) => (
-                  <button
-                    key={`${g.category}:${r.label}`}
-                    type="button"
-                    onClick={() => pick(r)}
-                    className={cn(
-                      "rounded-lg px-2 py-1.5 text-left transition-colors",
-                      current?.width === r.width && current?.height === r.height
-                        ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                        : "text-[var(--text)] hover:bg-[var(--hover)]"
-                    )}
-                  >
-                    <span className="block text-xs leading-tight">{r.label}</span>
-                    <span className="block text-[10px] leading-tight text-[var(--muted)]">
-                      {r.width} × {r.height}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ))}
-            <div className="flex min-w-[96px] flex-col gap-0.5">
-              <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold tracking-wider text-[var(--muted)]">
-                CUSTOM
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className={cn(
-                  "rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
-                  !current ? "bg-[var(--accent)]/15 text-[var(--accent)]" : "text-[var(--text)] hover:bg-[var(--hover)]"
-                )}
-              >
-                Custom
-              </button>
-            </div>
-          </div>,
-          document.body
-        )}
-    </div>
-  );
-}
-
-function clampDim(v: number, fallback: number): number {
-  if (Number.isNaN(v) || v <= 0) return fallback;
-  return Math.min(4096, Math.max(64, Math.round(v)));
-}
-
 export function GenerationPanel() {
   const navigate = useNavigate();
   const positive = useStore((s) => s.positive);
@@ -471,6 +352,7 @@ export function GenerationPanel() {
   const syncPromptDraft = useGenerateStore((s) => s.syncPromptDraft);
   const editPromptDraft = useGenerateStore((s) => s.editPromptDraft);
   const setPromptSync = useGenerateStore((s) => s.setPromptSync);
+  const lastResolution = useGenerateStore((s) => s.lastResolution);
   const vibes = useGenerateStore((s) => s.vibes);
   const updateVibe = useGenerateStore((s) => s.updateVibe);
   const removeVibe = useGenerateStore((s) => s.removeVibe);
@@ -840,37 +722,12 @@ export function GenerationPanel() {
           <div className="grid grid-cols-2 gap-2">
             <div className="col-span-2">
               <span className="mb-1 block text-xs font-medium text-[var(--muted)]">分辨率</span>
-              <ResolutionSelector params={params} resolutions={meta?.resolutions ?? []} onChange={setParamSafe} />
-              <div className="mt-1.5 flex items-center justify-center gap-1">
-                <input
-                  type="number"
-                  min={64}
-                  max={4096}
-                  value={params.width}
-                  onBlur={(e) => {
-                    const v = clampDim(Number(e.target.value), 832);
-                    if (v !== params.width) setParamSafe({ width: v });
-                  }}
-                  onChange={(e) => setParamSafe({ width: Number(e.target.value) || 0 })}
-                  className="w-20 rounded-md border border-[var(--border)] bg-[var(--input)] px-1.5 py-1 text-center text-xs outline-none focus:border-[var(--accent)]"
-                  title="自定义宽度（64 的倍数，自动保存）"
-                />
-                <span className="text-xs text-[var(--muted)]">×</span>
-                <input
-                  type="number"
-                  min={64}
-                  max={4096}
-                  value={params.height}
-                  onBlur={(e) => {
-                    const v = clampDim(Number(e.target.value), 1216);
-                    if (v !== params.height) setParamSafe({ height: v });
-                  }}
-                  onChange={(e) => setParamSafe({ height: Number(e.target.value) || 0 })}
-                  className="w-20 rounded-md border border-[var(--border)] bg-[var(--input)] px-1.5 py-1 text-center text-xs outline-none focus:border-[var(--accent)]"
-                  title="自定义高度（64 的倍数，自动保存）"
-                />
-              </div>
-              <p className="mt-0.5 text-[10px] text-[var(--muted)]">直接修改数字即切换到 Custom</p>
+              <ResolutionSetting
+                params={params}
+                resolutions={meta?.resolutions ?? []}
+                lastResolution={lastResolution}
+                onChange={setParamSafe}
+              />
             </div>
             <Field label="采样器">
               <select
