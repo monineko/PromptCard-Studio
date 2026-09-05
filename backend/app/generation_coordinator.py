@@ -55,7 +55,13 @@ def status() -> dict:
 
 
 def assert_available_for_batch() -> None:
-    """普通批量开始前调用，避免与画风探索抢占 NovelAI 请求通道。"""
+    """普通批量开始前调用，避免与其他生成任务抢占请求通道。"""
     with _lock:
         if _reservation is not None:
-            raise ValueError("画风探索任务正在占用生成通道，请先暂停、结束或完成该探索任务")
+            owner_label = {
+                "style_explore": "画风探索",
+                "batch_cover": "批量卡面",
+            }.get(str(_reservation.get("owner")), "其他")
+            raise ValueError(
+                f"{owner_label}任务正在占用生成通道，请先暂停、结束或完成该任务"
+            )

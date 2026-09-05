@@ -109,11 +109,16 @@ def build_items(dimensions: list[dict]) -> list[dict]:
             dim["name"]: _card_ref(c["category"], c["name"])
             for dim, (c, _coeff) in zip(dimensions, combo_cards)
         }
+        selected_cards = [
+            {"category": c["category"], "name": c["name"]}
+            for c, _coeff in combo_cards
+        ]
         for _ in range(repeat):
             items.append(
                 {
                     "i": len(items),
                     "combo": dict(combo),
+                    "cards": [dict(card) for card in selected_cards],
                     "status": "pending",
                     "path": None,
                     "seed": None,
@@ -127,7 +132,7 @@ def build_items(dimensions: list[dict]) -> list[dict]:
 # ---------- 单张生成 ----------
 
 
-def _generate_one(record: dict, item: dict) -> dict:
+def generate_item(record: dict, item: dict) -> dict:
     """展开引用并调用单张生成，返回保存结果。"""
     params = dict(record["params"])
     params.pop("characters", None)
@@ -272,7 +277,7 @@ def _worker_loop() -> None:
             if attempt > 0:
                 _cool_down(RETRY_WAIT_MIN, RETRY_WAIT_MAX)
             try:
-                saved = _generate_one(record, item)
+                saved = generate_item(record, item)
                 saved["elapsed_ms"] = int((time.monotonic() - start) * 1000)
                 break
             except RuntimeError as e:

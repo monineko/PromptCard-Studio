@@ -3,6 +3,11 @@ import type {
   GenerateMeta,
   GenerateStatus,
   BatchRun,
+  BatchCoverCandidate,
+  BatchCoverRun,
+  BatchCoverStartPayload,
+  BatchCoverStatusResponse,
+  CardReference,
   BatchStartPayload,
   BatchStatusResponse,
   GenerationOccupancy,
@@ -223,6 +228,37 @@ export const api = {
       "/api/generate/batch/end",
       { method: "POST" }
     ),
+  batchCoverStatus: () => request<BatchCoverStatusResponse>("/api/generate/batch-cover"),
+  batchCoverStart: (payload: BatchCoverStartPayload) =>
+    request<BatchCoverRun>("/api/generate/batch-cover", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  batchCoverPause: () =>
+    request<{ ok: boolean; message: string }>("/api/generate/batch-cover/pause", {
+      method: "POST",
+    }),
+  batchCoverResume: () =>
+    request<BatchCoverRun>("/api/generate/batch-cover/resume", { method: "POST" }),
+  batchCoverEnd: () =>
+    request<{ ok: boolean; message: string }>("/api/generate/batch-cover/end", {
+      method: "POST",
+    }),
+  batchCoverCandidates: (category: string, name: string) =>
+    request<{ category: string; name: string; items: BatchCoverCandidate[] }>(
+      `/api/generate/batch-cover/candidates?category=${encodeURIComponent(category)}&name=${encodeURIComponent(name)}`
+    ),
+  batchCoverAssign: (category: string, name: string, path: string) =>
+    request<{ ok: boolean; category: string; name: string; path: string }>(
+      "/api/generate/batch-cover/assign",
+      { method: "POST", body: JSON.stringify({ category, name, path }) }
+    ),
+  batchCoverAssignDefaults: () =>
+    request<{
+      ok: boolean;
+      assigned: (CardReference & { path: string })[];
+      skipped: (CardReference & { reason: string })[];
+    }>("/api/generate/batch-cover/assign-defaults", { method: "POST" }),
   styleExplorePools: () => request<StyleExplorePoolSummary[]>("/api/style-explore/pools"),
   styleExplorePool: (poolId: string) => request<StyleExplorePool>(`/api/style-explore/pools/${encodeURIComponent(poolId)}`),
   styleExploreCreatePool: (name: string, content: string) =>

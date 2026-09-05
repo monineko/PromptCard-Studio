@@ -95,8 +95,16 @@ def _rewrite_saved_image_references(
             "card_images", cards._load_card_images, cards._save_card_images
         ),
         ImageReferenceStore("library_covers", list_covers, _save_covers),
+        _batch_cover_reference_store(),
     )
     return rewrite_image_references(stores, moved=moved, removed=removed or ())
+
+
+def _batch_cover_reference_store() -> ImageReferenceStore:
+    # 延迟导入避免图库与批量卡面模块初始化时互相引用。
+    from . import batch_covers
+
+    return batch_covers.image_reference_store()
 
 
 def set_cover(category: str, path: str) -> dict:

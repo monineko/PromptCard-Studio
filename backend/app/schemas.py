@@ -145,6 +145,25 @@ class BatchStartIn(BaseModel):
     stop_anlas: int = 0
 
 
+class CardReferenceIn(BaseModel):
+    category: str
+    name: str
+
+
+class BatchCoverStartIn(BaseModel):
+    base_positive: str = ""
+    negative: str = ""
+    dimensions: list[BatchDimensionIn] = []
+    shared_cards: list[CardReferenceIn] = []
+    target_cards: list[CardReferenceIn] = []
+    params: dict = {}
+    stop_anlas: int = 0
+
+
+class BatchCoverAssignIn(CardReferenceIn):
+    path: str
+
+
 class StyleExplorePoolIn(BaseModel):
     name: str = ""
     content: str = ""

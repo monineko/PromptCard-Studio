@@ -347,9 +347,64 @@ export type BatchStatusResponse = {
   run: BatchRun | null;
 };
 
+export type CardReference = {
+  category: string;
+  name: string;
+};
+
+export type BatchCoverTarget = CardReference & {
+  candidate_count: number;
+  default_path: string | null;
+  assigned_path: string | null;
+  status: "waiting" | "ready" | "assigned";
+};
+
+export type BatchCoverCandidate = {
+  path: string;
+  seed: number | null;
+  index: number;
+  combo: Record<string, string>;
+};
+
+export type BatchCoverRun = {
+  id: string;
+  status: "running" | "paused" | "stopped" | "completed";
+  stop_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  total: number;
+  done: number;
+  failed: number;
+  remaining: number;
+  current_index: number | null;
+  current_combo: Record<string, string> | null;
+  last_image: BatchLastImage | null;
+  anlas: number | null;
+  estimate_sec: number;
+  eta_sec: number;
+  stop_anlas: number;
+  target_count: number;
+  targets: BatchCoverTarget[];
+};
+
+export type BatchCoverStatusResponse = {
+  active: boolean;
+  run: BatchCoverRun | null;
+};
+
+export type BatchCoverStartPayload = {
+  base_positive: string;
+  negative: string;
+  dimensions: BatchDimension[];
+  shared_cards: CardReference[];
+  target_cards: CardReference[];
+  params: Record<string, unknown>;
+  stop_anlas: number;
+};
+
 export type GenerationOccupancy = {
   occupied: boolean;
-  owner: "batch" | "style_explore" | string | null;
+  owner: "batch" | "batch_cover" | "style_explore" | string | null;
   task_id: string | null;
   task_name: string | null;
   status: string | null;

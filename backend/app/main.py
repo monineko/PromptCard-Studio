@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import cards as cards_service
 from . import batch as batch_service
+from . import batch_covers as batch_cover_service
 from . import backgrounds as backgrounds_service
 from . import dictionary as dictionary_service
 from . import generation_coordinator as generation_coordinator_service
@@ -32,6 +33,8 @@ from . import terminal as terminal_log
 from .config import PROJECT_ROOT, ensure_dirs, load_settings, save_settings
 from .schemas import (
     BatchStartIn,
+    BatchCoverAssignIn,
+    BatchCoverStartIn,
     CardImageIn,
     CardIn,
     CardPinIn,
@@ -107,6 +110,14 @@ async def _runtime_heartbeat() -> None:
             reservation = generation_coordinator_service.status().get("reservation")
             if reservation:
                 task_id = str(reservation.get("task_id") or "")
+                owner = str(reservation.get("owner") or "")
+                if owner == "batch_cover":
+                    cover = batch_cover_service.status().get("run") or {}
+                    terminal_log.log(
+                        "状态",
+                        f"服务在线 · 批量卡面任务 {task_id} 运行中 · 进度 [{cover.get('done')}/{cover.get('total')}]",
+                    )
+                    continue
                 try:
                     summary = style_explore_service.runtime_summary(task_id)
                     detail = f"任务 {summary.get('name') or task_id} · 进度 [{summary.get('done_count')}/{summary.get('candidate_count')}]"
@@ -124,6 +135,9 @@ async def _runtime_heartbeat() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    cover = batch_cover_service.status()
+    if cover.get("active") and (cover.get("run") or {}).get("status") == "paused":
+        terminal_log.log("卡面", "服务重启，未完成的批量卡面任务已恢复为暂停状态")
     recovered = style_explore_service.recover_interrupted_runs()
     if recovered.get("recovered_count"):
         terminal_log.log(
@@ -665,7 +679,7 @@ def batch_status():
 
 @app.get("/api/generate/occupancy")
 def generation_occupancy():
-    """统一展示普通批量与画风探索对生成通道的占用。"""
+    """统一展示普通批量、批量卡面与画风探索对生成通道的占用。"""
     batch = batch_service.status()
     if batch.get("active") and batch.get("run"):
         run = batch["run"]
@@ -684,12 +698,19 @@ def generation_occupancy():
                 task_name = style_explore_service.get_run(str(reservation.get("task_id"))).get("name") or task_name
             except (FileNotFoundError, ValueError):
                 pass
+        elif reservation.get("owner") == "batch_cover":
+            task_name = "批量卡面"
+        task_status = "running"
+        if reservation.get("owner") == "batch_cover":
+            task_status = (batch_cover_service.status().get("run") or {}).get(
+                "status", "running"
+            )
         return {
             "occupied": True,
             "owner": reservation.get("owner"),
             "task_id": reservation.get("task_id"),
             "task_name": task_name,
-            "status": "running",
+            "status": task_status,
             "acquired_at": reservation.get("acquired_at"),
         }
     return {"occupied": False, "owner": None, "task_id": None, "task_name": None, "status": None}
@@ -710,6 +731,81 @@ def batch_start(body: BatchStartIn):
         raise _as_http(e, 400)
     except RuntimeError as e:
         raise _as_http(e, 502)
+
+
+# ---------- 批量卡面 ----------
+
+
+@app.get("/api/generate/batch-cover")
+def batch_cover_status():
+    return batch_cover_service.status()
+
+
+@app.post("/api/generate/batch-cover")
+def batch_cover_start(body: BatchCoverStartIn):
+    try:
+        return batch_cover_service.start(
+            body.base_positive,
+            body.negative,
+            [dimension.model_dump() for dimension in body.dimensions],
+            [card.model_dump() for card in body.shared_cards],
+            [card.model_dump() for card in body.target_cards],
+            body.params,
+            body.stop_anlas,
+        )
+    except ValueError as error:
+        raise _as_http(error, 400)
+    except RuntimeError as error:
+        raise _as_http(error, 502)
+
+
+@app.post("/api/generate/batch-cover/pause")
+def batch_cover_pause():
+    try:
+        return batch_cover_service.pause()
+    except ValueError as error:
+        raise _as_http(error, 400)
+
+
+@app.post("/api/generate/batch-cover/resume")
+def batch_cover_resume():
+    try:
+        return batch_cover_service.resume()
+    except ValueError as error:
+        raise _as_http(error, 400)
+    except RuntimeError as error:
+        raise _as_http(error, 502)
+
+
+@app.post("/api/generate/batch-cover/end")
+def batch_cover_end():
+    return batch_cover_service.end()
+
+
+@app.get("/api/generate/batch-cover/candidates")
+def batch_cover_candidates(category: str, name: str):
+    try:
+        return batch_cover_service.candidates(category, name)
+    except ValueError as error:
+        raise _as_http(error, 404)
+
+
+@app.post("/api/generate/batch-cover/assign")
+def batch_cover_assign(body: BatchCoverAssignIn):
+    try:
+        return batch_cover_service.assign(body.category, body.name, body.path)
+    except FileNotFoundError as error:
+        raise _as_http(error, 404)
+    except ValueError as error:
+        raise _as_http(error, 400)
+
+
+@app.post("/api/generate/batch-cover/assign-defaults")
+def batch_cover_assign_defaults():
+    try:
+        return batch_cover_service.assign_defaults()
+    except ValueError as error:
+        raise _as_http(error, 400)
 
 
 # ---------- 画风探索（首轮基础设施） ----------

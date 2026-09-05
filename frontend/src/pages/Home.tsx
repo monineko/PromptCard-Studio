@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { BatchPanel } from "../components/BatchPanel";
+import { BatchCoverPanel } from "../components/BatchCoverPanel";
 import { CardPanel } from "../components/CardPanel";
 import { GenerationPanel } from "../components/GenerationPanel";
 import { HomeNav } from "../components/HomeNav";
@@ -9,12 +10,13 @@ import { Workspace } from "../components/Workspace";
 export function Home() {
   const location = useLocation();
 
-  // Home is mounted after Shell's route transition completes, so the target
-  // exists here even when AnimatePresence is waiting for Gallery to exit.
+  // Home is mounted after Shell's route transition completes, so the requested
+  // section exists even when AnimatePresence is waiting for another page to exit.
   useEffect(() => {
-    if (location.state?.scrollTarget !== "prompt-cards") return;
+    const target = location.state?.scrollTarget;
+    if (typeof target !== "string") return;
     const frame = window.requestAnimationFrame(() => {
-      document.getElementById("prompt-cards")?.scrollIntoView({ behavior: "auto", block: "start" });
+      document.getElementById(target)?.scrollIntoView({ behavior: "auto", block: "start" });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [location.key, location.state]);
@@ -44,6 +46,11 @@ export function Home() {
       <section id="batch-generation" className="glass scroll-mt-20 rounded-2xl p-4">
         <h2 className="mb-3 text-base font-semibold">批量生成</h2>
         <BatchPanel />
+      </section>
+
+      <section id="batch-covers" className="glass scroll-mt-20 rounded-2xl p-4">
+        <h2 className="mb-3 text-base font-semibold">批量卡面</h2>
+        <BatchCoverPanel />
       </section>
 
       <HomeNav />
