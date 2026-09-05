@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Dices,
   Download,
+  ExternalLink,
   Image as ImageIcon,
   Loader2,
   PencilLine,
@@ -855,6 +856,14 @@ export function GenerationPanel() {
           </Button>
           <Button size="sm" variant="ghost" onClick={openInLibrary} title="在图库-未评分中打开">
             <ImageIcon size={13} /> 在图库中打开
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => window.open("https://novelai.net/image", "_blank", "noopener,noreferrer")}
+            title="打开 NovelAI 官方生图页"
+          >
+            <ExternalLink size={13} /> NovelAI
           </Button>
         </div>
 
