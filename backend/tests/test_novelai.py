@@ -36,6 +36,7 @@ class NovelAiPayloadTest(unittest.TestCase):
         self.assertEqual(rules["noise_schedules"], ["karras"])
         self.assertEqual(rules["uc_presets"], ["Heavy", "Light", "Furry Focus", "Human Focus", "None"])
         self.assertEqual(rules["quality_presets"], ["standard", "light", "none"])
+        self.assertTrue(rules["features"]["transparency"])
 
     def test_v5_keeps_character_condition_payload(self):
         for model in ("nai-diffusion-5-full", "nai-diffusion-5-curated"):
@@ -109,6 +110,36 @@ class NovelAiPayloadTest(unittest.TestCase):
 
         self.assertEqual(restored["positive"], "1girl")
         self.assertEqual(restored["params"]["quality_preset"], "light")
+
+    def test_v5_transparent_background_adds_prompt_and_hint(self):
+        params = novelai.GenerationParams(
+            {
+                "model": "nai-diffusion-5-full",
+                "transparent_bg": True,
+                "quality_preset": "none",
+            }
+        )
+        params.validate()
+
+        payload = novelai.build_text2image_payload(params, "1girl", "")
+
+        self.assertEqual(payload["input"], "1girl, transparent background")
+        self.assertTrue(payload["parameters"]["tag_hint_transparent_background"])
+
+        restored = png_send.build_send_payload(
+            {"prompt": payload["input"], "negative_prompt": ""},
+            "nai-diffusion-5-full",
+        )
+        self.assertEqual(restored["positive"], "1girl")
+        self.assertTrue(restored["params"]["transparent_bg"])
+
+    def test_transparent_background_rejects_unsupported_model(self):
+        params = novelai.GenerationParams(
+            {"model": "nai-diffusion-4-5-full", "transparent_bg": True}
+        )
+
+        with self.assertRaisesRegex(ValueError, "不支持透明背景"):
+            params.validate()
 
     def test_generation_http_error_is_logged_with_raw_response(self):
         body = b'{"message":"request rejected","statusCode":432}'

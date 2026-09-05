@@ -22,6 +22,7 @@ const PARAM_LABELS: Record<string, string> = {
   quality_toggle: "质量词",
   quality_preset: "质量词预设",
   furry_mode: "Furry",
+  transparent_bg: "Transparent BG",
 };
 
 export function SendToWorkspaceModal({

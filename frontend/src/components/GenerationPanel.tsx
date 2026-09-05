@@ -484,6 +484,7 @@ export function GenerationPanel() {
           next.uc_preset = r.uc_presets.includes("Heavy") ? "Heavy" : r.uc_presets[0];
         if (!r.quality_presets.includes(next.quality_preset))
           next.quality_preset = r.quality_presets.includes("standard") ? "standard" : r.quality_presets[0];
+        if (!r.features.transparency) next.transparent_bg = false;
       }
     }
     setParam(next);
@@ -825,6 +826,23 @@ export function GenerationPanel() {
               <Toggle label="Legacy UC" checked={params.legacy_uc} onChange={(v) => setParamSafe({ legacy_uc: v })} />
             )}
           </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-3">
+          <div className="min-w-0">
+            <div className="text-xs font-medium">Transparent BG</div>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-[var(--muted)]">
+              {rules?.features.transparency
+                ? "开启后向基础正向提示词添加 transparent background。"
+                : "仅 NAI Diffusion V5 支持透明背景。"}
+            </p>
+          </div>
+          <Toggle
+            label={params.transparent_bg ? "已开启" : "已关闭"}
+            checked={params.transparent_bg}
+            disabled={!rules?.features.transparency}
+            onChange={(value) => setParamSafe({ transparent_bg: value })}
+          />
         </div>
         </div>
         {batchRun && (

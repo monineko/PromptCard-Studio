@@ -736,6 +736,7 @@ function ConfirmBody({
     ...(params.decrisp ? ([["Decrisp", "开启"]] as [string, string][]) : []),
     ...(params.sm ? ([["SMEA", "开启"], ["SMEA DYN", params.sm_dyn ? "开启" : "关闭"]] as [string, string][]) : []),
     ...(params.legacy_uc ? ([["Legacy UC", "开启"]] as [string, string][]) : []),
+    ...(params.transparent_bg ? ([["Transparent BG", "开启"]] as [string, string][]) : []),
     ["Vibe 参考", vibes.length ? vibes.join("、") : "无"],
   ];
   return (

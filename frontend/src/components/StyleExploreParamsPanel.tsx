@@ -42,6 +42,7 @@ export function StyleExploreParamsPanel() {
         if (!nextRules.noise_schedules.includes(next.noise_schedule)) next.noise_schedule = nextRules.noise_schedules[0];
         if (!nextRules.uc_presets.includes(next.uc_preset)) next.uc_preset = nextRules.uc_presets[0];
         if (!nextRules.quality_presets.includes(next.quality_preset)) next.quality_preset = nextRules.quality_presets[0];
+        if (!nextRules.features.transparency) next.transparent_bg = false;
       }
     }
     setParams(next);

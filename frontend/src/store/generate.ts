@@ -47,6 +47,7 @@ export const DEFAULT_PARAMS: GenerateParamsPayload = {
   decrisp: false,
   legacy_uc: false,
   furry_mode: false,
+  transparent_bg: false,
 };
 
 function loadParams(): GenerateParamsPayload {

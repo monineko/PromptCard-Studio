@@ -90,56 +90,56 @@ MODEL_RULES: dict[str, dict] = {
         "noise_schedules": _V5_NOISE,
         "uc_presets": _V5_UC,
         "quality_presets": _V5_QUALITY,
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True, "variety": False},
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True, "variety": False, "transparency": True},
     },
     "nai-diffusion-5-curated": {
         "samplers": _V5_SAMPLERS,
         "noise_schedules": _V5_NOISE,
         "uc_presets": _V5_UC,
         "quality_presets": _V5_QUALITY,
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True, "variety": False},
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": False, "characters": True, "variety": False, "transparency": True},
     },
     "nai-diffusion-4-5-full": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "Furry Focus", "Human Focus", "None"],
         "quality_presets": _STANDARD_QUALITY,
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True, "variety": True},
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True, "variety": True, "transparency": False},
     },
     "nai-diffusion-4-5-curated": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "Human Focus", "None"],
         "quality_presets": _STANDARD_QUALITY,
-        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True, "variety": True},
+        "features": {"sm": False, "decrisp": False, "legacy_uc": False, "furry": True, "characters": True, "variety": True, "transparency": False},
     },
     "nai-diffusion-4-full": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "None"],
         "quality_presets": _STANDARD_QUALITY,
-        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True, "variety": True},
+        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True, "variety": True, "transparency": False},
     },
     "nai-diffusion-4-curated-preview": {
         "samplers": _BASE_SAMPLERS,
         "noise_schedules": _BASE_NOISE,
         "uc_presets": ["Heavy", "Light", "None"],
         "quality_presets": _STANDARD_QUALITY,
-        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True, "variety": True},
+        "features": {"sm": False, "decrisp": False, "legacy_uc": True, "furry": True, "characters": True, "variety": True, "transparency": False},
     },
     "nai-diffusion-3": {
         "samplers": SAMPLERS,
         "noise_schedules": NOISE_SCHEDULES,
         "uc_presets": ["Heavy", "Light", "Human Focus", "None"],
         "quality_presets": _STANDARD_QUALITY,
-        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False, "variety": True},
+        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False, "variety": True, "transparency": False},
     },
     "nai-diffusion-furry-3": {
         "samplers": SAMPLERS,
         "noise_schedules": NOISE_SCHEDULES,
         "uc_presets": ["Heavy", "Light", "None"],
         "quality_presets": _STANDARD_QUALITY,
-        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False, "variety": True},
+        "features": {"sm": True, "decrisp": True, "legacy_uc": False, "furry": False, "characters": False, "variety": True, "transparency": False},
     },
 }
 
@@ -356,6 +356,7 @@ class GenerationParams:
         self.decrisp = bool(data.get("decrisp", False))
         self.legacy_uc = bool(data.get("legacy_uc", False))
         self.furry_mode = bool(data.get("furry_mode", False))
+        self.transparent_bg = bool(data.get("transparent_bg", False))
         self.characters = data.get("characters") or []
         self.vibes = data.get("vibes") or []
         self.use_coords = bool(data.get("use_coords", True))
@@ -372,6 +373,8 @@ class GenerationParams:
             raise ValueError(f"模型 {self.model} 不支持 UC 预设 {self.uc_preset}")
         if self.quality_preset not in rules["quality_presets"]:
             raise ValueError(f"模型 {self.model} 不支持质量词预设 {self.quality_preset}")
+        if self.transparent_bg and not rules["features"]["transparency"]:
+            raise ValueError(f"模型 {self.model} 不支持透明背景")
         if not (1 <= self.steps <= 50):
             raise ValueError("采样步数需在 1~50 之间")
         if not (0 <= self.scale <= 10):
@@ -406,6 +409,8 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
     _input = prompt.strip()
     if params.furry_mode and not is_v3:
         _input = "fur dataset, " + _input
+    if params.transparent_bg:
+        _input = f"{_input}, transparent background" if _input else "transparent background"
     _input += QUALITY_PRESETS.get(model, {}).get(params.quality_preset, "")
 
     uc_preset_words = UNDESIRED_PRESETS.get(model, {}).get(params.uc_preset, "")
@@ -538,6 +543,8 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
         }
         base["parameters"]["legacy_uc"] = params.legacy_uc
         base["parameters"]["stream"] = "msgpack"
+        if is_v5:
+            base["parameters"]["tag_hint_transparent_background"] = params.transparent_bg
     elif is_v3:
         base["parameters"]["sm"] = params.sm
         base["parameters"]["sm_dyn"] = params.sm_dyn

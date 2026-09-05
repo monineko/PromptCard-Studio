@@ -55,6 +55,15 @@ def build_send_payload(parsed: dict, model: str) -> dict:
             break
     quality_on = quality_preset != "none"
 
+    transparent_bg = False
+    transparent_tag = "transparent background"
+    if base == transparent_tag:
+        base = ""
+        transparent_bg = True
+    elif base.endswith(", " + transparent_tag):
+        base = base[: -(len(transparent_tag) + 2)].rstrip()
+        transparent_bg = True
+
     # ---------- 角色 ----------
     characters: list[dict] = []
     if v4p is not None:
@@ -113,6 +122,7 @@ def build_send_payload(parsed: dict, model: str) -> dict:
     params["quality_toggle"] = quality_on
     params["quality_preset"] = quality_preset
     params["furry_mode"] = furry
+    params["transparent_bg"] = transparent_bg
     params["uc_preset"] = uc_preset
 
     # ---------- Vibe（临时使用，不入库；用户可手动存入库） ----------

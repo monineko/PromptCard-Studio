@@ -190,6 +190,7 @@ export type GenerateModelRules = {
     furry: boolean;
     characters: boolean;
     variety: boolean;
+    transparency: boolean;
   };
 };
 
@@ -229,6 +230,7 @@ export type GenerateParamsPayload = {
   decrisp: boolean;
   legacy_uc: boolean;
   furry_mode: boolean;
+  transparent_bg: boolean;
 };
 
 export type GenerateVibe = {
@@ -331,6 +333,7 @@ export type BatchRun = {
     quality_preset?: string;
     variety?: boolean;
     furry_mode?: boolean;
+    transparent_bg?: boolean;
     decrisp?: boolean;
     sm?: boolean;
     sm_dyn?: boolean;
