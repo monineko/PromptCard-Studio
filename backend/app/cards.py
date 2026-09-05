@@ -640,6 +640,14 @@ def import_template_xlsx(file_bytes: bytes) -> dict:
                 if formula is not None:
                     cells[col] = {"formula": formula.text or ""}
                     continue
+                if c.attrib.get("t") == "inlineStr":
+                    inline = c.find(_SHEET_NS + "is")
+                    cells[col] = {
+                        "text": "" if inline is None else "".join(
+                            t.text or "" for t in inline.iter(_SHEET_NS + "t")
+                        )
+                    }
+                    continue
                 v = c.find(_SHEET_NS + "v")
                 if v is None:
                     continue
