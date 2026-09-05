@@ -6,6 +6,7 @@ import {
   Image as ImageIcon,
   Loader2,
   PencilLine,
+  Plus,
   RefreshCw,
   Settings2,
   Sparkles,
@@ -19,7 +20,7 @@ import { api } from "../api";
 import { cn, extractRoleUnits, splitWorkspaceRole } from "../lib";
 import { useStore } from "../store";
 import { useBatchStore } from "../store/batch";
-import { useGenerateStore } from "../store/generate";
+import { useGenerateStore, type GeneratePromptDraft } from "../store/generate";
 import { useNavStore } from "../store/navStore";
 import type {
   GenerateMeta,
@@ -203,16 +204,20 @@ function VibeSlider({
   );
 }
 
-function CharacterPreview({
+function CharacterEditor({
   index,
   positive,
   negative,
   defaultOpen,
+  onChange,
+  onRemove,
 }: {
   index: number;
   positive: string;
   negative: string;
   defaultOpen?: boolean;
+  onChange: (patch: { positive?: string; negative?: string }) => void;
+  onRemove: () => void;
 }) {
   const [open, setOpen] = useState(!!defaultOpen);
   const [tab, setTab] = useState<"positive" | "negative">("positive");
@@ -233,6 +238,16 @@ function CharacterPreview({
         <span className="ml-auto truncate text-[10px] text-[var(--muted)]">
           正 {positive.length} 字 · 负 {negative.length} 字
         </span>
+        <IconBtn
+          danger
+          title={`删除角色 ${index + 1}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+        >
+          <Trash2 size={12} />
+        </IconBtn>
       </div>
       {open && (
         <div className="space-y-2 px-2.5 pb-2.5">
@@ -244,9 +259,12 @@ function CharacterPreview({
               { key: "negative", label: "负面" },
             ]}
           />
-          <div className="scroll-thin max-h-36 overflow-y-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 text-xs leading-relaxed text-[var(--text)]">
-            {text.trim() || <span className="text-[var(--muted)]">（空）</span>}
-          </div>
+          <textarea
+            value={text}
+            onChange={(event) => onChange({ [tab]: event.target.value })}
+            placeholder={tab === "positive" ? "输入角色正向提示词" : "输入角色负面提示词"}
+            className="scroll-thin h-28 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 text-xs leading-relaxed text-[var(--text)] outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+          />
         </div>
       )}
     </div>
@@ -442,6 +460,11 @@ export function GenerationPanel() {
 
   const params = useGenerateStore((s) => s.params);
   const setParam = useGenerateStore((s) => s.setParam);
+  const syncWorkspacePrompts = useGenerateStore((s) => s.syncWorkspacePrompts);
+  const storedPromptDraft = useGenerateStore((s) => s.promptDraft);
+  const syncPromptDraft = useGenerateStore((s) => s.syncPromptDraft);
+  const editPromptDraft = useGenerateStore((s) => s.editPromptDraft);
+  const setPromptSync = useGenerateStore((s) => s.setPromptSync);
   const vibes = useGenerateStore((s) => s.vibes);
   const updateVibe = useGenerateStore((s) => s.updateVibe);
   const removeVibe = useGenerateStore((s) => s.removeVibe);
@@ -465,20 +488,40 @@ export function GenerationPanel() {
   // 角色区 = 工作区「角色」分区逐卡片自动对齐：1 卡片 → 角色1；多卡片自动扩展
   const rolePositive = useMemo(() => extractRoleUnits(positive), [positive]);
   const roleNegative = useMemo(() => extractRoleUnits(negative), [negative]);
+  const workspacePromptDraft = useMemo<GeneratePromptDraft>(
+    () =>
+      ({
+        positive: posSplit.base,
+        negative: negSplit.base,
+        characters: rolePositive.map((rolePrompt, index) => ({
+          positive: rolePrompt,
+          negative: roleNegative[index] || "",
+        })),
+      }),
+    [negSplit.base, posSplit.base, roleNegative, rolePositive]
+  );
+  const promptDraft = syncWorkspacePrompts ? workspacePromptDraft : storedPromptDraft;
   const characters = useMemo(
     () =>
-      rolePositive.map((pos, i) => ({
-        positive: pos,
-        negative: roleNegative[i] || "",
+      promptDraft.characters.map((character) => ({
+        ...character,
         center: { x: 0.5, y: 0.5 },
       })),
-    [rolePositive, roleNegative]
+    [promptDraft.characters]
   );
+
+  useEffect(() => {
+    syncPromptDraft(workspacePromptDraft);
+  }, [syncPromptDraft, workspacePromptDraft]);
+
+  const updatePromptDraft = (next: GeneratePromptDraft) => editPromptDraft(next);
   // 多角色关闭时：角色分区并入正面提示词，不再生成独立角色槽
   const mergedBase = useMemo(() => {
-    if (multiCharacter || !rolePositive.length) return posSplit.base;
-    return [posSplit.base, rolePositive.join(", ")].filter(Boolean).join(", ");
-  }, [multiCharacter, posSplit.base, rolePositive]);
+    if (multiCharacter || !promptDraft.characters.length) return promptDraft.positive;
+    return [promptDraft.positive, ...promptDraft.characters.map((character) => character.positive)]
+      .filter(Boolean)
+      .join(", ");
+  }, [multiCharacter, promptDraft.characters, promptDraft.positive]);
 
   const reloadVibes = useCallback(() => {
     Promise.all([api.vibes(), api.vibeFolders()])
@@ -562,7 +605,7 @@ export function GenerationPanel() {
       return;
     }
     if (!mergedBase.trim()) {
-      addToast("正面提示词为空，请先在工作区添加内容", "err");
+      addToast("正面提示词为空，请先在参数设置或工作区添加内容", "err");
       return;
     }
     if ((params.model === "nai-diffusion-5-full" || params.model === "nai-diffusion-5-curated") && vibes.length) {
@@ -581,7 +624,7 @@ export function GenerationPanel() {
           information_extracted: v.information_extracted,
         })),
       };
-      const r = await api.text2image(mergedBase, negSplit.base, payload);
+      const r = await api.text2image(mergedBase, promptDraft.negative, payload);
       setResult(r);
       addToast("生成完成，已保存到图库（未评分）");
       void refreshStatus();
@@ -629,7 +672,7 @@ export function GenerationPanel() {
           </select>
         </Field>
 
-        {/* 基础提示词预览 */}
+        {/* 单张生成提示词 */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/40">
           <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-1.5 pt-2">
             <TabSwitch
@@ -640,47 +683,80 @@ export function GenerationPanel() {
                 { key: "negative", label: "负面提示词" },
               ]}
             />
-            <span className="text-[10px] text-[var(--muted)]">来自工作区（角色分区已移出）</span>
+            <Toggle
+              label="同步工作区"
+              checked={syncWorkspacePrompts}
+              onChange={(enabled) => setPromptSync(enabled, workspacePromptDraft)}
+            />
           </div>
-          <pre className="scroll-thin h-36 overflow-y-auto whitespace-pre-wrap px-3 pb-2.5 pt-1 font-sans text-[11px] leading-relaxed text-[var(--text)]">
-            {(baseTab === "positive" ? posSplit.base : negSplit.base).trim() || (
-              <span className="text-[var(--muted)]">
-                {baseTab === "positive" ? "（基础正面提示词为空）" : "（负面提示词为空，将使用 UC 预设）"}
-              </span>
-            )}
-          </pre>
+          <textarea
+            value={baseTab === "positive" ? promptDraft.positive : promptDraft.negative}
+            onChange={(event) =>
+              updatePromptDraft({
+                ...promptDraft,
+                [baseTab]: event.target.value,
+              })
+            }
+            placeholder={baseTab === "positive" ? "输入基础正向提示词" : "输入负面提示词（留空则使用 UC 预设）"}
+            className="scroll-thin mx-2.5 mb-2.5 h-36 w-[calc(100%-1.25rem)] resize-y rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-2 font-sans text-[11px] leading-relaxed text-[var(--text)] outline-none transition-colors placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+          />
+          <p className="px-2.5 pb-2 text-[10px] leading-relaxed text-[var(--muted)]">
+            {syncWorkspacePrompts
+              ? "正在跟随工作区；开始输入会自动关闭同步。"
+              : "已独立编辑；重新开启同步会用工作区内容覆盖这里。"}
+          </p>
         </div>
 
-        {/* 角色提示词区域（只读预览，自动对齐工作区卡片） */}
+        {/* 角色提示词区域 */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--input)]/40">
-          <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2">
             <span className="text-xs font-medium">
               角色提示词
               <span className="ml-1.5 text-[10px] font-normal text-[var(--muted)]">{characters.length} 个</span>
             </span>
-            {!multiCharacter && (
-              <span className="rounded bg-[var(--hover)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
-                多角色已关闭，角色分区并入正面提示词
-              </span>
-            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                updatePromptDraft({
+                  ...promptDraft,
+                  characters: [...promptDraft.characters, { positive: "", negative: "" }],
+                })
+              }
+            >
+              <Plus size={13} /> 添加角色
+            </Button>
           </div>
-          {!multiCharacter ? (
-            <p className="px-2.5 pb-2.5 text-[10px] leading-relaxed text-[var(--muted)]">
-              设置中「多角色」已关闭：工作区「角色」分区的提示词会作为普通正面提示词发送，不会生成独立角色槽。
+          {!multiCharacter && (
+            <p className="px-2.5 pb-2 text-[10px] leading-relaxed text-[var(--muted)]">
+              多角色已关闭：角色正向提示词会并入基础正向提示词，不会生成独立角色槽。
             </p>
-          ) : characters.length === 0 ? (
+          )}
+          {characters.length === 0 ? (
             <p className="px-2.5 pb-2.5 text-[10px] leading-relaxed text-[var(--muted)]">
-              未设置角色；在工作区「角色」分区添加卡片后，会自动按卡片数生成角色 1、角色 2…
+              未设置角色；可在这里添加，或开启同步后从工作区「角色」分区载入。
             </p>
           ) : (
             <div className="space-y-2 px-2.5 pb-2.5">
               {characters.map((c, i) => (
-                <CharacterPreview
+                <CharacterEditor
                   key={i}
                   index={i}
                   positive={c.positive}
                   negative={c.negative}
                   defaultOpen={i === 0}
+                  onChange={(patch) => {
+                    const nextCharacters = promptDraft.characters.map((character, index) =>
+                      index === i ? { ...character, ...patch } : character
+                    );
+                    updatePromptDraft({ ...promptDraft, characters: nextCharacters });
+                  }}
+                  onRemove={() =>
+                    updatePromptDraft({
+                      ...promptDraft,
+                      characters: promptDraft.characters.filter((_, index) => index !== i),
+                    })
+                  }
                 />
               ))}
             </div>
@@ -942,7 +1018,7 @@ export function GenerationPanel() {
             size="md"
             className="flex-1 rounded-xl py-4 text-lg"
             onClick={() => void generate()}
-            disabled={generating || !!batchRun || !status?.configured || !posSplit.base.trim()}
+            disabled={generating || !!batchRun || !status?.configured || !mergedBase.trim()}
           >
             <Wand2 size={20} />
             生成1张
