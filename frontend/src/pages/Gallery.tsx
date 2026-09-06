@@ -123,20 +123,33 @@ function dateLabel(date: string, category: LibraryCategoryKey): string {
 }
 
 function buildGroups(items: LibraryImageItem[], category: LibraryCategoryKey): Group[] {
+  const grouped = new Map<string, LibraryImageItem[]>();
+  const datesByCategory = new Map<LibraryCategoryKey, Set<string>>();
+  for (const item of items) {
+    const key = category === "all" ? `${item.category}:${item.date}` : item.date;
+    const list = grouped.get(key);
+    if (list) list.push(item);
+    else grouped.set(key, [item]);
+    if (category === "all") {
+      const dates = datesByCategory.get(item.category);
+      if (dates) dates.add(item.date);
+      else datesByCategory.set(item.category, new Set([item.date]));
+    }
+  }
+
   if (category === "all") {
     const groups: Group[] = [];
     // 全部视图索引顺序：Like 最高 → Treasure → Fine → Reject → 自定义/未评分最下方
     const allOrder: LibraryCategoryKey[] = ["favorites", "treasure", "fine", "reject", "unrated"];
     for (const key of allOrder) {
-      const list = items.filter((i) => i.category === key);
-      if (!list.length) continue;
-      const dates = [...new Set(list.map((i) => i.date))].sort((a, b) => (a ? 1 : 0) - (b ? 1 : 0) || b.localeCompare(a));
+      const dates = [...(datesByCategory.get(key) ?? [])]
+        .sort((a, b) => (a ? 1 : 0) - (b ? 1 : 0) || b.localeCompare(a));
       for (const d of dates) {
         groups.push({
           key: `${key}:${d}`,
           label: dateLabel(d, key),
           categoryLabel: CATEGORY_LABEL[key],
-          items: list.filter((i) => i.date === d),
+          items: grouped.get(`${key}:${d}`) ?? [],
         });
       }
     }
@@ -148,7 +161,7 @@ function buildGroups(items: LibraryImageItem[], category: LibraryCategoryKey): G
   return dates.map((d) => ({
     key: d || "no-date",
     label: dateLabel(d, category),
-    items: items.filter((i) => i.date === d),
+    items: grouped.get(d) ?? [],
   }));
 }
 
@@ -230,22 +243,15 @@ export function Gallery() {
     if (category || !summary) return;
     let cancelled = false;
     void (async () => {
-      const [explicitCovers, entries] = await Promise.all([
-        api.libraryCovers().catch(() => ({}) as Record<string, string>),
-        Promise.all(
-          CATEGORY_ORDER.map(async (key) => {
-            try {
-              const r = await api.libraryImages(key);
-              return [
-                key,
-                r.items.slice(0, 12).map((i) => ({ url: api.libraryImageUrl(i.path), name: i.name, date: i.date })),
-              ] as const;
-            } catch {
-              return [key, []] as const;
-            }
-          })
-        ),
-      ]);
+      const explicitCovers = await api.libraryCovers().catch(() => ({}) as Record<string, string>);
+      const entries = CATEGORY_ORDER.map((key) => [
+        key,
+        (summary.previews[key] ?? []).map((item) => ({
+          url: api.libraryThumbnailUrl(item.path),
+          name: item.name,
+          date: item.date,
+        })),
+      ] as const);
       if (cancelled) return;
       const map = Object.fromEntries(entries) as Partial<Record<LibraryCategoryKey, CoverEntry[]>>;
       setCovers(map);
@@ -254,7 +260,7 @@ export function Gallery() {
       for (const key of CATEGORY_ORDER) {
         const list = map[key] ?? [];
         if (!list.length) continue;
-        if (explicitCovers[key]) effective[key] = api.libraryImageUrl(explicitCovers[key]);
+        if (explicitCovers[key]) effective[key] = api.libraryThumbnailUrl(explicitCovers[key]);
         else if (key === "all") effective[key] = list[Math.floor(Math.random() * list.length)].url;
         else effective[key] = list[0].url;
       }
@@ -331,7 +337,7 @@ export function Gallery() {
       if (result.items.length) {
         useGalleryVisual
           .getState()
-          .setBackdrops(result.items.slice(0, 10).map((i) => ({ key: i.path, url: api.libraryImageUrl(i.path) })));
+          .setBackdrops(result.items.slice(0, 10).map((i) => ({ key: i.path, url: api.libraryThumbnailUrl(i.path) })));
       }
     } catch (e) {
       addToast(`图片列表加载失败: ${(e as Error).message}`, "err");

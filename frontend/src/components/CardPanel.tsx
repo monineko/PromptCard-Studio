@@ -66,7 +66,7 @@ function PokerCard({ category, card }: { category: string; card: CardMeta }) {
       >
         {card.image ? (
           <img
-            src={api.libraryImageUrl(card.image)}
+            src={api.libraryThumbnailUrl(card.image)}
             alt={card.name}
             draggable={false}
             loading="lazy"
@@ -169,7 +169,7 @@ function MiniStackCard({
   category: string;
   hue: number;
 }) {
-  const url = card?.image ? api.libraryImageUrl(card.image) : undefined;
+  const url = card?.image ? api.libraryThumbnailUrl(card.image) : undefined;
   return (
     <div
       className="relative h-full w-full overflow-hidden rounded-xl border border-white/20 text-white"
@@ -610,7 +610,7 @@ function CardDetailModal() {
           {cardImage ? (
             <div className="mt-3 flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--input)]/40 p-2">
               <img
-                src={api.libraryImageUrl(cardImage)}
+                src={api.libraryThumbnailUrl(cardImage)}
                 alt=""
                 className="h-16 w-16 shrink-0 rounded-lg object-cover"
                 onError={(e) => {

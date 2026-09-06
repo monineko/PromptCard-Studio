@@ -13,6 +13,7 @@ import http.server
 import io
 import json
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -434,6 +435,9 @@ class PublishHttpSmokeTest(unittest.TestCase):
     def setUpClass(cls):
         set_up_temp_environment(cls)
         pub._engine_binary = lambda: MOCK_ENGINE  # type: ignore[method-assign]
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            cls.PORT = probe.getsockname()[1]
 
         import uvicorn
 

@@ -32,6 +32,8 @@ _DEFAULTS_MARKER = "default_categories_initialized"
 INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 WILDCARD_PATTERN = re.compile(r"<([^:<>]+):([^>]+)>")
 _sequential_state: dict[str, int] = {}
+_CARD_PREVIEW_CACHE: dict[str, tuple[int, int, str]] = {}
+_CARD_PREVIEW_CACHE_MAX_ENTRIES = 20_000
 
 CARD_IMAGES_FILE = PROMPTCARDS_DIR / ".card-images.json"
 CARD_META_FILE = PROMPTCARDS_DIR / ".card-meta.json"
@@ -94,6 +96,20 @@ def _read_text(path: Path) -> str:
 def _preview(content: str, limit: int = 100) -> str:
     text = content.replace("\r\n", "\n").replace("\n", " / ").strip()
     return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _cached_preview(path: Path, stat: os.stat_result) -> str:
+    """按文件时间与大小复用卡片摘要，避免每次刷新重读所有文本。"""
+    key = str(path)
+    cached = _CARD_PREVIEW_CACHE.get(key)
+    signature = (stat.st_mtime_ns, stat.st_size)
+    if cached and cached[:2] == signature:
+        return cached[2]
+    preview = _preview(_read_text(path))
+    if len(_CARD_PREVIEW_CACHE) >= _CARD_PREVIEW_CACHE_MAX_ENTRIES and key not in _CARD_PREVIEW_CACHE:
+        _CARD_PREVIEW_CACHE.pop(next(iter(_CARD_PREVIEW_CACHE)), None)
+    _CARD_PREVIEW_CACHE[key] = (*signature, preview)
+    return preview
 
 
 def _load_card_images() -> dict[str, str]:
@@ -171,14 +187,14 @@ def list_categories() -> list[dict]:
         cat_pins = pins.get(folder.name) or []
         pin_index = {n: i for i, n in enumerate(cat_pins)}
         for file in sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".txt"):
-            content = _read_text(file)
+            stat = file.stat()
             key = f"{folder.name}:{file.stem}"
-            created = meta.get(key) or file.stat().st_ctime
+            created = meta.get(key) or stat.st_ctime
             cards.append(
                 {
                     "name": file.stem,
-                    "preview": _preview(content),
-                    "updated": file.stat().st_mtime,
+                    "preview": _cached_preview(file, stat),
+                    "updated": stat.st_mtime,
                     "created": created,
                     "image": images.get(key) or None,
                 }

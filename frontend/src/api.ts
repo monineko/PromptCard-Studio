@@ -131,6 +131,7 @@ export const api = {
   libraryImages: (category: string) =>
     request<LibraryImages>(`/api/library/images?category=${encodeURIComponent(category)}`),
   libraryImageUrl: (path: string) => `/api/library/image?path=${encodeURIComponent(path)}`,
+  libraryThumbnailUrl: (path: string) => `/api/library/thumbnail?path=${encodeURIComponent(path)}`,
   libraryPngInfo: (path: string) =>
     request<PngInfoResult>(`/api/library/png-info?path=${encodeURIComponent(path)}`),
   applyReview: (moves: { path: string; tag: string }[], recycleReject: boolean) =>

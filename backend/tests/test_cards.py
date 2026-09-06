@@ -67,6 +67,54 @@ class CardsImportTest(unittest.TestCase):
                     cards.load_settings,
                 ) = old
 
+    def test_repeated_category_listing_reuses_unchanged_card_previews(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old = (
+                cards.PROMPTCARDS_DIR,
+                cards.CARD_IMAGES_FILE,
+                cards.CARD_META_FILE,
+                cards.CARD_PINS_FILE,
+                cards.load_settings,
+                cards._read_text,
+            )
+            cards.PROMPTCARDS_DIR = root / "promptcards"
+            cards.CARD_IMAGES_FILE = cards.PROMPTCARDS_DIR / ".card-images.json"
+            cards.CARD_META_FILE = cards.PROMPTCARDS_DIR / ".card-meta.json"
+            cards.CARD_PINS_FILE = cards.PROMPTCARDS_DIR / ".card-pins.json"
+            cards.load_settings = lambda: {}  # type: ignore[method-assign]
+            folder = cards.PROMPTCARDS_DIR / "动作"
+            folder.mkdir(parents=True)
+            (folder / "挥手.txt").write_text("waving hand", encoding="utf-8")
+            reads = 0
+            original_read_text = cards._read_text
+
+            def counted_read(path: Path) -> str:
+                nonlocal reads
+                reads += 1
+                return original_read_text(path)
+
+            cards._read_text = counted_read  # type: ignore[method-assign]
+            try:
+                if hasattr(cards, "_CARD_PREVIEW_CACHE"):
+                    cards._CARD_PREVIEW_CACHE.clear()
+                cards.list_categories()
+                first_reads = reads
+                cards.list_categories()
+                self.assertGreater(first_reads, 0)
+                self.assertEqual(reads, first_reads)
+            finally:
+                (
+                    cards.PROMPTCARDS_DIR,
+                    cards.CARD_IMAGES_FILE,
+                    cards.CARD_META_FILE,
+                    cards.CARD_PINS_FILE,
+                    cards.load_settings,
+                    cards._read_text,
+                ) = old
+                if hasattr(cards, "_CARD_PREVIEW_CACHE"):
+                    cards._CARD_PREVIEW_CACHE.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

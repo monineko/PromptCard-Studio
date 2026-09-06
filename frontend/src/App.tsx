@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { HashRouter, Route, Routes, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { api } from "./api";
@@ -10,15 +10,20 @@ import { ToastHost } from "./components/UI";
 import { TopBar } from "./components/TopBar";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { cn } from "./lib";
-import { Gallery } from "./pages/Gallery";
 import { Home } from "./pages/Home";
-import { Publish } from "./pages/Publish";
-import { Settings } from "./pages/Settings";
-import { StyleExplore } from "./pages/StyleExplore";
-import { VibeManager } from "./pages/VibeManager";
 import { useSidebarStore } from "./sidebarStore";
 import { useStore } from "./store";
 import { useGalleryVisual } from "./store/galleryVisual";
+
+const Gallery = lazy(() => import("./pages/Gallery").then((module) => ({ default: module.Gallery })));
+const Publish = lazy(() => import("./pages/Publish").then((module) => ({ default: module.Publish })));
+const Settings = lazy(() => import("./pages/Settings").then((module) => ({ default: module.Settings })));
+const StyleExplore = lazy(() =>
+  import("./pages/StyleExplore").then((module) => ({ default: module.StyleExplore }))
+);
+const VibeManager = lazy(() =>
+  import("./pages/VibeManager").then((module) => ({ default: module.VibeManager }))
+);
 
 function Shortcuts() {
   const undo = useStore((s) => s.undo);
@@ -97,14 +102,22 @@ function Shell() {
                 transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
                 className="h-full"
               >
-                <Routes location={location}>
-                  <Route path="/" element={<Home />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="/vibes" element={<VibeManager />} />
-                  <Route path="/library" element={<Gallery />} />
-                  <Route path="/style-explore" element={<StyleExplore />} />
-                  <Route path="/publish" element={<Publish />} />
-                </Routes>
+                <Suspense
+                  fallback={
+                    <div className="flex min-h-[40vh] items-center justify-center text-sm text-[var(--muted)]">
+                      正在加载页面…
+                    </div>
+                  }
+                >
+                  <Routes location={location}>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/settings" element={<Settings />} />
+                    <Route path="/vibes" element={<VibeManager />} />
+                    <Route path="/library" element={<Gallery />} />
+                    <Route path="/style-explore" element={<StyleExplore />} />
+                    <Route path="/publish" element={<Publish />} />
+                  </Routes>
+                </Suspense>
               </motion.div>
             </AnimatePresence>
           ) : (

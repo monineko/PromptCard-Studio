@@ -7,6 +7,7 @@
 import asyncio
 import json
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -60,6 +61,21 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertEqual(counts["favorites"], 1)
         self.assertEqual(counts["unrated"], 3 if ANR_SAMPLE.exists() else 2)  # a.png + misc/b.png (+ sample.png)
 
+    def test_01b_summary_uses_lightweight_scan_and_returns_cover_previews(self):
+        original_image_size = lib._image_size
+        dimension_reads: list[Path] = []
+        lib._image_size = lambda path: dimension_reads.append(path) or (1, 1)  # type: ignore[method-assign]
+        try:
+            result = lib.summary()
+        finally:
+            lib._image_size = original_image_size  # type: ignore[method-assign]
+
+        self.assertEqual(dimension_reads, [])
+        self.assertIn("previews", result)
+        self.assertLessEqual(len(result["previews"]["all"]), 12)
+        self.assertEqual(len(result["previews"]["treasure"]), 1)
+        self.assertEqual(result["previews"]["treasure"][0]["name"], "t.png")
+
     def test_02_list_by_category_and_date(self):
         treasure = lib.list_images("treasure")
         self.assertEqual(treasure["total"], 1)
@@ -70,6 +86,18 @@ class LibraryServiceTest(unittest.TestCase):
         dates = sorted(i["date"] for i in unrated["items"])
         expected = ["", "", "misc"] if ANR_SAMPLE.exists() else ["", "misc"]
         self.assertEqual(dates, expected)
+
+    def test_02b_category_scan_reads_dimensions_only_for_matching_images(self):
+        original_image_size = lib._image_size
+        dimension_reads: list[Path] = []
+        lib._image_size = lambda path: dimension_reads.append(path) or (1, 1)  # type: ignore[method-assign]
+        try:
+            result = lib.list_images("treasure")
+        finally:
+            lib._image_size = original_image_size  # type: ignore[method-assign]
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual([path.name for path in dimension_reads], ["t.png"])
 
     def test_03_png_info_parsing(self):
         if not ANR_SAMPLE.exists():
@@ -91,6 +119,23 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIsNone(result["parsed"])
         self.assertIsNone(result["summary"])
+
+    def test_04b_thumbnail_is_cached_without_changing_original(self):
+        from PIL import Image
+
+        source = self.tmp / "thumbnail-source.png"
+        Image.new("RGB", (1200, 800), "blue").save(source)
+        original_bytes = source.read_bytes()
+
+        first = lib.thumbnail("thumbnail-source.png")
+        second = lib.thumbnail("thumbnail-source.png")
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.is_file())
+        self.assertTrue(first.is_relative_to(self.tmp / ".thumbnails"))
+        with Image.open(first) as preview:
+            self.assertLessEqual(max(preview.size), 512)
+        self.assertEqual(source.read_bytes(), original_bytes)
 
     def test_05_traversal_rejected(self):
         with self.assertRaises(ValueError):
@@ -257,7 +302,14 @@ class LibraryHttpSmokeTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="npm_lib_http_"))
         (cls.tmp / "Treasure" / "2026-08-05").mkdir(parents=True)
-        (cls.tmp / "Treasure" / "2026-08-05" / "web.png").write_bytes(b"x")
+        from PIL import Image
+
+        Image.new("RGB", (640, 960), "green").save(
+            cls.tmp / "Treasure" / "2026-08-05" / "web.png"
+        )
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            cls.PORT = probe.getsockname()[1]
 
         import uvicorn
 
@@ -295,6 +347,11 @@ class LibraryHttpSmokeTest(unittest.TestCase):
             f"http://127.0.0.1:{self.PORT}/api/library/image?path=Treasure%2F2026-08-05%2Fweb.png"
         ) as resp:
             self.assertEqual(resp.status, 200)
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{self.PORT}/api/library/thumbnail?path=Treasure%2F2026-08-05%2Fweb.png"
+        ) as resp:
+            self.assertEqual(resp.headers.get_content_type(), "image/webp")
+            self.assertTrue(resp.read().startswith(b"RIFF"))
 
 
 if __name__ == "__main__":

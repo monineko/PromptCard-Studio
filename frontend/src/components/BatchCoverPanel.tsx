@@ -471,7 +471,7 @@ export function BatchCoverPanel() {
                 onClick={() => void assignCandidate(item.path)}
               >
                 <img
-                  src={api.libraryImageUrl(item.path)}
+                  src={api.libraryThumbnailUrl(item.path)}
                   alt={`候选图 ${item.index + 1}`}
                   loading="lazy"
                   className="aspect-square w-full object-cover"
@@ -587,7 +587,7 @@ function BatchCoverRunView({
               <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-[var(--hover)]">
                 {preview ? (
                   <img
-                    src={api.libraryImageUrl(preview)}
+                    src={api.libraryThumbnailUrl(preview)}
                     alt={target.name}
                     loading="lazy"
                     className="h-full w-full object-cover"

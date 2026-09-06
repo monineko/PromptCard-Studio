@@ -1,3 +1,4 @@
+import hashlib
 import json
 import ipaddress
 import os
@@ -18,9 +19,10 @@ from .config import load_settings
 from .image_references import ImageReferenceStore, rewrite_image_references
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
 except ImportError:  # pragma: no cover
     Image = None
+    ImageOps = None
 
 
 # 大分类：key -> 文件夹名前缀列表（目录结构：<前缀>-<筛选日期>/图片，
@@ -48,11 +50,14 @@ MAX_UPLOAD_IMAGE_BYTES = 100 * 1024 * 1024
 MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_REMOTE_IMAGE_COUNT = 20
 REMOTE_DOWNLOAD_TIMEOUT_SECONDS = 15
+THUMBNAIL_MAX_SIZE = 512
+THUMBNAIL_CACHE_DIR_NAME = ".thumbnails"
 
 # 撤销记录（内存，仅本次运行期间有效；键为 token）
 _UNDO_STORE: dict[str, list[dict]] = {}
 # 图片尺寸缓存（path -> (width, height, mtime_ns)）
 _SIZE_CACHE: dict[str, tuple[int, int, int]] = {}
+_SIZE_CACHE_MAX_ENTRIES = 20_000
 
 
 def _library_root() -> Path:
@@ -90,6 +95,7 @@ def _rewrite_saved_image_references(
     """同步所有由应用维护的图库图片引用。"""
     from . import cards
 
+    _invalidate_thumbnails([*(moved or {}).keys(), *(removed or [])])
     stores = (
         ImageReferenceStore(
             "card_images", cards._load_card_images, cards._save_card_images
@@ -142,8 +148,62 @@ def resolve_image(rel_path: str) -> Path:
     return target
 
 
+def _thumbnail_identity(rel_path: str) -> str:
+    return hashlib.sha256(rel_path.encode("utf-8")).hexdigest()[:24]
+
+
+def _invalidate_thumbnails(rel_paths) -> None:
+    cache_dir = _library_root() / THUMBNAIL_CACHE_DIR_NAME
+    if not cache_dir.exists():
+        return
+    for rel_path in rel_paths:
+        prefix = _thumbnail_identity(str(rel_path))
+        try:
+            for cached in cache_dir.glob(f"{prefix}-*.webp"):
+                cached.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def thumbnail(rel_path: str) -> Path:
+    """返回图库图片的缓存缩略图；无法处理时安全回退到原图。"""
+    source = resolve_image(rel_path)
+    if not source.exists() or not source.is_file():
+        raise FileNotFoundError("图片不存在")
+    if Image is None or ImageOps is None:  # pragma: no cover
+        return source
+
+    cache_dir = _library_root() / THUMBNAIL_CACHE_DIR_NAME
+    temporary: Path | None = None
+    try:
+        stat = source.stat()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        identity = _thumbnail_identity(rel_path)
+        version = f"{stat.st_mtime_ns:x}-{stat.st_size:x}"
+        destination = cache_dir / f"{identity}-{version}.webp"
+        if destination.is_file():
+            return destination
+        temporary = cache_dir / f".{destination.stem}-{uuid.uuid4().hex}.tmp"
+        with Image.open(source) as original:
+            preview = ImageOps.exif_transpose(original)
+            preview.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), Image.Resampling.LANCZOS)
+            if preview.mode not in {"RGB", "RGBA"}:
+                preview = preview.convert("RGBA" if "transparency" in preview.info else "RGB")
+            preview.save(temporary, format="WEBP", quality=82, method=4)
+        os.replace(temporary, destination)
+        for stale in cache_dir.glob(f"{identity}-*.webp"):
+            if stale != destination:
+                stale.unlink(missing_ok=True)
+        return destination
+    except Exception:
+        return source
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _is_image(file: Path) -> bool:
-    return file.is_file() and file.suffix.lower() in IMAGE_EXTENSIONS
+    return file.suffix.lower() in IMAGE_EXTENSIONS and file.is_file()
 
 
 def _image_size(file: Path) -> tuple[int, int]:
@@ -162,8 +222,8 @@ def _image_size(file: Path) -> tuple[int, int]:
                 size = im.size
         except Exception:
             size = (1, 1)
-    if len(_SIZE_CACHE) > 800:
-        _SIZE_CACHE.clear()
+    if len(_SIZE_CACHE) >= _SIZE_CACHE_MAX_ENTRIES and str(file) not in _SIZE_CACHE:
+        _SIZE_CACHE.pop(next(iter(_SIZE_CACHE)), None)
     _SIZE_CACHE[str(file)] = (size[0], size[1], mtime_ns)
     return size
 
@@ -215,17 +275,26 @@ def _item_for_file(file: Path, root: Path) -> dict | None:
     }
 
 
-def _scan_items() -> list[dict]:
-    root = _library_root()
-    items: list[dict] = []
+def _iter_image_files(root: Path):
+    """按稳定顺序遍历图库图片，并附带分类信息，不读取图片内容。"""
     if not root.exists():
-        return items
-    for file in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
+        return
+    for file in sorted(root.rglob("*"), key=lambda path: str(path).lower()):
         if not _is_image(file):
             continue
         rel = file.relative_to(root)
         if any(part.startswith(".") for part in rel.parts):
             continue  # 跳过隐藏目录（如 .trash）
+        category, date_group = _category_of(rel.parts)
+        yield file, rel, category, date_group
+
+
+def _scan_items(category: str = "all") -> list[dict]:
+    root = _library_root()
+    items: list[dict] = []
+    for file, _rel, item_category, _date_group in _iter_image_files(root):
+        if category != "all" and item_category != category:
+            continue
         item = _item_for_file(file, root)
         if item:
             items.append(item)
@@ -233,11 +302,17 @@ def _scan_items() -> list[dict]:
 
 
 def summary() -> dict:
-    items = _scan_items()
+    root = _library_root()
     counts = {key: 0 for key in CATEGORY_ORDER}
-    for item in items:
-        counts[item["category"]] += 1
+    previews: dict[str, list[dict]] = {key: [] for key in CATEGORY_ORDER}
+    for file, rel, category, date_group in _iter_image_files(root):
+        counts[category] += 1
         counts["all"] += 1
+        preview = {"path": rel.as_posix(), "name": file.name, "date": date_group}
+        if len(previews["all"]) < 12:
+            previews["all"].append(preview)
+        if len(previews[category]) < 12:
+            previews[category].append(preview)
     return {
         "categories": [
             {
@@ -248,14 +323,15 @@ def summary() -> dict:
             }
             for key in CATEGORY_ORDER
         ],
-        "library_path": str(_library_root()),
+        "library_path": str(root),
+        "previews": previews,
     }
 
 
 def list_images(category: str) -> dict:
     if category not in CATEGORY_ORDER:
         raise ValueError(f"未知分类: {category}")
-    items = [item for item in _scan_items() if category == "all" or item["category"] == category]
+    items = _scan_items(category)
     return {"category": category, "items": items, "total": len(items)}
 
 

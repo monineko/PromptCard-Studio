@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from "react";
 import { VirtualMasonry } from "react-hybrid-masonry";
 import { api } from "../../api";
 import { cn } from "../../lib";
@@ -17,7 +18,7 @@ export function GalleryMasonry({
   onToggleSelect,
   minColumnWidth = 190,
   gap = 12,
-  getImageUrl = (item) => api.libraryImageUrl(item.path),
+  getImageUrl = (item) => api.libraryThumbnailUrl(item.path),
 }: {
   items: LibraryImageItem[];
   onItemClick: (item: LibraryImageItem, index: number) => void;
@@ -28,17 +29,27 @@ export function GalleryMasonry({
   gap?: number;
   getImageUrl?: (item: LibraryImageItem) => string;
 }) {
-  const paged: GalleryItem[] = items.map((item, idx) => ({ ...item, _idx: idx }));
+  const paged = useMemo<GalleryItem[]>(
+    () => items.map((item, idx) => ({ ...item, _idx: idx })),
+    [items]
+  );
   // 图库内容变化（移动/删除/重扫）时强制重建内部分页状态
-  const refreshKey = paged.map((i) => `${i.path}:${i.mtime}`).join("|") || "empty";
+  const refreshKey = useMemo(
+    () => paged.map((item) => `${item.path}:${item.mtime}`).join("|") || "empty",
+    [paged]
+  );
+  const loadPage = useCallback(
+    async (page: number, pageSize: number) => ({
+      data: paged.slice((page - 1) * pageSize, page * pageSize),
+      hasMore: page * pageSize < paged.length,
+    }),
+    [paged]
+  );
 
   return (
     <VirtualMasonry<GalleryItem>
       key={refreshKey}
-      loadData={async (page, pageSize) => ({
-        data: paged.slice((page - 1) * pageSize, page * pageSize),
-        hasMore: page * pageSize < paged.length,
-      })}
+      loadData={loadPage}
       pageSize={48}
       minColumnWidth={minColumnWidth}
       gap={gap}

@@ -95,7 +95,10 @@ export type LibraryCategoryInfo = {
 export type LibrarySummary = {
   categories: LibraryCategoryInfo[];
   library_path: string;
+  previews: Record<LibraryCategoryKey, LibraryPreviewItem[]>;
 };
+
+export type LibraryPreviewItem = Pick<LibraryImageItem, "path" | "name" | "date">;
 
 export type LibraryImageItem = {
   path: string;

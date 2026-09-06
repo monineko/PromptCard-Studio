@@ -1263,6 +1263,17 @@ def library_image(path: str):
     return FileResponse(file)
 
 
+@app.get("/api/library/thumbnail")
+def library_thumbnail(path: str):
+    try:
+        file = library_service.thumbnail(path)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except ValueError as e:
+        raise _as_http(e, 400)
+    return FileResponse(file)
+
+
 @app.get("/api/library/png-info")
 def library_png_info(path: str):
     try:

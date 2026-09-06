@@ -263,9 +263,11 @@ export const useStore = create<AppState>((set, get) => {
 
     async init() {
       try {
-        const settings = await api.settings();
-        const categories = await api.categories();
-        const ws = await api.workspace();
+        const [settings, categories, ws] = await Promise.all([
+          api.settings(),
+          api.categories(),
+          api.workspace(),
+        ]);
         applyTheme(settings);
         set((s) => {
           const { positive, negative } = migrateWorkspace(
