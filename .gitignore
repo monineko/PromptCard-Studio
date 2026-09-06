@@ -11,6 +11,7 @@ vibes/
 workspace.json
 config.json
 batch_runs/
+batch_cover_runs/
 publish_runs/
 publish_staging/
 style_explore/
