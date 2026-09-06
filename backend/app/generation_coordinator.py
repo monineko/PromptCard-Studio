@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
+from typing import Callable
 
 
 _lock = threading.RLock()
@@ -19,7 +20,11 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def acquire(owner: str, task_id: str) -> dict:
+def acquire(
+    owner: str,
+    task_id: str,
+    unavailable_reason: Callable[[], str | None] | None = None,
+) -> dict:
     """占用生成通道；同一任务重复占用是幂等操作。"""
     if not owner or not task_id:
         raise ValueError("生成任务标识不能为空")
@@ -31,6 +36,10 @@ def acquire(owner: str, task_id: str) -> dict:
             raise ValueError(
                 f"生成通道正被{_reservation['owner']}任务「{_reservation['task_id']}」占用"
             )
+        if unavailable_reason is not None:
+            reason = unavailable_reason()
+            if reason:
+                raise ValueError(reason)
         _reservation = {"owner": owner, "task_id": task_id, "acquired_at": _now()}
         return dict(_reservation)
 

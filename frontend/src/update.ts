@@ -1,4 +1,4 @@
-export const APP_VERSION = "1.2.3";
+export const APP_VERSION = "1.2.4";
 export const GITHUB_REPOSITORY = "monineko/PromptCard-Studio";
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest`;
 

@@ -195,7 +195,11 @@ def thumbnail(rel_path: str) -> Path:
             if stale != destination:
                 stale.unlink(missing_ok=True)
         return destination
-    except Exception:
+    except Exception as error:
+        terminal_log.log(
+            "警告",
+            f"图库缩略图缓存失败 · {source.name} · 已回退原图 · {terminal_log.compact_error(error)}",
+        )
         return source
     finally:
         if temporary is not None:
@@ -275,24 +279,48 @@ def _item_for_file(file: Path, root: Path) -> dict | None:
     }
 
 
-def _iter_image_files(root: Path):
-    """按稳定顺序遍历图库图片，并附带分类信息，不读取图片内容。"""
+def _category_scan_roots(root: Path, category: str) -> list[Path]:
+    """只返回可能属于目标分类的一级入口，避免遍历无关分类目录。"""
+    if category == "all":
+        return [root]
+    roots: list[Path] = []
+    try:
+        entries = sorted(root.iterdir(), key=lambda path: str(path).lower())
+    except OSError:
+        return roots
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        entry_category, _date_group = _category_of((entry.name,))
+        if entry_category == category:
+            roots.append(entry)
+    return roots
+
+
+def _iter_image_files(root: Path, category: str = "all"):
+    """按稳定顺序遍历目标分类图片，并附带分类信息，不读取图片内容。"""
     if not root.exists():
         return
-    for file in sorted(root.rglob("*"), key=lambda path: str(path).lower()):
-        if not _is_image(file):
-            continue
-        rel = file.relative_to(root)
-        if any(part.startswith(".") for part in rel.parts):
-            continue  # 跳过隐藏目录（如 .trash）
-        category, date_group = _category_of(rel.parts)
-        yield file, rel, category, date_group
+    for scan_root in _category_scan_roots(root, category):
+        candidates = [scan_root] if scan_root.is_file() else sorted(
+            scan_root.rglob("*"), key=lambda path: str(path).lower()
+        )
+        for file in candidates:
+            if not _is_image(file):
+                continue
+            rel = file.relative_to(root)
+            if any(part.startswith(".") for part in rel.parts):
+                continue  # 跳过隐藏目录（如 .trash）
+            item_category, date_group = _category_of(rel.parts)
+            if category != "all" and item_category != category:
+                continue
+            yield file, rel, item_category, date_group
 
 
 def _scan_items(category: str = "all") -> list[dict]:
     root = _library_root()
     items: list[dict] = []
-    for file, _rel, item_category, _date_group in _iter_image_files(root):
+    for file, _rel, item_category, _date_group in _iter_image_files(root, category):
         if category != "all" and item_category != category:
             continue
         item = _item_for_file(file, root)
@@ -633,7 +661,7 @@ def import_remote_urls(urls: list[str], target: str = "unrated") -> dict:
             name = _safe_filename(Path(urllib.parse.unquote(parsed.path)).name or name)
             source = f"{parsed.hostname}/{name}"
             terminal_log.log("下载", f"网页图片 [{index + 1}/{len(unique_urls)}] · 正在下载 {source}")
-            request = urllib.request.Request(url, headers={"User-Agent": "PromptCard-Studio/1.2.3"})
+            request = urllib.request.Request(url, headers={"User-Agent": "PromptCard-Studio/1.2.4"})
             with opener.open(request, timeout=REMOTE_DOWNLOAD_TIMEOUT_SECONDS) as response:
                 _validate_remote_url(response.geturl())
                 content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()

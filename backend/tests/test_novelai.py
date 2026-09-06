@@ -99,6 +99,30 @@ class NovelAiPayloadTest(unittest.TestCase):
         self.assertEqual(payload["input"], "1girl")
         self.assertEqual(payload["parameters"]["qualityPresetId"], "none")
 
+    def test_legacy_models_keep_v3_request_fields(self):
+        cases = (
+            ("nai-diffusion-4-5-full", "Human Focus", 3),
+            ("nai-diffusion-4-full", "Light", 1),
+            ("nai-diffusion-3", "None", 3),
+        )
+        for model, preset, preset_index in cases:
+            with self.subTest(model=model):
+                params = novelai.GenerationParams(
+                    {
+                        "model": model,
+                        "uc_preset": preset,
+                        "quality_preset": "none",
+                    }
+                )
+                payload = novelai.build_text2image_payload(params, "1girl", "")
+                request_params = payload["parameters"]
+
+                self.assertEqual(request_params["params_version"], 3)
+                self.assertEqual(request_params["ucPreset"], preset_index)
+                self.assertFalse(request_params["qualityToggle"])
+                self.assertNotIn("ucPresetId", request_params)
+                self.assertNotIn("qualityPresetId", request_params)
+
     def test_v5_light_quality_round_trips_from_png_metadata(self):
         restored = png_send.build_send_payload(
             {

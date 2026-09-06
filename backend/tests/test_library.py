@@ -14,6 +14,7 @@ import threading
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
@@ -99,6 +100,14 @@ class LibraryServiceTest(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual([path.name for path in dimension_reads], ["t.png"])
 
+    def test_02c_category_scan_skips_unrelated_top_level_roots(self):
+        roots = lib._category_scan_roots(self.tmp, "treasure")
+        self.assertEqual([path.name for path in roots], ["Treasure"])
+
+        unrated_roots = lib._category_scan_roots(self.tmp, "unrated")
+        self.assertIn("misc", [path.name for path in unrated_roots])
+        self.assertNotIn("Fine", [path.name for path in unrated_roots])
+
     def test_03_png_info_parsing(self):
         if not ANR_SAMPLE.exists():
             self.skipTest("ANR 示例图不存在")
@@ -136,6 +145,22 @@ class LibraryServiceTest(unittest.TestCase):
         with Image.open(first) as preview:
             self.assertLessEqual(max(preview.size), 512)
         self.assertEqual(source.read_bytes(), original_bytes)
+
+    def test_04c_thumbnail_failure_logs_and_returns_original(self):
+        from PIL import Image
+
+        source = self.tmp / "thumbnail-error.png"
+        Image.new("RGB", (16, 16), "red").save(source)
+
+        with mock.patch.object(lib.Image, "open", side_effect=OSError("encode failed")):
+            with mock.patch.object(lib.terminal_log, "log") as log:
+                result = lib.thumbnail("thumbnail-error.png")
+
+        self.assertEqual(result, source)
+        log.assert_called_once()
+        self.assertEqual(log.call_args.args[0], "警告")
+        self.assertIn("thumbnail-error.png", log.call_args.args[1])
+        self.assertIn("encode failed", log.call_args.args[1])
 
     def test_05_traversal_rejected(self):
         with self.assertRaises(ValueError):

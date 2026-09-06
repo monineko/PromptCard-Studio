@@ -36,6 +36,7 @@ import type {
   GenerateParamsPayload,
   GenerateStatus,
   GenerateVibe,
+  GenerationOccupancy,
   VibeFolder,
   VibeItem,
 } from "../types";
@@ -182,7 +183,6 @@ function ExpandablePromptTextarea({
         title="悬浮放大提示词输入框"
         aria-label={`放大${expandedLabel}`}
         onMouseEnter={(event) => openExpandedPanel(event.currentTarget)}
-        onClick={(event) => openExpandedPanel(event.currentTarget)}
       >
         <Maximize2 size={11} />
         放大
@@ -476,6 +476,7 @@ export function GenerationPanel() {
   const [vibeModalOpen, setVibeModalOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [generationOccupancy, setGenerationOccupancy] = useState<GenerationOccupancy | null>(null);
   const [baseTab, setBaseTab] = useState<"positive" | "negative">("positive");
 
   const posSplit = useMemo(() => splitWorkspaceRole(positive), [positive]);
@@ -575,6 +576,23 @@ export function GenerationPanel() {
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () =>
+      void api
+        .generationOccupancy()
+        .then((value) => {
+          if (!cancelled) setGenerationOccupancy(value);
+        })
+        .catch(() => {});
+    tick();
+    const timer = window.setInterval(tick, 2200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const rules = meta ? meta.model_rules[params.model] : null;
 
@@ -963,10 +981,12 @@ export function GenerationPanel() {
         </div>
 
         </div>
-        {batchRun && (
+        {(batchRun || generationOccupancy?.occupied) && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-[var(--panel)]/70 backdrop-blur-sm">
             <span className="rounded-lg bg-[var(--panel-solid)] px-3 py-1.5 text-xs font-medium shadow-lg">
-              批量生成进行中，参数已锁定
+              {batchRun
+                ? "批量生成进行中，参数已锁定"
+                : `任务「${generationOccupancy?.task_name ?? "当前任务"}」正在生成，参数已锁定`}
             </span>
           </div>
         )}
@@ -1046,7 +1066,13 @@ export function GenerationPanel() {
             size="md"
             className="flex-1 rounded-xl py-4 text-lg"
             onClick={() => void generate()}
-            disabled={generating || !!batchRun || !status?.configured || !mergedBase.trim()}
+            disabled={
+              generating ||
+              !!batchRun ||
+              !!generationOccupancy?.occupied ||
+              !status?.configured ||
+              !mergedBase.trim()
+            }
           >
             <Wand2 size={20} />
             生成1张

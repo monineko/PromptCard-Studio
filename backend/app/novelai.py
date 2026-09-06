@@ -471,40 +471,55 @@ def build_text2image_payload(params: GenerationParams, prompt: str, negative_pro
             raise ValueError(f"Vibe「{v.get('id')}」不适用于模型 {model}（缺少对应编码）")
         vibes.append(resolved)
 
+    request_parameters = {
+        "width": return_x64(params.width),
+        "height": return_x64(params.height),
+        "scale": params.scale,
+        "sampler": params.sampler,
+        "steps": params.steps,
+        "n_samples": 1,
+        "autoSmea": False,
+        "dynamic_thresholding": params.decrisp,
+        "controlnet_strength": 1,
+        "legacy": False,
+        "add_original_image": True,
+        "cfg_rescale": params.cfg_rescale,
+        "legacy_v3_extend": False,
+        "skip_cfg_above_sigma": skip_cfg,
+        "seed": seed,
+        "characterPrompts": [
+            {
+                "prompt": c["positive"],
+                "uc": c["negative"],
+                "center": c["center"],
+                "enabled": True,
+            }
+            for c in characters
+        ],
+        "negative_prompt": combined_negative,
+    }
+    if is_v5:
+        request_parameters.update(
+            {
+                "params_version": 4,
+                "ucPresetId": _UC_PRESET_ID[params.uc_preset],
+                "qualityPresetId": params.quality_preset,
+            }
+        )
+    else:
+        request_parameters.update(
+            {
+                "params_version": 3,
+                "ucPreset": rules["uc_presets"].index(params.uc_preset),
+                "qualityToggle": params.quality_toggle,
+            }
+        )
+
     base = {
         "input": _input,
         "model": model,
         "action": "generate",
-        "parameters": {
-            "params_version": 4,
-            "width": return_x64(params.width),
-            "height": return_x64(params.height),
-            "scale": params.scale,
-            "sampler": params.sampler,
-            "steps": params.steps,
-            "n_samples": 1,
-            "ucPresetId": _UC_PRESET_ID[params.uc_preset],
-            "qualityPresetId": params.quality_preset,
-            "autoSmea": False,
-            "dynamic_thresholding": params.decrisp,
-            "controlnet_strength": 1,
-            "legacy": False,
-            "add_original_image": True,
-            "cfg_rescale": params.cfg_rescale,
-            "legacy_v3_extend": False,
-            "skip_cfg_above_sigma": skip_cfg,
-            "seed": seed,
-            "characterPrompts": [
-                {
-                    "prompt": c["positive"],
-                    "uc": c["negative"],
-                    "center": c["center"],
-                    "enabled": True,
-                }
-                for c in characters
-            ],
-            "negative_prompt": combined_negative,
-        },
+        "parameters": request_parameters,
         "use_new_shared_trial": True,
     }
 

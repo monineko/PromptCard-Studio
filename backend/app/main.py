@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import date
 from pathlib import Path
@@ -153,7 +154,7 @@ async def _lifespan(_app: FastAPI):
             await heartbeat
 
 
-app = FastAPI(title="PromptCard Studio for NovelAI", version="1.2.3", lifespan=_lifespan)
+app = FastAPI(title="PromptCard Studio for NovelAI", version="1.2.4", lifespan=_lifespan)
 
 # 本地 Web 应用：只允许本机来源（127.0.0.1 / localhost 任意端口，含前端开发服务器），
 # 防止外部网页跨域读取本地数据或触发关闭等操作
@@ -632,6 +633,19 @@ def generate_token(body: GenerateTokenIn):
 
 @app.post("/api/generate/text2image")
 def generate_text2image(body: Text2ImageIn):
+    request_id = uuid.uuid4().hex[:8]
+    try:
+        generation_coordinator_service.acquire(
+            "single",
+            request_id,
+            lambda: (
+                "普通批量生成正在占用生成通道，请先暂停、结束或完成该任务"
+                if batch_service.status().get("active")
+                else None
+            ),
+        )
+    except ValueError as error:
+        raise _as_http(error, 400)
     params = body.params or {}
     model = str(params.get("model") or "默认模型")
     size = f"{params.get('width') or '?'}×{params.get('height') or '?'}"
@@ -667,6 +681,8 @@ def generate_text2image(body: Text2ImageIn):
     except RuntimeError as e:
         terminal_log.log("错误", f"单张生图失败 · {terminal_log.compact_error(e)}")
         raise _as_http(e, 502)
+    finally:
+        generation_coordinator_service.release("single", request_id)
 
 
 # ---------- 批量生成 ----------
@@ -718,8 +734,9 @@ def generation_occupancy():
 
 @app.post("/api/generate/batch")
 def batch_start(body: BatchStartIn):
+    request_id = uuid.uuid4().hex[:8]
     try:
-        generation_coordinator_service.assert_available_for_batch()
+        generation_coordinator_service.acquire("batch_start", request_id)
         return batch_service.start_batch(
             body.base_positive,
             body.negative,
@@ -731,6 +748,8 @@ def batch_start(body: BatchStartIn):
         raise _as_http(e, 400)
     except RuntimeError as e:
         raise _as_http(e, 502)
+    finally:
+        generation_coordinator_service.release("batch_start", request_id)
 
 
 # ---------- 批量卡面 ----------
@@ -1185,12 +1204,16 @@ def batch_pause():
 
 @app.post("/api/generate/batch/resume")
 def batch_resume():
+    request_id = uuid.uuid4().hex[:8]
     try:
+        generation_coordinator_service.acquire("batch_start", request_id)
         return batch_service.resume_batch()
     except ValueError as e:
         raise _as_http(e, 400)
     except RuntimeError as e:
         raise _as_http(e, 502)
+    finally:
+        generation_coordinator_service.release("batch_start", request_id)
 
 
 @app.post("/api/generate/batch/end")

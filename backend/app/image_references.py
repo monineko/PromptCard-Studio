@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
+from . import terminal as terminal_log
+
 
 @dataclass(frozen=True)
 class ImageReferenceStore:
@@ -53,8 +55,11 @@ def rewrite_image_references(
         for store, original in reversed(saved):
             try:
                 store.save(original)
-            except Exception:
-                pass
+            except Exception as rollback_error:
+                terminal_log.log(
+                    "错误",
+                    f"图片引用回滚失败 · {store.name} · {terminal_log.compact_error(rollback_error)}",
+                )
         raise
 
     return {store.name: changed for store, _, _, changed in pending}

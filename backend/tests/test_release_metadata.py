@@ -24,7 +24,7 @@ class ReleaseMetadataTest(unittest.TestCase):
         package_version = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))["version"]
         lock_version = json.loads((PROJECT_ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))["version"]
 
-        self.assertEqual(frontend_version, "1.2.3")
+        self.assertEqual(frontend_version, "1.2.4")
         self.assertEqual(frontend_version, package_version)
         self.assertEqual(frontend_version, lock_version)
         self.assertEqual(frontend_version, app.version)
