@@ -178,6 +178,15 @@ class NovelAiPayloadTest(unittest.TestCase):
             'HTTP 432 · {"message":"request rejected","statusCode":432}',
         )
 
+    def test_inquire_anlas_includes_purchased_training_steps(self):
+        body = b'{"trainingStepsLeft":{"fixedTrainingStepsLeft":0,"purchasedTrainingSteps":1234}}'
+        with mock.patch.object(novelai, "_request_json", return_value=(200, body)) as request:
+            anlas, error = novelai.inquire_anlas("token")
+
+        self.assertEqual(anlas, 1234)
+        self.assertIsNone(error)
+        request.assert_called_once_with(novelai.SUBSCRIPTION_URL, None, novelai.SHORT_TIMEOUT, "token")
+
 
 if __name__ == "__main__":
     unittest.main()

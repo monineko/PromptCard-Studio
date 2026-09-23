@@ -295,7 +295,7 @@ def _response_error_message(status: int, body: bytes) -> str:
 
 
 def inquire_anlas(token: str | None = None) -> tuple[int | None, str | None]:
-    """查询剩余点数。返回 (anlas, error)。"""
+    """查询剩余点数。返回订阅点数与购买点数之和及错误信息。"""
     token = token if token is not None else get_token()
     if not token:
         return None, "未配置 token"
@@ -307,10 +307,12 @@ def inquire_anlas(token: str | None = None) -> tuple[int | None, str | None]:
         return None, _response_error_message(status, body)
     try:
         data = json.loads(body.decode("utf-8", errors="replace"))
-        anlas = data.get("trainingStepsLeft", {}).get("fixedTrainingStepsLeft")
-        if anlas is None:
+        training_steps = data.get("trainingStepsLeft") or {}
+        fixed = training_steps.get("fixedTrainingStepsLeft")
+        purchased = training_steps.get("purchasedTrainingSteps")
+        if fixed is None and purchased is None:
             return None, "响应中未找到训练步数"
-        return int(anlas), None
+        return int(fixed or 0) + int(purchased or 0), None
     except Exception as e:
         return None, f"解析点数失败: {e}"
 
